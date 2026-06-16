@@ -1,0 +1,44 @@
+{
+  "name": "starlabs-queue-e2e",
+  "private": true,
+  "description": "Queue Manager full-complexity test environment (Playwright + model-based oracle), targets a dedicated disposable Firebase project.",
+  "scripts": {
+    "plan": "node fixtures/seed-test-project.js --plan",
+    "seed": "node fixtures/seed-test-project.js --seed",
+    "teardown": "node fixtures/seed-test-project.js --teardown",
+    "test": "playwright test",
+
+    "emu:up": "bash scripts/deploy-cf-emulator.sh",
+    "emu:seed": "FIRESTORE_EMULATOR_HOST=localhost:8080 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIREBASE_PROJECT=demo-slabs-queue node fixtures/seed-emulator.js --seed",
+    "emu:seed:min": "FIRESTORE_EMULATOR_HOST=localhost:8080 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIREBASE_PROJECT=demo-slabs-queue node fixtures/seed-emulator.js --legacy",
+    "test:emu": "TARGET=emulator playwright test --config=playwright.queue.emulator.config.ts",
+    "test:cloud": "TARGET=cloud playwright test --config=playwright.queue.config.ts",
+    "seed:cloud": "TEST_PROJECT=slabs-queue-e2e-exdcz node fixtures/seed-test-project.js --seed",
+
+    "test:appointments": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.appointments.config.ts",
+    "test:events": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.events.config.ts",
+    "test:modes": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.modes.config.ts",
+    "test:content": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.content.config.ts",
+    "test:workshops": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.workshops.config.ts",
+    "test:comms": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.comms.config.ts",
+    "test:support": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.support.config.ts",
+    "test:profiles": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.profiles.config.ts",
+    "test:evomap": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.evomap.config.ts",
+    "test:authroles": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.authroles.config.ts",
+    "test:journey": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.journey.config.ts",
+    "test:business": "NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.business.config.ts",
+    "test:invariants": "playwright test --config=playwright.invariants.config.ts",
+    "test:mobile": "playwright test --config=playwright.mobile.config.ts",
+    "test:groups": "for g in appointments events modes content workshops comms support profiles evomap authroles journey business; do echo \"== $g ==\"; NODE_OPTIONS=--max-old-space-size=4096 playwright test --config=playwright.$g.config.ts --reporter=line || exit 1; done",
+
+    "report": "npm run report:cloud",
+    "report:cloud": "TARGET=cloud EVIDENCE=1 bash scripts/run-isolated.sh",
+    "report:emulator": "TARGET=emulator EVIDENCE=1 EMU_REUSE=1 EMU_REUSE_APP=1 bash scripts/run-isolated.sh",
+    "report:cloud:full": "TARGET=cloud EVIDENCE=1 TRACE=full bash scripts/run-isolated.sh",
+    "report:emulator:full": "TARGET=emulator EVIDENCE=1 TRACE=full EMU_REUSE=1 EMU_REUSE_APP=1 bash scripts/run-isolated.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0",
+    "firebase-admin": "^13.4.0"
+  }
+}
