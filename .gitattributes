@@ -1,0 +1,16 @@
+# CI runs on Ubuntu — CRLF line endings break bash (`bad interpreter`, `$'\r'`).
+# Force LF for all text, and especially for shell scripts.
+* text=auto eol=lf
+*.sh   text eol=lf
+*.cjs  text eol=lf
+*.ts   text eol=lf
+*.json text eol=lf
+
+# Binaries — never touch
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.zip  binary
+*.pdf  binary
