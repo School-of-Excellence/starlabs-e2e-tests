@@ -144,3 +144,29 @@ Once answered: wire `deploy-cf.yml` (push→dev = `cf-reconcile.sh` to test, no 
 + `vignesh-027` allowlist) + the re-gate dispatch.
 
 ## Next: M5 (flutter gate + delivery), M7 (dashboard). See milestone tracker above.
+
+## Enforcement decision — console-gated, stay on Free (2026-06-17)
+
+Supersedes the earlier "branch-guard `auto_revert: true`" stopgap in *Decisions & fixes (2026-06-17)* above.
+
+**(a) Decision: "console-gated, stay on Free."** We do not upgrade to GitHub Team yet. The **release console
+becomes the merge authority** — its **GitHub-App bot** is the only identity that performs merges, and only when
+the caller is on the console's **per-branch approver allowlist** (development list + stricter production list,
+mirroring [`../.github/CODEOWNERS`](../.github/CODEOWNERS)). Developers are asked **by policy** to release through
+the console. *Honest gap:* on Free this is policy + tooling, not a hard wall — a determined dev can still merge via
+the GitHub UI until **GitHub Team branch protection** is enabled. Team remains the documented future hard wall;
+all current wiring is forward-compatible (zero rework). See GOAL.md §3 and ARCHITECTURE.md §8.
+
+**(b) `deploy_19.yml` reverted to auto-deploy on merge (both branches).** The earlier prod hardening
+(production = manual `workflow_dispatch` + allowlist guard) is **reverted**: merge→`development` auto-deploys to
+`starlabs-test`, and merge→`production` auto-deploys to `fir-sample-aae4a`. Merge authority now sits at the
+console gate, so the deploy workflow trusts an approved merge and deploys automatically on both branches.
+
+**(c) `branch-guard` set to alert-only.** `auto_revert` is **off** on all repos/branches. The guard now only
+**alerts** on a non-PR push (visible drift signal); it does not revert. Auto-revert returns for free if/when Team
+branch protection lands and makes it moot.
+
+**(d) Console now lives in the hub.** The release console is no longer "a new app to scaffold later" — it lives
+in this repo: **frontend → [`../console/`](../console/)**, **backend (Cloud Functions) →
+[`../console/functions/`](../console/functions/)**, deploying to the `starlabs-cicd` project (isolated from the
+product cloud-function / ATC).

@@ -13,9 +13,9 @@
 #   Then e2e/ci/setup-emulator-config.sh overlays emulator wiring onto the app, boots emulator + CF, serves
 #   the app emulator-wired on :4200, and runs the isolated suite (exit code = # failing spec files = the gate).
 #
-# ── ONE SECRET REQUIRED (passed by the caller via `secrets: inherit`) ───────────────────────────────
-#   CICD_PAT — fine-grained PAT with READ access to BOTH private repos:
-#              School-of-Excellence/starlabs-e2e-tests  AND  School-of-Excellence/starlabs-cloud-function
+# ── SECRETS REQUIRED (passed by the caller via `secrets: inherit`) ──────────────────────────────────
+#   E2E_REPO_TOKEN — read access to School-of-Excellence/starlabs-e2e-tests (this hub)
+#   CF_REPO_TOKEN  — read access to School-of-Excellence/starlabs-cloud-function (the real triggers)
 #
 # ── ORG SETTING REQUIRED (one-time) ─────────────────────────────────────────────────────────────────
 #   In this hub repo: Settings → Actions → General → "Access" → allow this repository's workflows to be
@@ -42,8 +42,11 @@ on:
         type: string
         default: demo-slabs-queue
     secrets:
-      CICD_PAT:
-        description: 'PAT with read access to the private e2e + cloud-function repos'
+      E2E_REPO_TOKEN:
+        description: 'read access to the private starlabs-e2e-tests (hub) repo'
+        required: true
+      CF_REPO_TOKEN:
+        description: 'read access to the private starlabs-cloud-function repo'
         required: true
       STARLABS_CICD_SA:
         description: 'starlabs-cicd service-account JSON — enables append-only history writes (optional)'
@@ -68,15 +71,15 @@ jobs:
           repository: School-of-Excellence/starlabs-e2e-tests
           ref: ${{ inputs.e2e_ref }}
           path: e2e
-          token: ${{ secrets.CICD_PAT }}
+          token: ${{ secrets.E2E_REPO_TOKEN }}
 
       - name: Clone the Cloud Functions repo (real triggers) → ./starlabs-cloud-function
         run: |
-          if [ -z "${{ secrets.CICD_PAT }}" ]; then
-            echo "::error::CICD_PAT secret is not set — needed to clone the private CF repo."; exit 1
+          if [ -z "${{ secrets.CF_REPO_TOKEN }}" ]; then
+            echo "::error::CF_REPO_TOKEN secret is not set — needed to clone the private CF repo."; exit 1
           fi
           git clone --depth 1 --branch "$CF_BRANCH" \
-            "https://x-access-token:${{ secrets.CICD_PAT }}@github.com/School-of-Excellence/starlabs-cloud-function.git" \
+            "https://x-access-token:${{ secrets.CF_REPO_TOKEN }}@github.com/School-of-Excellence/starlabs-cloud-function.git" \
             starlabs-cloud-function
 
       - uses: actions/setup-node@v4

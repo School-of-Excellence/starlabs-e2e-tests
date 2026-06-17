@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CODEOWNERS — approver model template (StarLabs CI/CD)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# WHAT THIS FILE DOES
+#   GitHub reads CODEOWNERS to decide who must approve a pull request. The owner
+#   listed for a path is auto-requested as a reviewer, and — once branch
+#   protection is on — their approval is REQUIRED to merge.
+#
+# THE APPROVER MODEL (read this before editing)
+#   CODEOWNERS is read from the PR's *base branch*, not from main. That means
+#   each app repo can carry a DIFFERENT CODEOWNERS on each protected branch:
+#
+#     • development branch's CODEOWNERS  → the development approver allowlist
+#     • production  branch's CODEOWNERS  → the (usually stricter) prod allowlist
+#
+#   So a change merging into `development` is gated by development's owners, and a
+#   change merging into `production` is gated by production's owners. Keep the two
+#   branches' CODEOWNERS files intentionally distinct — that asymmetry IS the
+#   feature (more eyes / fewer named people on prod).
+#
+# ENFORCEMENT — IMPORTANT, READ HONESTLY
+#   This file ALONE enforces nothing. CODEOWNERS becomes a hard gate ONLY when
+#   GitHub Team branch protection is enabled on the org, with:
+#       • "Require a pull request before merging"
+#       • "Require approvals" + "Require review from Code Owners"
+#   Until Team + branch protection is turned on, this file is advisory: GitHub
+#   will still auto-request these owners as reviewers, but it will NOT block a
+#   merge that lacks their approval. See docs/GOAL.md §3 and docs/ARCHITECTURE.md §8.
+#
+# HOW TO SET REAL NAMES
+#   1. Replace the placeholder @School-of-Excellence/maintainers below with real
+#      GitHub usernames (e.g. @vignesh-027) or real teams (e.g.
+#      @School-of-Excellence/prod-approvers). Teams must exist in the org and
+#      have at least read access to the repo, or GitHub ignores the entry.
+#   2. Copy this file onto each app repo's protected branches, then tune per
+#      branch: a broader list on `development`, a tighter list on `production`.
+#   3. Add more specific lines BELOW the default line to override ownership for
+#      particular paths (last matching pattern wins).
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Default owner — every file, unless a more specific rule below overrides it.
+# PLACEHOLDER: swap for real usernames/teams before relying on this as a gate.
+*       @School-of-Excellence/maintainers
+
+# ── Examples (uncomment + edit per branch) ──────────────────────────────────
+# Stricter approvers for deploy/pipeline wiring:
+# /.github/workflows/   @School-of-Excellence/release-approvers
+#
+# On the `production` branch you might narrow the default to a named release lead:
+# *                     @vignesh-027

@@ -1,0 +1,12 @@
+{
+  "projects": {
+    "default": "starlabs-cicd"
+  },
+  "targets": {
+    "starlabs-cicd": {
+      "hosting": {
+        "console": ["starlabs-cicd-console"]
+      }
+    }
+  }
+}

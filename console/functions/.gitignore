@@ -1,0 +1,9 @@
+node_modules/
+lib/
+*.log
+# Local, non-secret params for the functions runtime (project-scoped env).
+.env
+.env.local
+.env.*.local
+# Never commit a GitHub App private key.
+*.pem
