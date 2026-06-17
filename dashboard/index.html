@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CI/CD History — cicd-audit</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#e6edf3; --muted:#8b949e;
+    --accent:#58a6ff; --pass:#3fb950; --fail:#f85149; --chip:#21262d;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--fg)}
+  header{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:10}
+  header h1{font-size:15px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .sp{flex:1}
+  button{background:var(--chip);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px}
+  button:hover{border-color:var(--accent)}
+  button.primary{background:var(--accent);color:#04101f;border-color:var(--accent);font-weight:600}
+  .wrap{display:flex;gap:0;height:calc(100vh - 53px)}
+  .list{flex:1;overflow:auto;border-right:1px solid var(--border)}
+  .detail{width:42%;min-width:380px;overflow:auto;padding:18px 20px}
+  .filters{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--border);background:var(--panel)}
+  .filters input,.filters select{background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px}
+  table{width:100%;border-collapse:collapse}
+  th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
+  th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  tr.run{cursor:pointer}
+  tr.run:hover{background:#1c2430}
+  tr.run.sel{background:#1f2937;outline:1px solid var(--accent);outline-offset:-1px}
+  .chip{display:inline-block;padding:1px 8px;border-radius:999px;background:var(--chip);font-size:12px;border:1px solid var(--border)}
+  .pass{color:var(--pass)} .fail{color:var(--fail)}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .dot.pass{background:var(--pass)} .dot.fail{background:var(--fail)} .dot.unknown{background:var(--muted)}
+  code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
+  .kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;margin:10px 0}
+  .kv div:nth-child(odd){color:var(--muted)}
+  a{color:var(--accent)}
+  .muted{color:var(--muted)}
+  .center{display:flex;align-items:center;justify-content:center;height:80vh;flex-direction:column;gap:14px}
+  .cmp{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .cmp .col{border:1px solid var(--border);border-radius:8px;padding:12px;background:var(--panel)}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .pill{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app"><div class="center"><h1>CI/CD History</h1><div class="muted">loading…</div></div></div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, query, orderBy, limit, getDocs }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getStorage, ref, getDownloadURL }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+
+const app = document.getElementById("app");
+let cfg;
+try { cfg = (await import("./config.js")).firebaseConfig; }
+catch(e){
+  app.innerHTML = `<div class="center"><h1>Setup needed</h1>
+    <div class="muted">Copy <code>config.example.js</code> → <code>config.js</code> with your
+    starlabs-cicd Firebase web config. See README.</div></div>`;
+  throw e;
+}
+
+const fb = initializeApp(cfg);
+const auth = getAuth(fb), db = getFirestore(fb), storage = getStorage(fb);
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const short = s => String(s ?? "").slice(0,7);
+const when = s => { try { return new Date(s).toLocaleString(); } catch { return s; } };
+const resultClass = r => r==="pass"?"pass":r==="fail"?"fail":"unknown";
+
+let RUNS = [], selected = new Set();
+
+onAuthStateChanged(auth, u => u ? boot() : login());
+
+function login(){
+  app.innerHTML = `<div class="center"><h1>CI/CD History — cicd-audit</h1>
+    <div class="muted">Append-only run history. Sign in to view.</div>
+    <button class="primary" id="si">Sign in with Google</button></div>`;
+  document.getElementById("si").onclick = () => signInWithPopup(auth, new GoogleAuthProvider()).catch(e=>alert(e.message));
+}
+
+async function boot(){
+  app.innerHTML = `
+    <header>
+      <h1>CI/CD History</h1><span class="pill">cicd-audit · ${esc(cfg.projectId)}</span>
+      <div class="sp"></div>
+      <button id="cmp">Compare selected (0)</button>
+      <button id="refresh">Refresh</button>
+      <button id="out">Sign out</button>
+    </header>
+    <div class="wrap">
+      <div class="list">
+        <div class="filters">
+          <input id="f-text" placeholder="filter repo / branch / sha / author…" style="min-width:240px"/>
+          <select id="f-source"><option value="">source: any</option><option>ci</option><option>local</option></select>
+          <select id="f-result"><option value="">result: any</option><option>pass</option><option>fail</option><option>unknown</option></select>
+        </div>
+        <table><thead><tr>
+          <th></th><th>when</th><th>repo</th><th>branch</th><th>sha</th><th>author</th><th>src</th><th>stage</th><th>result</th>
+        </tr></thead><tbody id="rows"></tbody></table>
+      </div>
+      <div class="detail" id="detail"><div class="muted">Select a run.</div></div>
+    </div>`;
+  document.getElementById("out").onclick = () => signOut(auth);
+  document.getElementById("refresh").onclick = load;
+  document.getElementById("cmp").onclick = compare;
+  for (const id of ["f-text","f-source","f-result"]) document.getElementById(id).oninput = render;
+  await load();
+}
+
+async function load(){
+  const snap = await getDocs(query(collection(db,"cicd-audit"), orderBy("createdAt","desc"), limit(200)));
+  RUNS = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  selected.clear(); render();
+}
+
+function passFilters(r){
+  const t = document.getElementById("f-text").value.toLowerCase().trim();
+  const src = document.getElementById("f-source").value, res = document.getElementById("f-result").value;
+  if (src && r.source!==src) return false;
+  if (res && r.result!==res) return false;
+  if (t && !`${r.repo} ${r.branch} ${r.sha} ${r.author}`.toLowerCase().includes(t)) return false;
+  return true;
+}
+
+function render(){
+  const rows = document.getElementById("rows");
+  const list = RUNS.filter(passFilters);
+  rows.innerHTML = list.map(r => `
+    <tr class="run ${selected.has(r.id)?'sel':''}" data-id="${esc(r.id)}">
+      <td><input type="checkbox" class="ck" data-id="${esc(r.id)}" ${selected.has(r.id)?'checked':''}/></td>
+      <td>${esc(when(r.createdAt))}</td>
+      <td>${esc(r.repo)}</td>
+      <td>${esc(r.branch)}</td>
+      <td><code>${esc(short(r.sha))}</code></td>
+      <td>${esc(r.author)}</td>
+      <td>${esc(r.source)}</td>
+      <td>${esc(r.stage||'')}</td>
+      <td><span class="dot ${resultClass(r.result)}"></span>${esc(r.result)}</td>
+    </tr>`).join("") || `<tr><td colspan="9" class="muted" style="padding:18px">No runs match.</td></tr>`;
+  rows.querySelectorAll("tr.run").forEach(tr => tr.onclick = e => {
+    if (e.target.classList.contains("ck")) return;
+    showDetail(tr.dataset.id);
+  });
+  rows.querySelectorAll(".ck").forEach(ck => ck.onclick = e => {
+    e.stopPropagation();
+    ck.checked ? selected.add(ck.dataset.id) : selected.delete(ck.dataset.id);
+    document.getElementById("cmp").textContent = `Compare selected (${selected.size})`;
+    render();
+  });
+}
+
+async function reportUrl(r){
+  // Find the report index.html among storage.report gs:// urls, return a download URL.
+  const idx = (r.storage?.report||[]).find(u => /index\.html$/.test(u));
+  if (!idx) return null;
+  const path = idx.replace(/^gs:\/\/[^/]+\//, "");
+  try { return await getDownloadURL(ref(storage, path)); } catch { return null; }
+}
+
+async function showDetail(id){
+  const r = RUNS.find(x=>x.id===id); if(!r) return;
+  document.querySelectorAll("tr.run").forEach(t=>t.classList.toggle("sel", t.dataset.id===id));
+  const d = document.getElementById("detail");
+  d.innerHTML = `<div class="bar"><span class="dot ${resultClass(r.result)}"></span>
+     <strong>${esc(r.result?.toUpperCase()||'?')}</strong><span class="pill">${esc(r.source)}</span>
+     <span class="pill">${esc(r.stage||'gate')}</span></div>
+    <div class="kv">
+      <div>run id</div><div><code>${esc(r.runId||r.id)}</code></div>
+      <div>repo</div><div>${esc(r.repo)}</div>
+      <div>branch</div><div>${esc(r.branch)}</div>
+      <div>sha</div><div><code>${esc(r.sha)}</code></div>
+      <div>author</div><div>${esc(r.author)}</div>
+      <div>suite</div><div>${esc(r.suite||'')}</div>
+      <div>when</div><div>${esc(when(r.createdAt))}</div>
+      <div>storage</div><div><code>${esc(r.storage?.base||'')}</code></div>
+    </div>
+    <div id="links" class="muted">resolving report link…</div>
+    <div style="margin-top:10px"><div class="muted">attachments (${(r.storage?.attachments||[]).length})</div>
+      <ul>${(r.storage?.attachments||[]).map(a=>`<li><code>${esc(a.split('/').pop())}</code></li>`).join("")||'<li class="muted">none</li>'}</ul></div>`;
+  const url = await reportUrl(r);
+  document.getElementById("links").innerHTML = url
+    ? `<a href="${url}" target="_blank">▶ Open Playwright report</a>`
+    : `<span class="muted">report index not found in storage</span>`;
+}
+
+function runCard(r){
+  return `<div class="col"><div class="bar"><span class="dot ${resultClass(r.result)}"></span>
+    <strong>${esc(r.result?.toUpperCase()||'?')}</strong></div>
+    <div class="kv">
+      <div>repo</div><div>${esc(r.repo)}</div>
+      <div>branch</div><div>${esc(r.branch)}</div>
+      <div>sha</div><div><code>${esc(short(r.sha))}</code></div>
+      <div>author</div><div>${esc(r.author)}</div>
+      <div>source</div><div>${esc(r.source)}</div>
+      <div>stage</div><div>${esc(r.stage||'')}</div>
+      <div>when</div><div>${esc(when(r.createdAt))}</div>
+    </div></div>`;
+}
+
+function compare(){
+  if (selected.size!==2){ alert("Select exactly 2 runs to compare."); return; }
+  const [a,b] = [...selected].map(id=>RUNS.find(x=>x.id===id));
+  const d = document.getElementById("detail");
+  d.innerHTML = `<h3>Compare</h3><div class="cmp">${runCard(a)}${runCard(b)}</div>
+    <p class="muted" style="margin-top:12px">${a.result===b.result?'Same result.':'⚠️ Results differ.'}
+    ${short(a.sha)} vs ${short(b.sha)} on ${esc(a.branch)} / ${esc(b.branch)}.</p>`;
+}
+</script>
+</body>
+</html>

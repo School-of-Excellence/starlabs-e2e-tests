@@ -35,3 +35,6 @@ results.xml
 starlabs-cicd-sa.json
 *-sa.json
 *firebase-adminsdk*.json
+
+# Dashboard local Firebase web config (NEVER commit)
+dashboard/config.js

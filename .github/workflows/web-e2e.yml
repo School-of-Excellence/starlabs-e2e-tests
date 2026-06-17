@@ -1,0 +1,161 @@
+# web-e2e — REUSABLE hermetic Playwright gate (the Stage-2 gate, hub-owned).
+#
+# This is the engine-side ("inverted") version of the gate. Instead of every app repo carrying a copy of
+# the boot/seed/run logic, the logic lives HERE in the hub (starlabs-e2e-tests) and each app repo calls it
+# with a tiny caller workflow (`uses: School-of-Excellence/starlabs-e2e-tests/.github/workflows/web-e2e.yml@main`).
+#
+# WHAT IT DOES (unchanged from the proven app-centric queue-e2e.yml, just parameterized):
+#   Assembles ONE CI workspace from THREE repos and runs the queue e2e suite against the REAL Cloud-Function
+#   triggers in the Firebase emulator:
+#     • <caller repo>           (the app under test — Angular)         checked out at the root
+#     • starlabs-e2e-tests      (this engine + ci/overlay + scripts)   cloned into ./e2e
+#     • starlabs-cloud-function (the real Firestore triggers)          cloned into ./starlabs-cloud-function
+#   Then e2e/ci/setup-emulator-config.sh overlays emulator wiring onto the app, boots emulator + CF, serves
+#   the app emulator-wired on :4200, and runs the isolated suite (exit code = # failing spec files = the gate).
+#
+# ── ONE SECRET REQUIRED (passed by the caller via `secrets: inherit`) ───────────────────────────────
+#   CICD_PAT — fine-grained PAT with READ access to BOTH private repos:
+#              School-of-Excellence/starlabs-e2e-tests  AND  School-of-Excellence/starlabs-cloud-function
+#
+# ── ORG SETTING REQUIRED (one-time) ─────────────────────────────────────────────────────────────────
+#   In this hub repo: Settings → Actions → General → "Access" → allow this repository's workflows to be
+#   used by other repositories in the School-of-Excellence org. Without it, callers cannot `uses:` this file.
+name: web-e2e (reusable emulator gate)
+
+on:
+  workflow_call:
+    inputs:
+      cf_branch:
+        description: 'Cloud Functions branch to clone for the real triggers'
+        type: string
+        default: development
+      e2e_ref:
+        description: 'Ref of the e2e engine repo (this hub) to clone for scripts/ci/fixtures'
+        type: string
+        default: main
+      only:
+        description: "Optional spec subset for run-isolated.sh (e.g. 'queue/operator.spec.ts'). Empty = full gate."
+        type: string
+        default: ''
+      firebase_project:
+        description: 'Emulator project id (demo id; deploy-cf-emulator.sh hard-aborts on any prod id)'
+        type: string
+        default: demo-slabs-queue
+      timeout_minutes:
+        description: 'Job timeout'
+        type: number
+        default: 75
+    secrets:
+      CICD_PAT:
+        description: 'PAT with read access to the private e2e + cloud-function repos'
+        required: true
+      STARLABS_CICD_SA:
+        description: 'starlabs-cicd service-account JSON — enables append-only history writes (optional)'
+        required: false
+
+jobs:
+  web-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      FIREBASE_PROJECT: ${{ inputs.firebase_project }}
+      CF_BRANCH: ${{ inputs.cf_branch }}
+      ONLY: ${{ inputs.only }}
+      CI: 'true'
+    steps:
+      - name: Checkout app (the caller repo, e.g. starlabs-angular)
+        uses: actions/checkout@v4
+
+      - name: Clone the E2E engine repo (starlabs-e2e-tests) → ./e2e
+        uses: actions/checkout@v4
+        with:
+          repository: School-of-Excellence/starlabs-e2e-tests
+          ref: ${{ inputs.e2e_ref }}
+          path: e2e
+          token: ${{ secrets.CICD_PAT }}
+
+      - name: Clone the Cloud Functions repo (real triggers) → ./starlabs-cloud-function
+        run: |
+          if [ -z "${{ secrets.CICD_PAT }}" ]; then
+            echo "::error::CICD_PAT secret is not set — needed to clone the private CF repo."; exit 1
+          fi
+          git clone --depth 1 --branch "$CF_BRANCH" \
+            "https://x-access-token:${{ secrets.CICD_PAT }}@github.com/School-of-Excellence/starlabs-cloud-function.git" \
+            starlabs-cloud-function
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'   # functions/package.json engines.node == 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'   # the Firestore/Auth emulators require a JRE
+
+      - name: Overlay emulator config from the e2e repo onto the app
+        run: bash e2e/ci/setup-emulator-config.sh   # runs from the app root (pwd)
+
+      - name: Install firebase-tools
+        run: npm i -g firebase-tools@latest
+
+      - name: Install app deps
+        run: npm ci --legacy-peer-deps
+
+      - name: Install Cloud Functions deps
+        run: cd starlabs-cloud-function/functions && npm ci
+
+      - name: Install e2e deps
+        run: cd e2e && npm ci
+
+      - name: Install Playwright chromium
+        run: cd e2e && npx playwright install --with-deps chromium
+
+      - name: Boot Firebase emulator + Cloud Functions
+        run: |
+          cd e2e && nohup bash scripts/deploy-cf-emulator.sh > /tmp/emu.log 2>&1 &
+          for i in $(seq 1 90); do grep -q "All emulators ready" /tmp/emu.log && break; sleep 2; done
+          if ! grep -q "All emulators ready" /tmp/emu.log; then echo "::error::emulator failed to boot"; cat /tmp/emu.log; exit 1; fi
+          grep -E "functions: Loaded|All emulators ready" /tmp/emu.log
+
+      - name: Boot emulator-wired Angular app
+        run: |
+          nohup npm run start:emulator > /tmp/app.log 2>&1 &
+          for i in $(seq 1 120); do curl -sf http://localhost:4200 >/dev/null 2>&1 && break; sleep 3; done
+          if ! curl -sf http://localhost:4200 >/dev/null 2>&1; then echo "::error::app failed to serve on :4200"; tail -60 /tmp/app.log; exit 1; fi
+
+      - name: Run isolated queue e2e suite (the gate)
+        id: gate
+        run: cd e2e && EMU_REUSE=1 EMU_REUSE_APP=1 TESTRUNID=run1 bash scripts/run-isolated.sh
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 14
+
+      # APPEND-ONLY HISTORY (M6): record this run immutably to starlabs-cicd (Firestore cicd-audit + Storage).
+      # Best-effort — no-ops if STARLABS_CICD_SA is unset, and never fails the gate (HISTORY_STRICT unset).
+      - name: Record run in append-only history
+        if: always()
+        env:
+          STARLABS_CICD_SA_JSON: ${{ secrets.STARLABS_CICD_SA }}
+        run: |
+          if [ -z "$STARLABS_CICD_SA_JSON" ]; then
+            echo "STARLABS_CICD_SA not set — skipping history write (non-fatal)."; exit 0
+          fi
+          echo "$STARLABS_CICD_SA_JSON" > "$RUNNER_TEMP/cicd-sa.json"
+          cd e2e
+          STARLABS_CICD_SA="$RUNNER_TEMP/cicd-sa.json" \
+          REPO="${{ github.repository }}" \
+          BRANCH="${{ github.head_ref || github.ref_name }}" \
+          SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
+          ACTOR="${{ github.actor }}" \
+          SOURCE=ci \
+          SUITE=queue \
+          STAGE=gate \
+          RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
+          REPORT_DIR=playwright-report \
+          ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \
+          node scripts/history/record-run.cjs
