@@ -220,18 +220,19 @@ async function openStudioAsMember(page, profileId: string, expectLivePanel = tru
   await loginAsSpecialist(page, 0);
   const studio = new StudioPage(page);
   await studio.load(profileId);
-  // The seeded pairing renders one studio button for this member; select it to mount the live panel.
-  await expect.poll(async () => await studio.studioButtonCount(), {
-    timeout: 30_000,
-    message: 'seeded studio button should render for the acting member',
-  }).toBeGreaterThan(0);
   if (expectLivePanel) {
-    // Race-free open: wait for the studio's live_tv icon (live-assignment stream populated
-    // mapStudioLiveAssignment) BEFORE selecting, so onStudioSelect (ts:642) reads a non-null
-    // liveAssignment and its token subscription resolves liveAssignment.token (ts:697) — otherwise the
-    // participant-name <h3> renders empty (selected-before-the-stream race; see StudioPage.waitForLiveTv).
+    // dynamic-studio-v2 AUTO-ENTERS the live panel when this member already has an active live session
+    // (component ts ~1411), which HIDES the "Your Studios" picker (html *ngIf="...liveAssignment == null").
+    // Golden v1 always showed the picker. selectStudioWithLivePanel now tolerates BOTH: it clicks the
+    // picker button when shown, or proceeds on the already-mounted live panel when v2 auto-entered.
     await studio.selectStudioWithLivePanel(PAIRING_ID);
   } else {
+    // No live session for this member ⇒ no auto-enter ⇒ the "Your Studios" picker renders; the seeded
+    // pairing shows exactly one studio button to select.
+    await expect.poll(async () => await studio.studioButtonCount(), {
+      timeout: 30_000,
+      message: 'seeded studio button should render for the acting member',
+    }).toBeGreaterThan(0);
     await studio.selectStudio({ studioId: PAIRING_ID });
   }
   return studio;

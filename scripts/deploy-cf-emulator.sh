@@ -14,35 +14,44 @@
 #
 # Targets: EMULATOR ONLY. Never production/starlabs-test/Watson/SalesCRM.
 #
-# Usage:
-#   e2e/scripts/deploy-cf-emulator.sh                 # foreground (Ctrl-C to stop). Default project demo-slabs-queue.
-#   FIREBASE_PROJECT=demo-slabs-queue \
+# Usage (run from the Playwright hub):
+#   scripts/deploy-cf-emulator.sh                     # foreground (Ctrl-C to stop). Default project starlabs-cicd.
 #   FB_EMU_EXTRA="--import .emu-state --export-on-exit .emu-state" \
-#       e2e/scripts/deploy-cf-emulator.sh             # persist/restore emulator state across runs
+#       scripts/deploy-cf-emulator.sh                 # persist/restore emulator state across runs
 #
 # Env knobs:
-#   FIREBASE_PROJECT   demo/test project id passed as --project (default: demo-slabs-queue). MUST NOT be prod.
-#   CF_BRANCH          expected CF repo branch (default: test/queue-e2e-deploy). Checked, not forced.
+#   FIREBASE_PROJECT   test project id passed as --project (default: starlabs-cicd). MUST NOT be prod (denylist).
+#   CF_PATH            cloud-function repo root (default: the hub's `starlabs-cloud-function` symlink).
+#   EMU_CONFIG         firebase.emulator.json path (default: the hub root, staged by ci/setup-emulator-config.sh).
+#   CF_BRANCH          expected CF repo branch (default: development). Checked, not forced.
 #   SKIP_NODE_CHECK=1  skip the Node-22 engine check/nvm switch (CI images already pin Node 22).
 #   FB_EMU_EXTRA       extra args appended to `firebase emulators:start` (e.g. --import/--export-on-exit).
 #
 set -euo pipefail
 
-# --- resolve paths (absolute, independent of cwd) ----------------------------------------------------------
+# --- resolve paths (Playwright-HUB-centric; absolute, independent of cwd) -----------------------------------
+# The Playwright repo (starlabs-e2e-tests) IS the workspace root (the testing hub). The cloud-function repo is
+# resolved via $CF_PATH (default: the gitignored `starlabs-cloud-function` symlink in the hub, created by
+# ./setup.sh) so a dev can point the hub at any local CF checkout. The app (ng serve) is resolved separately
+# by the Playwright webServer via $APP_PATH — the emulator itself needs only the CF + rules/indexes.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"   # .../starlabs-angular-queue-e2e
-CF_DIR="$REPO_ROOT/starlabs-cloud-function/functions"
-CONFIG="$REPO_ROOT/firebase.emulator.json"
+HUB_ROOT="$(cd "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"        # .../starlabs-e2e-tests (the hub)
+CF_PATH="${CF_PATH:-$HUB_ROOT/starlabs-cloud-function}"        # the cloud-function repo root (symlink/clone)
+CF_DIR="$CF_PATH/functions"
+CONFIG="${EMU_CONFIG:-$HUB_ROOT/firebase.emulator.json}"
 
-FIREBASE_PROJECT="${FIREBASE_PROJECT:-demo-slabs-queue}"
-CF_BRANCH="${CF_BRANCH:-test/queue-e2e-deploy}"
+FIREBASE_PROJECT="${FIREBASE_PROJECT:-starlabs-cicd}"
+CF_BRANCH="${CF_BRANCH:-development}"
 
-# --- safety: never a protected project ---------------------------------------------------------------------
+# --- safety: never a protected/production project (starlabs-cicd is the sanctioned CICD test project) -------
 case "$FIREBASE_PROJECT" in
   fir-sample-aae4a|watsonproduction-becde|salesleadcrm|starlabs-test|watson-test-19|salescrm-test-19)
-    echo "🛑 HARD ABORT: FIREBASE_PROJECT='$FIREBASE_PROJECT' is a protected project. The emulator must use a demo id." >&2
+    echo "🛑 HARD ABORT: FIREBASE_PROJECT='$FIREBASE_PROJECT' is a protected project. Use the emulator with starlabs-cicd (or a demo- id)." >&2
     exit 2;;
 esac
+# NOTE: starlabs-cicd is a REAL Blaze project, so its "demo-" offline guarantee does not apply — this script
+# only ever runs `firebase emulators:start` (local), and the seeders enforce FIRESTORE_EMULATOR_HOST, so no
+# request reaches the cloud. Keep the prod denylist above as the hard floor.
 
 # --- sanity: filtered entry + config present ---------------------------------------------------------------
 [ -f "$CF_DIR/index.emulator.js" ] || { echo "❌ missing $CF_DIR/index.emulator.js (the filtered emulator entry)" >&2; exit 1; }
@@ -51,7 +60,7 @@ esac
 
 # --- check the CF repo branch (warn, don't force — avoids surprising the operator) -------------------------
 if command -v git >/dev/null 2>&1; then
-  ACTUAL_BRANCH="$(git -C "$REPO_ROOT/starlabs-cloud-function" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  ACTUAL_BRANCH="$(git -C "$CF_PATH" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
   [ "$ACTUAL_BRANCH" = "$CF_BRANCH" ] || echo "⚠️  CF repo is on '$ACTUAL_BRANCH' (expected '$CF_BRANCH'). Triggers may differ."
 fi
 

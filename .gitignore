@@ -12,9 +12,26 @@ results.xml
 # emulator state
 .emu-state/
 
+# workspace targets (materialized by ./setup.sh — machine-specific symlinks, never commit)
+/app
+/starlabs-cloud-function
+/targets/
+# target registry with local paths (copy from targets.example.json; example is committed)
+/targets.json
+
+# emulator config staged at the hub root by ci/setup-emulator-config.sh (source of truth is ci/overlay/)
+/firebase.emulator.json
+/firestore.rules
+/firestore.indexes.json
+
 # secrets / local-only (never commit)
 *.local
 
 # misc
 *.log
 .DS_Store
+
+# Firebase service-account (NEVER commit)
+starlabs-cicd-sa.json
+*-sa.json
+*firebase-adminsdk*.json

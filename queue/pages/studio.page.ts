@@ -218,11 +218,26 @@ export class StudioPage {
    * @param timeout per-step budget (default 30000ms).
    */
   async selectStudioWithLivePanel(studioId: string, timeout = 30_000): Promise<void> {
-    // (1) wait for the live-assignment stream to surface this studio (live_tv icon) so the synchronous
-    //     read in onStudioSelect (ts:642) sees a populated mapStudioLiveAssignment.
-    await this.waitForLiveTv(studioId, timeout);
-    // (2) real select.
-    await this.selectStudio({ studioId });
+    // dynamic-studio-v2 AUTO-ENTERS the live panel for a member who already has an active live session
+    // (component ts ~1411 "[auto-enter] live studio found — onStudioSelect"), which HIDES the
+    // "Your Studios" picker (html *ngIf="studioList.length > 0 && liveAssignment == null"). Golden v1
+    // (dynamic-studio) always rendered the picker, so this used to wait for the button + click it.
+    // Support BOTH lines: race the picker button against the already-mounted live panel; only click
+    // when the picker is actually shown.
+    const btn = this.studioButtonAt({ studioId });
+    await expect
+      .poll(async () =>
+        (await this.liveParticipantName.isVisible().catch(() => false)) ||
+        (await btn.isVisible().catch(() => false)),
+        { timeout, message: 'studio picker button or auto-entered live panel should appear' })
+      .toBe(true);
+    if (await btn.isVisible().catch(() => false)) {
+      // (1) picker shown (v1 / not-yet-auto-entered): wait for the live-assignment stream to surface
+      //     this studio (live_tv icon) so the synchronous read in onStudioSelect sees a populated
+      //     mapStudioLiveAssignment, then (2) real select.
+      await this.waitForLiveTv(studioId, timeout);
+      await this.selectStudio({ studioId });
+    }
     // (3) wait for the live panel to hydrate the participant name (token resolved + mapProfile rendered).
     //     A plain toBeVisible would pass on an empty <h3> only if it had layout box; the app leaves it
     //     EMPTY (zero-size) until the token resolves, so visibility here == "name text rendered".

@@ -90,7 +90,7 @@ EVIDENCE="${EVIDENCE:-0}"
 BLOBS_DIR="${BLOBS_DIR:-.report-blobs}"
 if [ "$EVIDENCE" = "1" ]; then rm -rf "$BLOBS_DIR" blob-report playwright-report; mkdir -p "$BLOBS_DIR"; fi
 
-FIREBASE_PROJECT="${FIREBASE_PROJECT:-demo-slabs-queue}"
+FIREBASE_PROJECT="${FIREBASE_PROJECT:-starlabs-cicd}"   # test project (emulator-intercepted); must match the seed + app + functions emulator
 DEPLOY_SCRIPT="scripts/deploy-cf-emulator.sh"
 OPENJDK_BIN="/opt/homebrew/opt/openjdk/bin"
 EMU_RESTART_LOG="$PWD/.emu-restart.log"     # gitignored; tail this if a restart fails

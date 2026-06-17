@@ -27,11 +27,11 @@ import { spawn, ChildProcess, execSync } from 'child_process';
 import * as net from 'net';
 import * as path from 'path';
 
-export const E2E_DIR = path.resolve(__dirname, '..', '..');          // .../e2e
-export const REPO_ROOT = path.resolve(E2E_DIR, '..');                 // .../starlabs-angular-queue-e2e
+export const E2E_DIR = path.resolve(__dirname, '..', '..');          // .../starlabs-e2e-tests (the hub)
+export const REPO_ROOT = E2E_DIR;                                     // Playwright HUB = workspace root (hub-centric)
 export const DEPLOY_SCRIPT = path.join(E2E_DIR, 'scripts', 'deploy-cf-emulator.sh');
 
-export const PROJECT = process.env.FIREBASE_PROJECT || 'demo-slabs-queue';
+export const PROJECT = process.env.FIREBASE_PROJECT || 'starlabs-cicd';
 export const FIRESTORE_HOST = process.env.FIRESTORE_EMULATOR_HOST || 'localhost:8080';
 export const AUTH_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
 export const FUNCTIONS_PORT = Number(process.env.FUNCTIONS_EMULATOR_PORT || 5001);

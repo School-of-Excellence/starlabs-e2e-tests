@@ -40,7 +40,7 @@ const path = require('path');
 
 // --- PROD-SAFETY GUARDS FIRST (before any dependency), so the script can refuse cleanly anywhere ----------
 const EMU = process.env.FIRESTORE_EMULATOR_HOST;
-const PROJECT = process.env.FIREBASE_PROJECT || 'demo-slabs-queue';
+const PROJECT = process.env.FIREBASE_PROJECT || 'starlabs-cicd';
 const PROTECTED = ['fir-sample-aae4a', 'watsonproduction-becde', 'salesleadcrm', 'starlabs-test', 'watson-test-19', 'salescrm-test-19'];
 
 if (!EMU) {

@@ -1,0 +1,6 @@
+{
+  "//": "Test-target registry — keyed by REPO NAME (the stable, unique id). Copy to targets.json (gitignored) and fill in YOUR local checkout paths. Add a line per repo as the org grows (a 4th Angular app, a 2nd Flutter app, another cloud-function — no var collisions, just another entry). The hub resolves a run's targets by name. `port` (angular only) lets multiple web apps serve concurrently in one cross-project run.",
+  "starlabs-angular":        { "type": "angular",        "path": "/ABS/PATH/TO/starlabs-angular",        "port": 4200 },
+  "starlabs-cloud-function": { "type": "cloud-function", "path": "/ABS/PATH/TO/starlabs-cloud-function", "codebase": "default" },
+  "breakthroughs-flutter":   { "type": "flutter",        "path": "/ABS/PATH/TO/breakthroughs-flutter" }
+}

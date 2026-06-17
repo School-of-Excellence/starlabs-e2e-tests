@@ -13,6 +13,12 @@ const TOKEN_ID = process.argv[2] || `${TESTRUNID}_tok_${TESTRUNID}_profile_0`;
 const FORM_STAGE = process.argv[3] || 'Accelerated Evolution Level Form';
 
 async function main() {
+  // EMULATOR-ONLY: refuse to run unless the Admin SDK is pinned to the emulator. The default test project
+  // (starlabs-cicd) is a REAL Blaze project, so without this a stray run would write to the cloud.
+  if (!process.env.FIRESTORE_EMULATOR_HOST) {
+    console.error('🛑 refuse: set FIRESTORE_EMULATOR_HOST (this is an emulator-only precondition script).');
+    process.exit(2);
+  }
   assertWritable(TEST_PROJECT);
   const admin = require('firebase-admin');
   if (!admin.apps.length) admin.initializeApp({ projectId: TEST_PROJECT });

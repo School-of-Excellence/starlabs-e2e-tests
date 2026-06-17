@@ -38,13 +38,15 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
   },
-  metadata: { target: 'emulator', project: process.env.FIREBASE_PROJECT || 'demo-slabs-queue' },
+  metadata: { target: 'emulator', project: process.env.FIREBASE_PROJECT || 'starlabs-cicd' },
   projects: [
     { name: 'operator-desktop', use: { ...devices['Desktop Chrome'] } },
   ],
   // Boots the EMULATOR-wired Angular app; reuses an already-running dev server locally.
   webServer: {
-    command: 'npm --prefix .. run start:emulator',
+    // Playwright-HUB-centric: app under test resolved via $APP_PATH (default: gitignored `app` symlink in the
+    // hub, created by ./setup.sh). cwd is the hub root, so './app' resolves the symlink.
+    command: `npm --prefix ${process.env.APP_PATH || './app'} run start:emulator`,
     url: 'http://localhost:4200',
     // Must NOT reuse a foreign server: a stale CLOUD `ng serve`/`serve -s dist` on :4200 would be silently
     // reused and the suite would drive the cloud project against emulator-seeded data. Always start (and own)

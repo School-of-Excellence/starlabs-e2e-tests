@@ -17,12 +17,17 @@ export const environment = {
     auth: { url: 'http://localhost:9099' },
   },
   firebase: {
+    // projectId = starlabs-cicd (the sanctioned CICD test project) so Angular reads the SAME emulator
+    // partition the seed + the Flutter app use (the Firestore emulator partitions data by project id).
+    // apiKey/appId are dummy: main.ts calls connect*Emulator before any network use, so they're never
+    // validated against the real project. Comment header note: emulator is forced via environment.useEmulators.
     apiKey: 'demo-emulator',
-    authDomain: 'demo-slabs-queue.firebaseapp.com',
-    projectId: 'demo-slabs-queue',
-    storageBucket: 'demo-slabs-queue.appspot.com',
+    authDomain: 'starlabs-cicd.firebaseapp.com',
+    projectId: 'starlabs-cicd',
+    storageBucket: 'starlabs-cicd.appspot.com',
     messagingSenderId: '000000000000',
     appId: '1:000000000000:web:0000000000000000000000',
+    vapidKey: '', // FCM web-push key — unused in the emulator env (comms/FCM sends disabled/stubbed); present so authguard.service.ts:1268 type-checks
   },
   watson: {},
   salescrm: {},
