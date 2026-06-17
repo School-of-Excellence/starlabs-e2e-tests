@@ -27,9 +27,6 @@ on:
       firebase_project:
         type: string
         default: demo-slabs-queue
-      timeout_minutes:
-        type: number
-        default: 40
     secrets:
       POSTHOG_APIKEY:
         required: false
@@ -42,7 +39,7 @@ on:
 jobs:
   flutter-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: 40
     env:
       CI: 'true'
     steps:

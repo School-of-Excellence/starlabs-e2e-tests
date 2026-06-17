@@ -22,6 +22,29 @@
 | M5 | Flutter gate + delivery | 🟡 gate ✅; delivery ⬜ deferred (creds) | hub `flutter-e2e.yml` + flutter caller |
 | M6 | Append-only history | ✅ authored & smoke-tested | hub `scripts/history/record-run.cjs`, `record-local.sh`; wired into `web-e2e.yml` + `cf-e2e.yml` + `flutter-e2e.yml` |
 | M7 | History Dashboard + Allure | ✅ dashboard authored; Allure noted | hub `dashboard/` (login-gated SPA over `cicd-audit`) |
+| M8 | Release console (thin projection over GitHub) | 📐 design locked; build deferred until M1–M5 validated | new Angular app on starlabs-cicd (see design below) |
+
+### Decisions & fixes (2026-06-17)
+- **Enforcement:** PR-only on dev/prod cannot be *enforced* on GitHub Free+private. Chosen stopgap = **branch-guard
+  `auto_revert: true`** on dev+prod (a non-PR push by anyone but `vignesh-027` is auto-reverted). Loop-safe: the
+  revert uses `GITHUB_TOKEN`, which does not re-trigger workflows. **Plan to upgrade to GitHub Team** for real
+  branch protection (zero rework). Heads-up: devs currently push directly to `development` — communicate the switch.
+- **First-run fixes:** (1) reusable workflows had `timeout-minutes: ${{ inputs.timeout_minutes }}` — an expression
+  in a numeric field, which fails workflow compile (caller dies at 0s as "workflow file issue"); replaced with a
+  static value in `web-e2e.yml`/`cf-e2e.yml`/`flutter-e2e.yml`. (2) `preview.yml` used `firebase
+  hosting:channel:deploy --site …` — invalid in fb-tools 14 (site comes from `firebase.json`); flag removed and
+  env-gen moved before the typecheck.
+
+### M8 — Release console (locked design; thin projection over GitHub)
+A new Angular app on `starlabs-cicd` that VIEWS and orchestrates, with **GitHub as the source of truth**:
+- A Cloud Function **webhook receiver** consumes `push` / `pull_request` / `deployment_status` / `workflow_run`
+  → updates Firestore `release-candidates/{branch}` (status DERIVED, never hand-set).
+- Lifecycle: `PREVIEW_LIVE → PR_TO_DEV → GATE_PASS|FAIL → DEV_DEPLOYED → PR_TO_PROD → PROD_DEPLOYED`.
+- UI: channel list + status chip + preview URL + linked e2e report (from `cicd-audit`) + writeable QA notes +
+  one-click "Create PR → dev/prod" (GitHub API via a Function). Firebase Auth, team-restricted.
+- **Build thin** — do NOT reimplement PR/merge/deployment tracking; reuse M6 history + M7 dashboard.
+- Backend home: a dedicated functions codebase in `starlabs-cicd` (isolated from the product CF / ATC).
+  Credential (GitHub App vs PAT) + webhook home: decided when the build starts.
 
 ### Local verification (2026-06-17)
 - Gate engine smoke (`ONLY='queue/operator.spec.ts' bash scripts/run-isolated.sh`): emulator booted healthy

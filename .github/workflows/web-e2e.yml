@@ -41,10 +41,6 @@ on:
         description: 'Emulator project id (demo id; deploy-cf-emulator.sh hard-aborts on any prod id)'
         type: string
         default: demo-slabs-queue
-      timeout_minutes:
-        description: 'Job timeout'
-        type: number
-        default: 75
     secrets:
       CICD_PAT:
         description: 'PAT with read access to the private e2e + cloud-function repos'
@@ -56,7 +52,7 @@ on:
 jobs:
   web-e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.timeout_minutes }}
+    timeout-minutes: 75
     env:
       FIREBASE_PROJECT: ${{ inputs.firebase_project }}
       CF_BRANCH: ${{ inputs.cf_branch }}
