@@ -79,6 +79,16 @@ jobs:
             "https://x-access-token:${{ secrets.REPO_PAT }}@github.com/School-of-Excellence/starlabs-cloud-function.git" \
             starlabs-cloud-function
 
+      # The e2e scripts are hub-centric: they resolve the app + cloud-function via e2e/app and
+      # e2e/starlabs-cloud-function (the symlinks ./setup.sh makes locally). Recreate them in CI so
+      # setup-emulator-config.sh (APP_PATH) and deploy-cf-emulator.sh (CF_PATH + firebase's relative
+      # functions.source) resolve exactly as they do on a dev machine.
+      - name: Wire hub-style symlinks (app + cloud-function) for the e2e scripts
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE" e2e/app
+          ln -sfn "$GITHUB_WORKSPACE/starlabs-cloud-function" e2e/starlabs-cloud-function
+          ls -l e2e/app e2e/starlabs-cloud-function
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'   # functions/package.json engines.node == 22

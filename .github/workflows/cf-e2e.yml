@@ -63,6 +63,13 @@ jobs:
           path: e2e
           token: ${{ secrets.REPO_PAT }}
 
+      # Hub-style symlinks so the e2e scripts resolve the app + cloud-function (mirror local ./setup.sh).
+      - name: Wire hub-style symlinks (app + cloud-function) for the e2e scripts
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE" e2e/app
+          ln -sfn "$GITHUB_WORKSPACE/starlabs-cloud-function" e2e/starlabs-cloud-function
+          ls -l e2e/app e2e/starlabs-cloud-function
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
