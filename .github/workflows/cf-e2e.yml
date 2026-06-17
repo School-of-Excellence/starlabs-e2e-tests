@@ -27,14 +27,9 @@ on:
         type: string
         default: demo-slabs-queue
     secrets:
-      # NOTE (CF rollout): these must between them grant read to starlabs-angular AND starlabs-e2e-tests.
-      # E2E_REPO_TOKEN reads the hub; APP_REPO_TOKEN reads the Angular app harness. If a single broad PAT
-      # covers both, set the same value for both.
-      E2E_REPO_TOKEN:
-        description: 'read access to the private starlabs-e2e-tests (hub) repo'
-        required: true
-      APP_REPO_TOKEN:
-        description: 'read access to the private starlabs-angular repo (the app harness for the CF gate)'
+      # One GitHub PAT with read access to starlabs-e2e-tests AND starlabs-angular (the CF gate clones both).
+      REPO_PAT:
+        description: 'GitHub PAT with read access to the private starlabs-e2e-tests + starlabs-angular repos'
         required: true
       STARLABS_CICD_SA:
         description: 'starlabs-cicd service-account JSON — enables append-only history writes (optional)'
@@ -53,7 +48,7 @@ jobs:
         with:
           repository: School-of-Excellence/starlabs-angular
           ref: ${{ inputs.app_branch }}
-          token: ${{ secrets.APP_REPO_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
 
       - name: Checkout the Cloud Functions PR head (caller) → ./starlabs-cloud-function
         uses: actions/checkout@v4
@@ -66,7 +61,7 @@ jobs:
           repository: School-of-Excellence/starlabs-e2e-tests
           ref: ${{ inputs.e2e_ref }}
           path: e2e
-          token: ${{ secrets.E2E_REPO_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
 
       - uses: actions/setup-node@v4
         with:

@@ -30,8 +30,8 @@ on:
     secrets:
       POSTHOG_APIKEY:
         required: false
-      E2E_REPO_TOKEN:
-        description: 'Needed only when run_integration=true (to clone the e2e engine for emulator+seed)'
+      REPO_PAT:
+        description: 'GitHub PAT with read access to starlabs-e2e-tests (only needed when run_integration=true)'
         required: false
       STARLABS_CICD_SA:
         required: false
@@ -88,7 +88,7 @@ jobs:
           repository: School-of-Excellence/starlabs-e2e-tests
           ref: ${{ inputs.e2e_ref }}
           path: e2e
-          token: ${{ secrets.E2E_REPO_TOKEN }}
+          token: ${{ secrets.REPO_PAT }}
 
       - name: Boot emulator + CF and seed (project starlabs-cicd)
         if: ${{ inputs.run_integration }}
