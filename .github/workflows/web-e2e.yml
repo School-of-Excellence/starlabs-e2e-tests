@@ -41,6 +41,10 @@ on:
         description: 'Emulator project id (demo id; deploy-cf-emulator.sh hard-aborts on any prod id)'
         type: string
         default: demo-slabs-queue
+      evidence:
+        description: "EVIDENCE=1 captures a screenshot + trace per test into the uploaded report (debugging)"
+        type: string
+        default: '0'
     secrets:
       REPO_PAT:
         description: 'GitHub PAT with read access to the private starlabs-e2e-tests + starlabs-cloud-function repos'
@@ -57,6 +61,7 @@ jobs:
       FIREBASE_PROJECT: ${{ inputs.firebase_project }}
       CF_BRANCH: ${{ inputs.cf_branch }}
       ONLY: ${{ inputs.only }}
+      EVIDENCE: ${{ inputs.evidence }}
       CI: 'true'
     steps:
       - name: Checkout app (the caller repo, e.g. starlabs-angular)
