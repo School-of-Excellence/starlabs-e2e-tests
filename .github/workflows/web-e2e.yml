@@ -38,9 +38,9 @@ on:
         type: string
         default: ''
       firebase_project:
-        description: 'Emulator project id (demo id; deploy-cf-emulator.sh hard-aborts on any prod id)'
+        description: 'Emulator project id — MUST match the app overlay projectId (starlabs-cicd) or auth/reads silently break (SETUP §3)'
         type: string
-        default: demo-slabs-queue
+        default: starlabs-cicd
       evidence:
         description: "EVIDENCE=1 captures a screenshot + trace per test into the uploaded report (debugging)"
         type: string

@@ -26,7 +26,7 @@ on:
         default: main
       firebase_project:
         type: string
-        default: demo-slabs-queue
+        default: starlabs-cicd
     secrets:
       POSTHOG_APIKEY:
         required: false

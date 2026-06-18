@@ -23,9 +23,9 @@ on:
         type: string
         default: main
       firebase_project:
-        description: 'Emulator project id (demo id; deploy-cf-emulator.sh hard-aborts on any prod id)'
+        description: 'Emulator project id — MUST match the app overlay projectId (starlabs-cicd) or auth/reads silently break (SETUP §3)'
         type: string
-        default: demo-slabs-queue
+        default: starlabs-cicd
     secrets:
       # One GitHub PAT with read access to starlabs-e2e-tests AND starlabs-angular (the CF gate clones both).
       REPO_PAT:
