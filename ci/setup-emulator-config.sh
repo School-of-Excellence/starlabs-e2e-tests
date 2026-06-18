@@ -37,13 +37,17 @@ mkdir -p "$APP_PATH/src/environments"
 cp "$OVERLAY/environment.emulator.ts" "$APP_PATH/src/environments/environment.emulator.ts"
 echo "✓ environment.emulator.ts → $APP_PATH/src/environments/"
 
-# 2b) ensure the BASE environment.ts exists (app's src/environments/* is gitignored; a fresh checkout has neither).
-#     main.ts imports './environments/environment'; the emulator build's fileReplacement swaps it, but the import
-#     must still resolve. Copy if absent (does NOT clobber a real base env).
-if [ ! -f "$APP_PATH/src/environments/environment.ts" ]; then
-  cp "$OVERLAY/environment.emulator.ts" "$APP_PATH/src/environments/environment.ts"
-  echo "✓ environment.ts created (base import fallback — replaced by environment.emulator.ts at build)"
-fi
+# 2b) ensure the BASE + dev environment files exist (app's src/environments/* is gitignored; a fresh checkout
+#     has none). App code imports BOTH './environments/environment' AND './environments/environment.development'
+#     directly (the latter in ~13 places), so both must resolve or the emulator build fails with TS2307.
+#     Copy emulator-pointing fallbacks if absent (does NOT clobber a real env; the emulator build's
+#     fileReplacement still swaps environment.ts → environment.emulator.ts at build time).
+for base in environment.ts environment.development.ts; do
+  if [ ! -f "$APP_PATH/src/environments/$base" ]; then
+    cp "$OVERLAY/environment.emulator.ts" "$APP_PATH/src/environments/$base"
+    echo "✓ $base created (emulator fallback — gitignored in the app; absent on a fresh checkout)"
+  fi
+done
 
 # 3) add the 'emulator' build + serve configurations to the app's angular.json (node, robust to spaces)
 node -e '

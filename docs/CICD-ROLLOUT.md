@@ -25,6 +25,18 @@
 | M8 | Release console (thin projection over GitHub) | 📐 design locked; build deferred until M1–M5 validated | new Angular app on starlabs-cicd (see design below) |
 
 ### Decisions & fixes (2026-06-17)
+- **Test-data strategy (LOCKED):** two data planes, isolation lives in the GATE not the preview.
+  - **E2E gate → locked, isolated data.** Each gate run is a hermetic **emulator** sandbox (Firestore + the real
+    CF triggers loaded in) with a **fresh seed per spec file**; multiple PRs/branches = separate CI runs = zero
+    collision. The exact **seed snapshot is archived in `cicd-audit`** (add an optional post-run Firestore export
+    for the *final* state) → revisitable forever. This is where "per-test isolated, locked-for-reference" lives.
+  - **Preview channel → shared `starlabs-cicd`, seeded sample data** (structure-replica of prod, NOT a dev/prod
+    copy), reset nightly + on-demand. All 3 apps' previews point at the SAME starlabs-cicd default DB so CF
+    triggers work normally. (Switch `preview.yml` off `starlabs-test` → `starlabs-cicd`; needs a `FIREBASE_CICD_CONFIG`.)
+  - **Rejected:** per-branch named Firestore DBs — breaks because CF triggers bind to one database and 3 repos ×
+    N PRs can't coordinate which DB each uses. Isolation belongs in the emulator gate, not the hosted preview.
+  - **Expiry:** preview channel 7d · reports + logs + seed/export snapshots **never** expire (`cicd-audit`/GCS) ·
+    (no per-branch live DB to expire).
 - **Enforcement:** PR-only on dev/prod cannot be *enforced* on GitHub Free+private. Chosen stopgap = **branch-guard
   `auto_revert: true`** on dev+prod (a non-PR push by anyone but `vignesh-027` is auto-reverted). Loop-safe: the
   revert uses `GITHUB_TOKEN`, which does not re-trigger workflows. **Plan to upgrade to GitHub Team** for real
