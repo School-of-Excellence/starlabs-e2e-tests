@@ -23,8 +23,8 @@ import { BoardComponent } from './board/board.component';
         <button (click)="auth.signOut()">Sign out</button>
       </ng-container>
       <ng-template #signedOut>
-        <!-- TODO(auth): wire Google sign-in (see dashboard/index.html for the popup flow). -->
-        <button class="primary" disabled title="Auth wiring TODO">Sign in</button>
+        <button class="primary" (click)="auth.signIn()">Sign in</button>
+        <span *ngIf="auth.signInError() as err" style="color:#f87171;font-size:12px;max-width:300px">{{ err }}</span>
       </ng-template>
     </header>
 

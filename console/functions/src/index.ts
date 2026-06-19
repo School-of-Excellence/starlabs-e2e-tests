@@ -15,7 +15,8 @@
  * This is a SCAFFOLD. Every place that needs a live credential is marked TODO.
  */
 
-import { onRequest, onCall, HttpsError, CallableRequest } from 'firebase-functions/v2/https';
+import { onRequest, onCall, HttpsError, CallableRequest, Request } from 'firebase-functions/v2/https';
+import type { Response } from 'express';
 import { defineSecret } from 'firebase-functions/params';
 import * as logger from 'firebase-functions/logger';
 import { initializeApp } from 'firebase-admin/app';
@@ -178,7 +179,7 @@ function shortRepo(payload: any): string {
 
 export const webhookReceiver = onRequest(
   { region, secrets: [GITHUB_WEBHOOK_SECRET], cors: false },
-  async (req, res) => {
+  async (req: Request, res: Response) => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
       return;
@@ -363,7 +364,7 @@ interface SetOkToReleaseData {
 
 export const setOkToRelease = onCall<SetOkToReleaseData>(
   { region },
-  async (req) => {
+  async (req: CallableRequest<SetOkToReleaseData>) => {
     const caller = requireAuth(req);
     const { repo, branch } = req.data ?? ({} as SetOkToReleaseData);
     if (!repo || !branch) {
@@ -408,7 +409,7 @@ interface CreatePullRequestData {
 
 export const createPullRequest = onCall<CreatePullRequestData>(
   { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
-  async (req) => {
+  async (req: CallableRequest<CreatePullRequestData>) => {
     const caller = requireAuth(req);
     const { repo, head, base, title, body } = req.data ?? ({} as CreatePullRequestData);
     if (!repo || !head || !base) {
@@ -468,7 +469,7 @@ interface ApproveAndMergeData {
 
 export const approveAndMerge = onCall<ApproveAndMergeData>(
   { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
-  async (req) => {
+  async (req: CallableRequest<ApproveAndMergeData>) => {
     // GUARD (a): authenticate via Firebase Auth.
     const caller = requireAuth(req);
     const { repo, base, prNumber, mergeMethod } = req.data ?? ({} as ApproveAndMergeData);

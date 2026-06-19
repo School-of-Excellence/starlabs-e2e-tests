@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "starlabs-cicd-console",
+    "site": "cicdconsole",
     "public": "dist/console/browser",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]

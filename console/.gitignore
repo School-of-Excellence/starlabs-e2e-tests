@@ -5,7 +5,7 @@
 /.angular/cache
 node_modules
 
-# Local Firebase web config (real keys) — never commit; use firebase.config.example.ts
+# Local environment file with real keys — never commit (copy from firebase.config.example.ts)
 /src/environments/firebase.config.ts
 
 # Firebase tooling

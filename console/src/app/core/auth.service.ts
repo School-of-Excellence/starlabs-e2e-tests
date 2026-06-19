@@ -1,56 +1,88 @@
-import { Injectable, signal } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
+import {
+  Auth,
+  authState,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
+  signOut,
+  User,
+} from '@angular/fire/auth';
+import { Firestore, doc, getDoc } from '@angular/fire/firestore';
 
-/** Minimal view of the signed-in user the board needs. */
 export interface ConsoleUser {
   email: string;
   displayName?: string;
 }
 
-/**
- * Auth + role gate for the console.
- *
- * Two checks matter for the board:
- *  - who is signed in (Firebase Auth, restricted to the team — ARCHITECTURE.md §7), and
- *  - whether they're an APPROVER (allowed to approve & merge into development/production).
- *
- * The console DOUBLES GitHub's branch-protection guard: it checks the approver's identity
- * before calling the merge Cloud Function (ARCHITECTURE.md §8). The Cloud Function re-checks
- * server-side — the client check is only to disable buttons; it is NOT a security boundary.
- */
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  /** Current user. In mock mode this is seeded so the board renders signed-in. */
-  readonly user = signal<ConsoleUser | null>({
-    email: 'reviewer@soexcellence.com',
-    displayName: 'Mock Reviewer',
-  });
+  private readonly auth = inject(Auth);
+  private readonly fs = inject(Firestore);
 
-  // TODO(auth): replace the seeded signal above with Firebase Auth state.
-  //   constructor(private auth: Auth) {
-  //     authState(this.auth).subscribe(u =>
-  //       this.user.set(u ? { email: u.email!, displayName: u.displayName ?? undefined } : null));
-  //   }
+  readonly user = signal<ConsoleUser | null>(null);
+  readonly signInError = signal<string | null>(null);
+  private approverEmails = new Set<string>();
 
-  /**
-   * TODO(role): the approver allowlist is the source of truth for who may approve & merge.
-   * It MUST be enforced server-side in the merge Cloud Function (read from config or a
-   * Firestore `console-config/approvers` doc). This client list is a STUB — it only governs
-   * button enablement and is duplicated here purely for UX. Keep it in sync with
-   * .github/CODEOWNERS (per ARCHITECTURE.md §8, CODEOWNERS can differ per base branch).
-   */
-  private readonly APPROVER_ALLOWLIST_STUB = new Set<string>([
-    'appexperience@soexcellence.com',
-    // TODO: add real approver emails / load from console-config/approvers
-  ]);
+  constructor() {
+    // Pick up the user if they return from a Google redirect.
+    getRedirectResult(this.auth)
+      .then((result) => {
+        if (result?.user) this.applyUser(result.user);
+      })
+      .catch((e: any) => {
+        console.error('[auth] redirect result error:', e?.code, e?.message);
+        this.signInError.set(e?.message ?? 'Sign-in failed');
+      });
 
-  /** True if the signed-in user is on the approver allowlist. STUB — see note above. */
+    // Keep user in sync across tabs and on page reload.
+    authState(this.auth).subscribe((u) => {
+      if (u) {
+        this.applyUser(u);
+      } else {
+        this.user.set(null);
+        this.approverEmails.clear();
+      }
+    });
+  }
+
+  private applyUser(u: User): void {
+    this.user.set({ email: u.email!, displayName: u.displayName ?? undefined });
+    this.loadApprovers();
+  }
+
+  private async loadApprovers(): Promise<void> {
+    try {
+      const snap = await getDoc(doc(this.fs, 'console-config', 'allowlists'));
+      if (!snap.exists()) return;
+      const data = snap.data() as { approvers?: { development?: string[]; production?: string[] } };
+      const all = [
+        ...(data.approvers?.development ?? []),
+        ...(data.approvers?.production ?? []),
+      ];
+      this.approverEmails = new Set(all.map((e) => e.toLowerCase()));
+    } catch (e) {
+      console.error('[auth] loadApprovers failed:', e);
+    }
+  }
+
   isApprover(): boolean {
     const email = this.user()?.email?.toLowerCase();
-    return !!email && this.APPROVER_ALLOWLIST_STUB.has(email);
+    return !!email && this.approverEmails.has(email);
+  }
+
+  async signIn(): Promise<void> {
+    this.signInError.set(null);
+    try {
+      await signInWithRedirect(this.auth, new GoogleAuthProvider());
+    } catch (e: any) {
+      console.error('[auth] signIn failed:', e?.code, e?.message);
+      this.signInError.set(e?.message ?? 'Sign-in failed');
+    }
   }
 
   signOut(): void {
-    // TODO(auth): call signOut(this.auth)
+    signOut(this.auth);
     this.user.set(null);
   }
 }

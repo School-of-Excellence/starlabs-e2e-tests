@@ -5,8 +5,12 @@
   "targets": {
     "starlabs-cicd": {
       "hosting": {
-        "console": ["starlabs-cicd-console"]
+        "console": [
+          "cicdconsole",
+          "starlabs-cicd-console"
+        ]
       }
     }
-  }
+  },
+  "etags": {}
 }

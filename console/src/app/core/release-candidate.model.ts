@@ -41,7 +41,7 @@ export interface RcNote {
  * (ARCHITECTURE.md §7 — Data model.)
  */
 export interface ReleaseCandidate {
-  /** Firestore doc id — the branch name. */
+  /** Firestore doc id — `${repo}__${branch}` (double underscore). */
   id: string;
   repo: string;
   branch: string;
@@ -51,7 +51,11 @@ export interface ReleaseCandidate {
   /** Links to a doc in the `cicd-audit` history collection (the e2e report). */
   reportRunId?: string;
   prDevUrl?: string;
+  /** GitHub PR number into development (required by approveAndMerge). */
+  prDevNumber?: number;
   prProdUrl?: string;
+  /** GitHub PR number into production (required by approveAndMerge). */
+  prProdNumber?: number;
   notes?: RcNote[];
   /** Email/handle of whoever set OK_TO_RELEASE. */
   okToReleaseBy?: string;

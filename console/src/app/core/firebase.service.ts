@@ -1,5 +1,8 @@
-import { Injectable, signal } from '@angular/core';
-import { Observable, of } from 'rxjs';
+import { Injectable, signal, computed, inject } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
+import { Observable } from 'rxjs';
+import { Firestore, collection, query, orderBy, collectionData } from '@angular/fire/firestore';
+import { Functions, httpsCallable } from '@angular/fire/functions';
 import { ReleaseCandidate, RcStatus } from './release-candidate.model';
 import { MOCK_RELEASE_CANDIDATES } from './mock-data';
 import { environment } from '../../environments/environment';
@@ -25,28 +28,30 @@ export interface ActionResult {
 export class FirebaseService {
   readonly useMock = environment.useMock;
 
-  /** Local copy used by mock mode so optimistic mutations are visible. */
-  private mockStore = signal<ReleaseCandidate[]>(structuredClone(MOCK_RELEASE_CANDIDATES));
+  private readonly fs = inject(Firestore);
+  private readonly fns = inject(Functions);
 
-  // TODO(firebase): inject Firestore + Functions once providers are wired in app.config.ts.
-  //   constructor(private fs: Firestore, private fns: Functions) {}
+  /** Local copy used by mock mode so optimistic mutations are visible. */
+  private readonly mockStore = signal<ReleaseCandidate[]>(structuredClone(MOCK_RELEASE_CANDIDATES));
+
+  /** Reactive sorted stream for mock mode — re-emits on every applyMock() call. */
+  private readonly mockCandidates$ = toObservable(
+    computed(() =>
+      [...this.mockStore()].sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')),
+    ),
+  );
 
   /**
    * Stream of release candidates, newest-updated first.
-   * MOCK: returns fixtures. LIVE: collectionData(query(release-candidates, orderBy updatedAt desc)).
+   * MOCK: returns a live signal-backed stream so optimistic mutations re-render the board.
+   * LIVE: collectionData(query(release-candidates, orderBy updatedAt desc)).
    */
   releaseCandidates(): Observable<ReleaseCandidate[]> {
     if (this.useMock) {
-      const sorted = [...this.mockStore()].sort(
-        (a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''),
-      );
-      return of(sorted);
+      return this.mockCandidates$;
     }
-    // TODO(firebase): live read
-    //   const col = collection(this.fs, 'release-candidates');
-    //   return collectionData(query(col, orderBy('updatedAt', 'desc')), { idField: 'id' })
-    //     as Observable<ReleaseCandidate[]>;
-    throw new Error('Live Firestore read not wired — set environment.useMock=true or wire app.config.ts');
+    const col = collection(this.fs, 'release-candidates');
+    return collectionData(query(col, orderBy('updatedAt', 'desc')), { idField: 'id' }) as Observable<ReleaseCandidate[]>;
   }
 
   /** Build the history-dashboard deep link for a report run (cicd-audit). */
@@ -61,19 +66,19 @@ export class FirebaseService {
   // The server re-checks the approver allowlist (ARCHITECTURE.md §8). These methods only
   // marshal the call; AuthService gates the buttons client-side for UX.
 
-  /** Team sign-off: the only manually-set status. → callable `markOkToRelease`. */
+  /** Team sign-off: the only manually-set status. → callable `setOkToRelease`. */
   markOkToRelease(rc: ReleaseCandidate, by: string): Promise<ActionResult> {
-    return this.invoke('markOkToRelease', { branch: rc.branch, by }, 'OK_TO_RELEASE');
+    return this.invoke('setOkToRelease', rc, { repo: rc.repo, branch: rc.branch }, 'OK_TO_RELEASE', by);
   }
 
-  /** Open the PR feature → development. → callable `createPrToDev`. */
+  /** Open the PR feature → development. → callable `createPullRequest`. */
   createPrToDev(rc: ReleaseCandidate): Promise<ActionResult> {
-    return this.invoke('createPrToDev', { branch: rc.branch }, 'PR_TO_DEV');
+    return this.invoke('createPullRequest', rc, { repo: rc.repo, head: rc.branch, base: 'development' }, 'PR_TO_DEV');
   }
 
-  /** Open the PR development → production. → callable `createPrToProd`. */
+  /** Open the PR development → production. → callable `createPullRequest`. */
   createPrToProd(rc: ReleaseCandidate): Promise<ActionResult> {
-    return this.invoke('createPrToProd', { branch: rc.branch }, 'PR_TO_PROD');
+    return this.invoke('createPullRequest', rc, { repo: rc.repo, head: rc.branch, base: 'production' }, 'PR_TO_PROD');
   }
 
   /**
@@ -82,7 +87,9 @@ export class FirebaseService {
    */
   approveAndMerge(rc: ReleaseCandidate): Promise<ActionResult> {
     const next: RcStatus = rc.status === 'PR_TO_PROD' ? 'PROD_MERGED' : 'DEV_MERGED';
-    return this.invoke('approveAndMerge', { branch: rc.branch, stage: rc.status }, next);
+    const base = rc.status === 'PR_TO_PROD' ? 'production' : 'development';
+    const prNumber = rc.status === 'PR_TO_PROD' ? rc.prProdNumber : rc.prDevNumber;
+    return this.invoke('approveAndMerge', rc, { repo: rc.repo, base, prNumber }, next);
   }
 
   // ----------------------------------------------------------------------------------------
@@ -90,32 +97,32 @@ export class FirebaseService {
   /** Shared call path: mock-logs or invokes the named callable. */
   private async invoke(
     name: string,
+    rc: ReleaseCandidate,
     payload: Record<string, unknown>,
     optimisticNext: RcStatus,
+    okToReleaseBy?: string,
   ): Promise<ActionResult> {
     if (this.useMock) {
       // eslint-disable-next-line no-console
       console.info(`[mock] would call Cloud Function "${name}"`, payload);
-      this.applyMock(payload['branch'] as string, optimisticNext, payload['by'] as string | undefined);
+      this.applyMock(rc.id, optimisticNext, okToReleaseBy);
       return { ok: true, message: `(mock) ${name} → ${optimisticNext}`, nextStatus: optimisticNext };
     }
 
-    // TODO(firebase): wire the real callable.
-    //   const callable = httpsCallable<typeof payload, ActionResult>(this.fns, name);
-    //   const res = await callable(payload);
-    //   return res.data;
-    throw new Error(`Callable "${name}" not wired — set environment.useMock=true or wire app.config.ts`);
+    const callable = httpsCallable<typeof payload, ActionResult>(this.fns, name);
+    const res = await callable(payload);
+    return res.data;
   }
 
   /** Optimistic local mutation so mock-mode buttons visibly advance the board. */
-  private applyMock(branch: string, next: RcStatus, by?: string): void {
+  private applyMock(id: string, next: RcStatus, okToReleaseBy?: string): void {
     this.mockStore.update((list) =>
       list.map((rc) =>
-        rc.branch === branch
+        rc.id === id
           ? {
               ...rc,
               status: next,
-              okToReleaseBy: next === 'OK_TO_RELEASE' ? by ?? rc.okToReleaseBy : rc.okToReleaseBy,
+              okToReleaseBy: next === 'OK_TO_RELEASE' ? okToReleaseBy ?? rc.okToReleaseBy : rc.okToReleaseBy,
               updatedAt: new Date().toISOString(),
             }
           : rc,
