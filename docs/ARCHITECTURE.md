@@ -20,10 +20,10 @@ the source of truth**.
 
 | Repo | Role | Builds into | Pipeline files it carries |
 |---|---|---|---|
-| **starlabs-angular** ("Starlabs 19") | Web app (Angular 19 + Firebase) | a website on Firebase Hosting | `preview.yml`, `queue-e2e.yml`, `deploy_19.yml`, `branch-guard.yml` |
-| **starlabs-cloud-function** | Backend (Firestore triggers) | Firebase Functions | `cf-e2e.yml`, `branch-guard.yml` |
-| **breakthroughs-flutter** | Mobile app (Flutter) | APK / IPA / web build | `flutter-e2e.yml`, `branch-guard.yml` |
-| **starlabs-e2e-tests** (**the HUB**) | Shared test engine + reusable pipelines + history + the release console | — (tooling/platform) | `web-e2e.yml`, `cf-e2e.yml`, `flutter-e2e.yml`, `branch-guard.yml`, `scripts/`, `console/` |
+| **starlabs-angular** ("Starlabs 19") | Web app (Angular 19 + Firebase) | a website on Firebase Hosting | `preview.yml`, `queue-e2e.yml`, `deploy_19.yml` |
+| **starlabs-cloud-function** | Backend (Firestore triggers) | Firebase Functions | `cf-e2e.yml` |
+| **breakthroughs-flutter** | Mobile app (Flutter) | APK / IPA / web build | `flutter-e2e.yml` |
+| **starlabs-e2e-tests** (**the HUB**) | Shared test engine + reusable pipelines + history + the release console | — (tooling/platform) | `web-e2e.yml`, `cf-e2e.yml`, `flutter-e2e.yml`, `scripts/`, `console/` |
 
 The three product repos each carry only a **thin caller** that delegates to the hub's reusable workflow, so the
 pipeline logic is defined once and inherited everywhere.
@@ -34,7 +34,7 @@ pipeline logic is defined once and inherited everywhere.
 
 ```
         ┌──────────────────────── THE HUB · starlabs-e2e-tests ───────────────────────────┐
-        │ reusable pipelines:  web-e2e.yml · cf-e2e.yml · flutter-e2e.yml · branch-guard   │
+        │ reusable pipelines:  web-e2e.yml · cf-e2e.yml · flutter-e2e.yml                  │
         │ test engine:         scripts/run-isolated.sh + Firebase emulator + seed fixtures │
         │ history:             scripts/history/record-run.cjs → Firestore cicd-audit       │
         │ release console:     console/  (Angular UI + Functions backend) → starlabs-cicd  │
@@ -139,28 +139,23 @@ Two access requirements, both **branch-level** — which on GitHub require the *
 | **Only allowlist can push** to development/production | branch protection: "Require a pull request before merging" + "Restrict who can push to matching branches" (allowlist). Merging is a push, so this also restricts merging. |
 | **Only allowlist can approve** PRs to development/production | branch protection: "Require approvals" + "Require review from Code Owners" + `.github/CODEOWNERS`. CODEOWNERS is read from the PR's **base branch**, so development and production can have **different** approver lists. |
 
-**Chosen enforcement today — console-gated, stay on Free.** We are not upgrading the plan yet. Instead the
-**release console is the merge authority**:
-- The console's **GitHub-App bot** is the only identity that calls the merge API, and it merges **only** when the
-  caller is on the console's **per-branch approver allowlist** (a development list and a stricter production list,
-  mirroring the [`.github/CODEOWNERS`](../.github/CODEOWNERS) model).
-- Developers are asked **by policy** to release through the console rather than merging directly.
-- The `branch-guard` tripwire is **alert-only** (no auto-revert — too disruptive): it surfaces drift, it does not
-  block it.
+**Status (2026-06-18): enforcement is DEFERRED — Phase 3, optional.** During rollout there is **no push/merge
+restriction**: `branch-guard` has been **removed**, and **PR-only is team policy**, not a hard rule. This keeps the
+team unblocked while the workflow is adopted.
 
-**Honest limitation on Free:** this is a *policy + tooling* gate, not a hard wall. GitHub Free cannot restrict who
-pushes or merges, so a determined developer can still merge via the **GitHub UI**. CODEOWNERS + the console gate
-make that a deliberate, visible bypass — not an enforced barrier.
+**When we choose to enforce (the optional final layer), two routes:**
+- **GitHub Team + branch protection** — "Require a pull request" + "Restrict who can push" + "Require review from
+  Code Owners" (per-branch `.github/CODEOWNERS`). The real hard wall.
+- **Console-as-merge-authority** — the release console's GitHub-App bot is the only merger, gated by a per-branch
+  approver allowlist. Softer (on Free a determined dev can still merge via the GitHub UI) but needs no plan upgrade.
 
-**The hard wall = GitHub Team + branch protection** ("Require a PR", "Restrict who can push", "Require review
-from Code Owners"). That converts both requirements into enforced rules. Everything here is **forward-compatible —
-zero rework**; when Team is enabled the console gate becomes redundant defence-in-depth instead of the only gate.
+Everything built is **forward-compatible — zero rework** when either is switched on.
 
 ---
 
 ## 9. Secrets (per repo / org)
 
-`CICD_PAT` (gate clones private repos) · `FIREBASE_TEST_CONFIG` / `FIREBASE_PROD_CONFIG` · `WATSON_*` /
+`REPO_PAT` (gate clones private repos) · `FIREBASE_TEST_CONFIG` / `FIREBASE_PROD_CONFIG` · `WATSON_*` /
 `SALESCRM_*` · `PICOVOICE_ACCESS_KEY` · `GOOGLE_SERVICE_TEST` / `GOOGLE_SERVICE_PROD` (deploys) ·
 `STARLABS_CICD_SA` (history writes) · `POSTHOG_APIKEY` (flutter) · later a GitHub App key + webhook secret
 (console). Full table in [`CICD-ROLLOUT.md`](CICD-ROLLOUT.md).

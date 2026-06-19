@@ -17,12 +17,17 @@
 | M0 | Branches + secrets baseline | 🟡 doc done — operator actions pending | this file |
 | M1 | Reusable web gate + Angular caller | ✅ authored; engine **verified green locally** | hub `web-e2e.yml`, angular `queue-e2e.yml` |
 | M2 | Angular deploy-gate harden + preview | ✅ authored | angular `deploy_19.yml`, `preview.yml` |
-| M3 | branch-guard (all repos) | ✅ authored | hub `branch-guard.yml` + 3 callers |
+| M3 | branch-guard | ❌ **DROPPED** — enforcement deferred; removed from canonical branches | — |
 | M4 | Cloud-fn gate + deploy-reconcile | 🟡 gate ✅; deploy ⛔ needs operator input | hub `cf-e2e.yml` + CF caller; hub `scripts/deploy/cf-reconcile.sh` |
 | M5 | Flutter gate + delivery | 🟡 gate ✅; delivery ⬜ deferred (creds) | hub `flutter-e2e.yml` + flutter caller |
 | M6 | Append-only history | ✅ authored & smoke-tested | hub `scripts/history/record-run.cjs`, `record-local.sh`; wired into `web-e2e.yml` + `cf-e2e.yml` + `flutter-e2e.yml` |
 | M7 | History Dashboard + Allure | ✅ dashboard authored; Allure noted | hub `dashboard/` (login-gated SPA over `cicd-audit`) |
-| M8 | Release console (thin projection over GitHub) | 📐 design locked; build deferred until M1–M5 validated | new Angular app on starlabs-cicd (see design below) |
+| M8 | Release console (Phase 1A) | ▶ **ACTIVE NEXT** — design locked, scaffold exists | hub `console/` + `console/functions/` |
+
+> **CURRENT STATE (2026-06-18):** Foundation **proven** — full cycle (preview → PR → gate → merge → deploy →
+> promote) green on the `cicd-*` sudo branches; `operator.spec` **13/0 in CI**. Canonical Angular branch =
+> **`feature/cicd-rollout`**. Real `development`/`production` untouched. See [`CICD-JOURNAL.md`](CICD-JOURNAL.md)
+> for the start-here handoff (timeline, gotchas, next steps).
 
 ### Decisions & fixes (2026-06-17)
 - **Test-data strategy (LOCKED):** two data planes, isolation lives in the GATE not the preview.
@@ -37,10 +42,10 @@
     N PRs can't coordinate which DB each uses. Isolation belongs in the emulator gate, not the hosted preview.
   - **Expiry:** preview channel 7d · reports + logs + seed/export snapshots **never** expire (`cicd-audit`/GCS) ·
     (no per-branch live DB to expire).
-- **Enforcement:** PR-only on dev/prod cannot be *enforced* on GitHub Free+private. Chosen stopgap = **branch-guard
-  `auto_revert: true`** on dev+prod (a non-PR push by anyone but `vignesh-027` is auto-reverted). Loop-safe: the
-  revert uses `GITHUB_TOKEN`, which does not re-trigger workflows. **Plan to upgrade to GitHub Team** for real
-  branch protection (zero rework). Heads-up: devs currently push directly to `development` — communicate the switch.
+- **Enforcement (UPDATED 2026-06-18): DROPPED for now.** `branch-guard` has been **removed** — no push/merge
+  restriction during rollout; **PR-only is team policy**. A hard wall (GitHub Team branch protection + CODEOWNERS,
+  or the console as merge-authority) is the **optional final layer (Phase 3)**, added later — zero rework.
+  (Superseded the earlier auto-revert stopgap.)
 - **First-run fixes:** (1) reusable workflows had `timeout-minutes: ${{ inputs.timeout_minutes }}` — an expression
   in a numeric field, which fails workflow compile (caller dies at 0s as "workflow file issue"); replaced with a
   static value in `web-e2e.yml`/`cf-e2e.yml`/`flutter-e2e.yml`. (2) `preview.yml` used `firebase
@@ -51,7 +56,7 @@
 A new Angular app on `starlabs-cicd` that VIEWS and orchestrates, with **GitHub as the source of truth**:
 - A Cloud Function **webhook receiver** consumes `push` / `pull_request` / `deployment_status` / `workflow_run`
   → updates Firestore `release-candidates/{branch}` (status DERIVED, never hand-set).
-- Lifecycle: `PREVIEW_LIVE → PR_TO_DEV → GATE_PASS|FAIL → DEV_DEPLOYED → PR_TO_PROD → PROD_DEPLOYED`.
+- Lifecycle: `NO_ACTION → OK_TO_RELEASE → PR_TO_DEV → DEV_MERGED → PR_TO_PROD → PROD_MERGED` (only `OK_TO_RELEASE` is manual; the rest are derived from GitHub webhooks).
 - UI: channel list + status chip + preview URL + linked e2e report (from `cicd-audit`) + writeable QA notes +
   one-click "Create PR → dev/prod" (GitHub API via a Function). Firebase Auth, team-restricted.
 - **Build thin** — do NOT reimplement PR/merge/deployment tracking; reuse M6 history + M7 dashboard.
