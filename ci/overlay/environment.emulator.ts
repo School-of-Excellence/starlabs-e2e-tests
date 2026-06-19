@@ -29,8 +29,12 @@ export const environment = {
     appId: '1:000000000000:web:0000000000000000000000',
     vapidKey: '', // FCM web-push key — unused in the emulator env (comms/FCM sends disabled/stubbed); present so authguard.service.ts:1268 type-checks
   },
-  watson: {},
-  salescrm: {},
+  // null (NOT {}): the journey purchase/saleslead screens call initializeApp(environment.watson|salescrm)
+  // ONLY when the key is truthy. An empty {} -> initializeApp({}) -> "projectId not provided" FATAL console
+  // error that trips the suite's console guard. null is falsy -> the app skips the secondary Watson/SalesCRM
+  // app init entirely (matches the cloud TEST env, which omits these keys). We never drive a Watson/SalesCRM action.
+  watson: null,
+  salescrm: null,
   df3CdnUrl: '',
   picovoiceAccessKey: 'demo',
 };
