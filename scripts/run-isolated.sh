@@ -232,7 +232,7 @@ run_file() {
 }
 
 # ──────────────── main loop ────────────────
-SPECS="${ONLY:-$(find queue -name '*.spec.ts' | sort)}"
+SPECS="${ONLY:-$(find "${SUITE_DIR:-queue}" -name '*.spec.ts' | sort)}"
 total_pass=0; total_fail=0; total_skip=0; bad_files=0; report=""
 
 # Ensure a healthy emulator before the first file (boots one if the box is cold; no-op on cloud).

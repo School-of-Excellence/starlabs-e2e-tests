@@ -4,8 +4,8 @@
 # the boot/seed/run logic, the logic lives HERE in the hub (starlabs-e2e-tests) and each app repo calls it
 # with a tiny caller workflow (`uses: School-of-Excellence/starlabs-e2e-tests/.github/workflows/web-e2e.yml@main`).
 #
-# WHAT IT DOES (unchanged from the proven app-centric queue-e2e.yml, just parameterized):
-#   Assembles ONE CI workspace from THREE repos and runs the queue e2e suite against the REAL Cloud-Function
+# WHAT IT DOES (parameterised by `config`/`suite` — queue by default, e.g. journey via the inputs):
+#   Assembles ONE CI workspace from THREE repos and runs the selected e2e suite against the REAL Cloud-Function
 #   triggers in the Firebase emulator:
 #     • <caller repo>           (the app under test — Angular)         checked out at the root
 #     • starlabs-e2e-tests      (this engine + ci/overlay + scripts)   cloned into ./e2e
@@ -34,13 +34,21 @@ on:
         type: string
         default: main
       only:
-        description: "Optional spec subset for run-isolated.sh (e.g. 'queue/operator.spec.ts'). Empty = full gate."
+        description: "Optional spec subset for run-isolated.sh (e.g. 'queue/operator.spec.ts'). Empty = full suite (find <suite>/)."
         type: string
         default: ''
       firebase_project:
         description: 'Emulator project id — MUST match the app overlay projectId (starlabs-cicd) or auth/reads silently break (SETUP §3)'
         type: string
         default: starlabs-cicd
+      config:                                   # ── CHANGE 1 (ADDED) ──
+        description: "Playwright config run-isolated.sh runs (selects the suite via its testDir + globalSetup seed). EMPTY = let run-isolated.sh keep its EVIDENCE-AWARE queue default, so queue behaviour (incl. evidence mode) is unchanged. Journey passes its own config to override."
+        type: string
+        default: ''   # IMPORTANT: empty, NOT a config name. A name here is ALWAYS used, which would override run-isolated.sh's evidence-aware default and break queue's evidence=1 mode. Empty lets `${CONFIG:-<default>}` fall through to the existing queue defaults.
+      suite:                                    # ── CHANGE 2 (ADDED) ──
+        description: 'Suite name: default spec root for run-isolated.sh (find <suite>/ when `only` is empty) + history audit tag. Default = queue.'
+        type: string
+        default: queue
       evidence:
         description: "EVIDENCE=1 captures a screenshot + trace per test into the uploaded report (debugging)"
         type: string
@@ -61,6 +69,8 @@ jobs:
       FIREBASE_PROJECT: ${{ inputs.firebase_project }}
       CF_BRANCH: ${{ inputs.cf_branch }}
       ONLY: ${{ inputs.only }}
+      CONFIG: ${{ inputs.config }}              # ── CHANGE 3 (ADDED) ── empty (queue) => run-isolated.sh keeps its evidence-aware default; journey passes a config to override
+      SUITE_DIR: ${{ inputs.suite }}            # ── CHANGE 3 (ADDED) ── 'queue' (default) => find queue/ (unchanged); 'journey' => find journey/
       EVIDENCE: ${{ inputs.evidence }}
       CI: 'true'
     steps:
@@ -134,9 +144,10 @@ jobs:
           for i in $(seq 1 120); do curl -sf http://localhost:4200 >/dev/null 2>&1 && break; sleep 3; done
           if ! curl -sf http://localhost:4200 >/dev/null 2>&1; then echo "::error::app failed to serve on :4200"; tail -60 /tmp/app.log; exit 1; fi
 
-      - name: Run isolated queue e2e suite (the gate)
+      - name: Run isolated e2e suite (the gate)   # ── CHANGE 4 (was "Run isolated queue e2e suite") ──
         id: gate
         run: cd e2e && EMU_REUSE=1 EMU_REUSE_APP=1 TESTRUNID=run1 bash scripts/run-isolated.sh
+        # ↑ run-isolated.sh now reads CONFIG + SUITE_DIR from the env (set above). No per-suite change here.
 
       - name: Upload Playwright report
         if: always()
@@ -164,9 +175,12 @@ jobs:
           SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
           ACTOR="${{ github.actor }}" \
           SOURCE=ci \
-          SUITE=queue \
+          SUITE="${{ inputs.suite }}" \
           STAGE=gate \
           RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
           REPORT_DIR=playwright-report \
           ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \
           node scripts/history/record-run.cjs
+          # NOTE: SUITE is now parameterised (was hardcoded `queue`). ATTACH is still queue-specific fixtures;
+          #       it is best-effort/optional (only runs when STARLABS_CICD_SA is set). Parameterise per-suite later
+          #       if journey wants its own attachments — not required for the gate to pass.
