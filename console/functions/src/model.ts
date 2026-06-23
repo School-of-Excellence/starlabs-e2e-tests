@@ -1,115 +1,248 @@
 /**
- * Data model for the StarLabs release console.
+ * Data model for the StarLabs release console — FACET-BASED (plan D6, 2026-06-22).
  *
- * GitHub is the source of truth; these Firestore documents MIRROR GitHub state
- * (via the webhook receiver) and layer the human workflow (OK-to-Release,
- * approver allowlists) on top. See docs/ARCHITECTURE.md §7 and docs/GOAL.md §4.
+ * GitHub is the source of truth; these Firestore documents MIRROR GitHub state (via
+ * the webhook receiver) and layer the human workflow (tester gates, role allowlists)
+ * on top. The candidate is a SET OF FACETS, not a single linear status; `derivedStatus`
+ * is a projection computed from the activity log (plan D8). See
+ * specs/plans/2026-06-22-console-v2-architecture.md.
+ *
+ * BACKEND copy. Keep structurally in sync with the frontend
+ * (console/src/app/core/release-candidate.model.ts + roles.ts).
+ *
+ * NOTE: index.ts must be rewritten against this model (new statuses, facets, activity
+ * log, removed approveAndMerge) — that is a fan-out task per the build sequence.
  */
 
-/**
- * The release status lifecycle.
- *
- *   NO_ACTION → OK_TO_RELEASE → PR_TO_DEV → DEV_MERGED → PR_TO_PROD → PROD_MERGED
- *
- * Only OK_TO_RELEASE is set manually (the team's sign-off in the console). Every
- * other status is DERIVED from GitHub webhook events, so the board cannot drift.
- */
+/** Lifecycle milestones (the projection collapses facets to one of these). */
 export enum ReleaseStatus {
-  /** Default. A preview exists but the team has not signed off yet. */
   NO_ACTION = 'NO_ACTION',
-  /** MANUAL: the team reviewed the preview and a dev may now open a PR → development. */
-  OK_TO_RELEASE = 'OK_TO_RELEASE',
-  /** Derived: a PR feature → development is open. */
+  PREVIEW_BUILDING = 'PREVIEW_BUILDING',
+  PREVIEW_LIVE = 'PREVIEW_LIVE',
+  PREVIEW_FAILED = 'PREVIEW_FAILED',
+  /** Tester signed off the preview → a dev may open a PR → development. */
+  OK_FOR_DEV = 'OK_FOR_DEV',
   PR_TO_DEV = 'PR_TO_DEV',
-  /** Derived: the PR into development was merged (auto-deploys to starlabs-test). */
+  /** Dev merged on GitHub (not the console) → auto-deploys to starlabs-test. */
   DEV_MERGED = 'DEV_MERGED',
-  /** Derived: a PR development → production is open. */
+  /** Tester signed off the development deploy → a dev may open a PR → production. */
+  OK_FOR_PROD = 'OK_FOR_PROD',
   PR_TO_PROD = 'PR_TO_PROD',
-  /** Derived: the PR into production was merged (auto-deploys to fir-sample-aae4a). */
+  /** Dev merged on GitHub → auto-deploys to fir-sample-aae4a. */
   PROD_MERGED = 'PROD_MERGED',
 }
 
-/**
- * The branches the console understands. Feature branches funnel into `development`,
- * then `development` is promoted into `production`.
- */
+/** Milestone rank for the projection (legal transitions advance; jumps = ANOMALY). */
+export const STATUS_RANK: Record<ReleaseStatus, number> = {
+  [ReleaseStatus.NO_ACTION]: 0,
+  [ReleaseStatus.PREVIEW_BUILDING]: 1,
+  [ReleaseStatus.PREVIEW_LIVE]: 1,
+  [ReleaseStatus.PREVIEW_FAILED]: 1,
+  [ReleaseStatus.OK_FOR_DEV]: 2,
+  [ReleaseStatus.PR_TO_DEV]: 3,
+  [ReleaseStatus.DEV_MERGED]: 4,
+  [ReleaseStatus.OK_FOR_PROD]: 5,
+  [ReleaseStatus.PR_TO_PROD]: 6,
+  [ReleaseStatus.PROD_MERGED]: 7,
+};
+
+/** The protected branches feature work funnels into. */
 export type TargetBranch = 'development' | 'production';
 
-/** A free-form QA/review note attached to a release candidate. */
+export type BuildState = 'NONE' | 'BUILDING' | 'LIVE' | 'FAILED';
+export type GateVerdict = 'NONE' | 'OK' | 'REJECTED';
+export type PrState = 'NONE' | 'OPEN' | 'MERGED' | 'CLOSED';
+export type Reconcile = 'IN_SYNC' | 'DRIFT_BENIGN' | 'NEEDS_DECISION' | 'ANOMALY';
+
 export interface ReleaseNote {
-  /** Firebase Auth uid of the author. */
-  authorUid: string;
-  /** Display name / email captured at write time (denormalised for the board UI). */
+  authorUid?: string;
   authorLabel: string;
-  /** The note body. */
   text: string;
-  /** Epoch millis. */
   at: number;
 }
 
-/**
- * Firestore `release-candidates/{repo__branch}`.
- *
- * Document id convention: `${repo}__${branch}` (double underscore) so a single
- * repo can have multiple in-flight candidates (one per feature branch) without
- * id collisions. `repo` is the short repo name (e.g. `starlabs-angular`).
- */
-export interface ReleaseCandidate {
-  /** Short repo name, e.g. `starlabs-angular`. */
-  repo: string;
-  /** The feature/source branch this candidate tracks, e.g. `feature/login`. */
-  branch: string;
-  /** Per-branch Firebase Hosting preview URL (set by the push/workflow_run event). */
-  previewUrl?: string;
-  /** Current lifecycle status. */
-  status: ReleaseStatus;
-  /** Links back to the immutable e2e run in `cicd-audit` (Cloud Storage + index doc). */
+export interface PreviewFacet {
+  sha?: string;
+  url?: string;
+  buildState: BuildState;
+  builtAt?: number;
+}
+
+export interface GateFacet {
+  verdict: GateVerdict;
+  sha?: string;
+  by?: string;
+  at?: number;
+  notes?: ReleaseNote[];
+}
+
+export interface PrFacet {
+  number?: number;
+  url?: string;
+  state: PrState;
+  headSha?: string;
+  mergeable?: boolean;
+  checksState?: string;
+}
+
+export interface TestSummary {
+  conclusion?: string;
+  passed?: number;
+  failed?: number;
+  total?: number;
+  at?: number;
+}
+
+/** Lifecycle of the e2e gate that runs on an open PR (shown in Working Branches). */
+export type GateStatus = 'NONE' | 'QUEUED' | 'RUNNING' | 'PASSED' | 'FAILED';
+
+/** The e2e gate run attached to the branch's open PR (from gate workflow_run events). */
+export interface GateRunFacet {
+  stage?: 'dev' | 'prod';
+  status: GateStatus;
+  runId?: string;
+  runUrl?: string;
+  /** GitHub run id used to resolve the rich report in the cicd-audit dashboard. */
   reportRunId?: string;
-  /** GitHub URL of the open/merged PR into development. */
-  prDevUrl?: string;
-  /** GitHub PR number into development (used by approveAndMerge). */
-  prDevNumber?: number;
-  /** GitHub URL of the open/merged PR into production. */
-  prProdUrl?: string;
-  /** GitHub PR number into production (used by approveAndMerge). */
-  prProdNumber?: number;
-  /** QA / review notes. */
-  notes: ReleaseNote[];
-  /** Firebase Auth uid (or email label) of whoever set OK_TO_RELEASE. */
-  okToReleaseBy?: string;
-  /** Epoch millis of the last update (from any source). */
-  updatedAt: number;
-  /** Last GitHub deployment_status state seen, for the board (e.g. `success`). */
+  at?: number;
+}
+
+export interface LastActivity {
+  type: string;
+  sha?: string;
+  actor?: string;
+  at?: number;
+}
+
+/** Firestore `release-candidates/{repo__branch}` — facet model (plan §3.1). */
+export interface ReleaseCandidate {
+  repo: string;
+  branch: string;
+  headSha?: string;
+  headCommit?: { msg?: string; author?: string; at?: number };
+
+  preview: PreviewFacet;
+  devGate: GateFacet;
+  prDev: PrFacet;
+  prodGate: GateFacet;
+  prProd: PrFacet;
+
+  gateRun?: GateRunFacet;
+  testSummary?: TestSummary;
+
+  /** Latest deploy health from the deploy workflow_run / deployment_status (D10). */
   lastDeploymentState?: string;
+
+  derivedStatus: ReleaseStatus;
+  lastActivity?: LastActivity;
+  reconcile: Reconcile;
+
+  updatedAt: number;
+}
+
+// --- Activity log (single flat collection, plan D7) -----------------------------
+
+export type ActivityType =
+  | 'push'
+  | 'preview_dispatch'
+  | 'preview_build'
+  | 'signoff_dev'
+  | 'signoff_prod'
+  | 'pr_to_dev'
+  | 'pr_to_prod'
+  | 'dev_merged'
+  | 'prod_merged'
+  | 'deploy_status'
+  | 'gate_run'
+  | 'reconcile_decision'
+  | 'member_change';
+
+export type ActivitySource = 'webhook' | 'console' | 'reconcile';
+
+/** `activity-log/{deliveryId}` (plan §3.2). Doc id = X-GitHub-Delivery for dedupe (D9). */
+export interface ActivityLogEntry {
+  branchId: string; // `${repo}__${branch}`
+  type: ActivityType;
+  sha?: string;
+  actor?: string;
+  source: ActivitySource;
+  confirmed: boolean;
+  eventTime: number; // epoch millis — order by this (D9)
+  receivedTime: number;
+  detail?: Record<string, unknown>;
+}
+
+// --- Roles / members (plan D1, mirror of frontend roles.ts) ---------------------
+
+export type Role = 'developer' | 'tester' | 'admin';
+
+export type Capability =
+  | 'DEPLOY_PREVIEW'
+  | 'SIGNOFF_PREVIEW_DEV'
+  | 'SIGNOFF_DEV_PROD'
+  | 'CREATE_PR_DEV'
+  | 'CREATE_PR_PROD'
+  | 'MANAGE_MEMBERS';
+
+export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
+  developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV', 'CREATE_PR_PROD'],
+  tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD'],
+  admin: [
+    'DEPLOY_PREVIEW',
+    'CREATE_PR_DEV',
+    'CREATE_PR_PROD',
+    'SIGNOFF_PREVIEW_DEV',
+    'SIGNOFF_DEV_PROD',
+    'MANAGE_MEMBERS',
+  ],
+};
+
+export const ALLOWED_DOMAIN = 'soexcellence.com';
+
+/** Firestore `CICD-Users/{email}` — one doc per member. Doc id = lowercased email. */
+export interface Member {
+  email: string;
+  displayName?: string;
+  roles: Role[];
+  active: boolean;
+  addedBy?: string;
+  addedAt?: number;
+}
+
+export function hasCapability(roles: readonly Role[], cap: Capability): boolean {
+  for (const r of roles) if ((ROLE_CAPABILITIES[r] ?? []).includes(cap)) return true;
+  return false;
+}
+
+export function isAllowedDomain(email: string | null | undefined): boolean {
+  return !!email && email.toLowerCase().endsWith('@' + ALLOWED_DOMAIN);
 }
 
 /**
- * Firestore `console-config/allowlists` (single document).
- *
- * Two independent identity checks the console enforces BEFORE calling GitHub:
- *  - `okToRelease`: who may set OK_TO_RELEASE / open PRs.
- *  - `approvers`: per-base-branch merge approvers. Production may be stricter
- *    than development (mirrors CODEOWNERS-per-base-branch, but enforced by us
- *    too — defence in depth, see docs/GOAL.md §3).
- *
- * Values are Firebase Auth uids OR email addresses; the callables accept either
- * (uid match first, email fallback) so the doc can be authored before uids exist.
+ * LEGACY `console-config/allowlists` (single doc). Retained for migration only — a
+ * Firestore onWrite(members) trigger recomputes it. New code reads `members` + roles.
  */
 export interface AllowlistConfig {
-  /** Who may sign off (OK_TO_RELEASE) and open PRs via the console. */
   okToRelease: string[];
-  /** Per-base-branch approver allowlist for approveAndMerge. */
   approvers: Record<TargetBranch, string[]>;
 }
 
-/** The Firestore collection / doc paths, centralised. */
+/** Firestore collection / doc paths, centralised. */
 export const PATHS = {
   releaseCandidates: 'release-candidates',
+  activityLog: 'activity-log',
   consoleConfig: 'console-config',
+  /** Top-level members collection — one doc per member, id = lowercased email. */
+  usersCol: 'CICD-Users',
   allowlistDoc: 'allowlists',
 } as const;
 
-/** Build the deterministic `release-candidates` doc id for a repo+branch. */
+/**
+ * Deterministic `release-candidates` doc id (also the activity-log `branchId`).
+ * Slashes in branch names (e.g. `feature/x`) are replaced with `-` because Firestore
+ * treats `/` in a document id as a path separator. The real branch name is preserved
+ * in the candidate's `branch` field, so PR/dispatch calls still use the true branch.
+ */
 export function candidateId(repo: string, branch: string): string {
-  return `${repo}__${branch}`;
+  return `${repo}__${branch.replace(/\//g, '-')}`;
 }

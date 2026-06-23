@@ -160,6 +160,7 @@ jobs:
           cd e2e
           STARLABS_CICD_SA="$RUNNER_TEMP/cicd-sa.json" \
           REPO="${{ github.repository }}" \
+          GITHUB_RUN_ID="${{ github.run_id }}" \
           BRANCH="${{ github.head_ref || github.ref_name }}" \
           SHA="${{ github.event.pull_request.head.sha || github.sha }}" \
           ACTOR="${{ github.actor }}" \

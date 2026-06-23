@@ -52,6 +52,9 @@ const meta = {
   author: env('ACTOR', 'unknown'),
   source: env('SOURCE', 'local'),   // ci | local
   result: env('RESULT', 'unknown'), // pass | fail | unknown
+  // GitHub Actions run id — lets the release console deep-link this report from a
+  // workflow_run webhook (which only carries the numeric run id). See console gateRun.
+  githubRunId: env('GITHUB_RUN_ID', ''),
   createdAt: new Date().toISOString(),
 };
 const runId = (env('RUN_ID') || `${meta.repo}-${meta.branch}-${meta.sha.slice(0, 7)}-${Date.now()}`)

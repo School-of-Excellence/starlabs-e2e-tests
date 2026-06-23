@@ -17,6 +17,12 @@
   --st-dev-merged: #1f6feb;
   --st-pr-prod: #d29922;
   --st-prod-merged: #a371f7;
+  /* facet-model statuses (console v2) */
+  --st-preview-building: #d29922;
+  --st-preview-live: #58a6ff;
+  --st-preview-failed: #f85149;
+  --st-ok-dev: #3fb950;
+  --st-ok-prod: #2ea043;
 
   --danger: #f85149;
 }

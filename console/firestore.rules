@@ -1,0 +1,73 @@
+rules_version = '2';
+
+// Release console security rules (plan D2, 2026-06-22) — the REAL access fence.
+// The UI gates buttons for UX; THESE rules are what actually stop unauthorized access.
+//
+// Reads require: signed in + @soexcellence.com + an ACTIVE member doc.
+// All writes to release-candidates / activity-log are SERVER-ONLY (the callables and
+// webhook receiver use the Admin SDK, which bypasses these rules) — clients can never
+// write workflow state directly. Member docs are admin-readable; a user may read only
+// their OWN member doc (needed by the login gate).
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+
+    function callerEmail() {
+      return request.auth.token.email.lower();
+    }
+
+    function emailDomainOk() {
+      return signedIn()
+        && callerEmail().matches('^[a-z0-9._%+-]+@soexcellence[.]com$');
+    }
+
+    function memberPath() {
+      // One doc per member in the top-level CICD-Users collection (id = lowercased email).
+      return /databases/$(database)/documents/CICD-Users/$(callerEmail());
+    }
+
+    function isActiveMember() {
+      return emailDomainOk()
+        && exists(memberPath())
+        && get(memberPath()).data.active == true;
+    }
+
+    function hasRole(role) {
+      return isActiveMember() && (role in get(memberPath()).data.roles);
+    }
+
+    // Workflow state — read for any active member; writes only via Admin SDK (server).
+    match /release-candidates/{id} {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
+    match /activity-log/{id} {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
+    // Members — login gate needs a user to read their OWN doc; admins read all.
+    // Writes only via the setMember callable (Admin SDK).
+    match /CICD-Users/{email} {
+      allow get: if signedIn() && callerEmail() == email;
+      allow list, read: if hasRole('admin');
+      allow write: if false;
+    }
+
+    // Legacy/derived allowlist doc — readable by active members; server-written only.
+    match /console-config/allowlists {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
+    // Default deny.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
