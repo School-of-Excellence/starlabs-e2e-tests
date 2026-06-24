@@ -1,0 +1,118 @@
+    <header class="head">
+      <h2>Preview Channels</h2>
+      <p class="muted">Validate preview channels and dev deploys. Testers sign off here.</p>
+    </header>
+
+    <rc-filter-bar [candidates]="withPreview()" (changed)="filter.set($event)" />
+
+    <div class="list">
+      @for (rc of filtered(); track rc.id) {
+        <article class="card">
+          <div class="top">
+            <div class="ident">
+              <div class="branch">{{ rc.branch }}</div>
+              <div class="sub muted">{{ rc.repo }} · <code>{{ short(rc.headSha) }}</code></div>
+            </div>
+            <rc-status-chip [status]="rc.derivedStatus" />
+          </div>
+
+          <!-- Preview link -->
+          <div class="preview">
+            <span class="lbl">Preview channel</span>
+            @if (previewUrl(rc); as url) {
+              <a [href]="url" target="_blank" rel="noopener">{{ url }} ↗</a>
+            } @else {
+              <span class="muted">No preview built yet.</span>
+            }
+            <span class="pstate" [attr.data-tone]="buildTone(rc)">{{ rc.preview.buildState }}</span>
+            @if (previewStale(rc)) {
+              <span class="warn">⚠ Preview built from an older commit than HEAD — redeploy before sign-off.</span>
+            }
+          </div>
+
+          <!-- DEV gate -->
+          <section class="gate">
+            <div class="gate-head">
+              <strong>DEV gate</strong>
+              <span class="muted">validate the preview → OK for dev</span>
+              <span class="verdict" [attr.data-tone]="gateTone(rc.devGate.verdict)">
+                {{ rc.devGate.verdict }}
+              </span>
+            </div>
+            @if (rc.devGate.by) {
+              <div class="by muted">
+                {{ rc.devGate.by }} · {{ rc.devGate.at | date: 'MMM d, HH:mm' }}
+                @if (signoffStale(rc.devGate, rc.headSha)) { <span class="warn">stale vs HEAD</span> }
+              </div>
+            }
+            @for (n of rc.devGate.notes ?? []; track n.at) {
+              <div class="note">“{{ n.text }}” — {{ n.by }}</div>
+            }
+            @if (devReason(rc); as reason) {
+              <div class="disabled muted">{{ reason }}</div>
+            } @else {
+              <div class="gate-actions">
+                <textarea
+                  rows="2"
+                  placeholder="Optional QA note…"
+                  [value]="devNote()"
+                  (input)="devNote.set(asValue($event))"
+                ></textarea>
+                <div class="btns">
+                  <button class="primary" [disabled]="busy() === rc.id" (click)="signDev(rc, 'OK')">
+                    OK for dev
+                  </button>
+                  <button class="reject" [disabled]="busy() === rc.id" (click)="signDev(rc, 'REJECTED')">
+                    Has issues
+                  </button>
+                </div>
+              </div>
+            }
+          </section>
+
+          <!-- PROD gate (only when dev-merged or beyond) -->
+          @if (showProdGate(rc)) {
+            <section class="gate prod">
+              <div class="gate-head">
+                <strong>PROD gate</strong>
+                <span class="muted">validate the dev deploy → safe for prod</span>
+                <span class="verdict" [attr.data-tone]="gateTone(rc.prodGate.verdict)">
+                  {{ rc.prodGate.verdict }}
+                </span>
+              </div>
+              @if (rc.prodGate.by) {
+                <div class="by muted">
+                  {{ rc.prodGate.by }} · {{ rc.prodGate.at | date: 'MMM d, HH:mm' }}
+                  @if (signoffStale(rc.prodGate, rc.headSha)) { <span class="warn">stale vs HEAD</span> }
+                </div>
+              }
+              @for (n of rc.prodGate.notes ?? []; track n.at) {
+                <div class="note">“{{ n.text }}” — {{ n.by }}</div>
+              }
+              @if (prodReason(rc); as reason) {
+                <div class="disabled muted">{{ reason }}</div>
+              } @else {
+                <div class="gate-actions">
+                  <textarea
+                    rows="2"
+                    placeholder="Optional QA note…"
+                    [value]="prodNote()"
+                    (input)="prodNote.set(asValue($event))"
+                  ></textarea>
+                  <div class="btns">
+                    <button class="primary" [disabled]="busy() === rc.id" (click)="signProd(rc, 'OK')">
+                      Safe for prod
+                    </button>
+                    <button class="reject" [disabled]="busy() === rc.id" (click)="signProd(rc, 'REJECTED')">
+                      Hold
+                    </button>
+                  </div>
+                </div>
+              }
+            </section>
+          }
+        </article>
+      } @empty {
+        <div class="empty muted">No preview channels match the current filter.</div>
+      }
+    </div>

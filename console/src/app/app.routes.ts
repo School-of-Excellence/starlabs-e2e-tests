@@ -14,26 +14,26 @@ export const routes: Routes = [
   {
     path: '',
     loadComponent: () =>
-      import('./screens/overview.component').then((m) => m.OverviewComponent),
+      import('./screens/overview/overview.component').then((m) => m.OverviewComponent),
     title: 'Overview · Release Console',
   },
   {
     path: 'branches',
     loadComponent: () =>
-      import('./screens/working-branches.component').then((m) => m.WorkingBranchesComponent),
+      import('./screens/working-branches/working-branches.component').then((m) => m.WorkingBranchesComponent),
     title: 'Working Branches · Release Console',
   },
   {
     path: 'previews',
     loadComponent: () =>
-      import('./screens/preview-channels.component').then((m) => m.PreviewChannelsComponent),
+      import('./screens/preview-channels/preview-channels.component').then((m) => m.PreviewChannelsComponent),
     title: 'Preview Channels · Release Console',
   },
   {
     path: 'settings',
     canActivate: [adminGuard],
     loadComponent: () =>
-      import('./screens/settings.component').then((m) => m.SettingsComponent),
+      import('./screens/settings/settings.component').then((m) => m.SettingsComponent),
     title: 'Settings · Release Console',
   },
   { path: '**', redirectTo: '' },

@@ -1,0 +1,36 @@
+    <div class="bar">
+      <input
+        class="search"
+        type="search"
+        placeholder="Search branch, repo, commit…"
+        [value]="f().search"
+        (input)="patch({ search: asValue($event) })"
+      />
+
+      <select [value]="f().repo" (change)="patch({ repo: asValue($event) })">
+        <option value="">All repos</option>
+        @for (r of repos(); track r) {
+          <option [value]="r">{{ r }}</option>
+        }
+      </select>
+
+      <select [value]="f().status" (change)="patch({ status: asValue($event) })">
+        <option value="">All statuses</option>
+        @for (s of statuses; track s.value) {
+          <option [value]="s.value">{{ s.label }}</option>
+        }
+      </select>
+
+      <label class="mine">
+        <input
+          type="checkbox"
+          [checked]="f().mineOnly"
+          (change)="patch({ mineOnly: asChecked($event) })"
+        />
+        Mine only
+      </label>
+
+      @if (dirty()) {
+        <button class="link" (click)="reset()">Clear</button>
+      }
+    </div>

@@ -1,0 +1,51 @@
+      .bar {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+        padding: 12px 0 18px;
+      }
+      input.search {
+        flex: 1;
+        min-width: 220px;
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        color: var(--fg);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-size: 13px;
+      }
+      select {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        color: var(--fg);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-size: 13px;
+      }
+      input.search:focus,
+      select:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .mine {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--muted);
+        user-select: none;
+      }
+      .mine input {
+        accent-color: var(--accent);
+      }
+      button.link {
+        background: none;
+        border: none;
+        color: var(--accent);
+        padding: 4px 6px;
+        font-size: 12px;
+      }
+      button.link:hover {
+        text-decoration: underline;
+      }

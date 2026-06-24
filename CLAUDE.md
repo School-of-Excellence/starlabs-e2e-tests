@@ -173,6 +173,12 @@ npm start   # http://localhost:4200
 | `starlabs-test` | dev deploys (merge → development branch) |
 | `fir-sample-aae4a` | production deploys (merge → production branch) |
 
+## Console component convention (MUST FOLLOW)
+- **Never hand-write a component.** Always scaffold with the CLI: `cd console && npx ng generate component <path>/<name>` (e.g. `ng g c shared/foo` → `src/app/shared/foo/foo.component.{ts,html,css}`), then migrate logic/markup/styles into the generated files.
+- Structure is **folder-per-component**: each component lives in its own folder with separate `.ts` + `.html` + `.css` (`templateUrl`/`styleUrl`, never inline `template`/`styles`).
+- `angular.json > projects.console.schematics` enforces this: `style: css`, `skipTests: true`. **No `.spec.ts` files** — the project uses Playwright E2E, not Angular unit tests.
+- `app.component.*` stays at `src/app/` root; `core/` holds services & models (not foldered); `shared/toast.service.ts` is a service, not a component.
+
 ## Git
 - This repo: **`main`** branch
 - Do not commit `console/src/environments/firebase.config.ts` (gitignored)

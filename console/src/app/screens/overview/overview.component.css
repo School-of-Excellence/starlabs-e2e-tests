@@ -1,0 +1,184 @@
+
+      :host {
+        display: block;
+      }
+      .head h2 {
+        margin: 0 0 4px;
+        font-size: 20px;
+      }
+      .head p {
+        margin: 0 0 20px;
+        font-size: 13px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 14px;
+        margin-bottom: 22px;
+      }
+      .stat {
+        display: block;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px 18px;
+        color: var(--fg);
+        transition: border-color 0.15s, transform 0.15s;
+      }
+      a.stat:hover {
+        border-color: var(--accent);
+        transform: translateY(-1px);
+        text-decoration: none;
+      }
+      .stat .n {
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1;
+        font-variant-numeric: tabular-nums;
+      }
+      .stat .l {
+        margin-top: 6px;
+        font-size: 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .stat.warn .n {
+        color: var(--st-pr-prod);
+      }
+      .stat.muted-card .n {
+        color: var(--muted);
+      }
+      .ok {
+        color: var(--st-ok);
+      }
+      .bad {
+        color: var(--danger);
+      }
+      .sep {
+        color: var(--muted);
+        margin: 0 4px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr;
+        gap: 16px;
+      }
+      .feed {
+        grid-column: 1 / -1;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px 18px;
+      }
+      .panel h3 {
+        margin: 0 0 14px;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--muted);
+      }
+      .funnel {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .frow {
+        display: grid;
+        grid-template-columns: 130px 1fr 28px;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+      }
+      .flabel {
+        color: var(--c);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ftrack {
+        height: 8px;
+        background: var(--panel-2);
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .fbar {
+        height: 100%;
+        min-width: 2px;
+        background: var(--c);
+        border-radius: 999px;
+        transition: width 0.3s ease;
+      }
+      .fcount {
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+      }
+      .health {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .hrow {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 13px;
+      }
+      .hbadge {
+        font-size: 12px;
+        padding: 2px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--muted);
+      }
+      .hbadge.ok {
+        color: var(--st-ok);
+        border-color: color-mix(in srgb, var(--st-ok) 45%, transparent);
+      }
+      .hbadge.prod {
+        color: var(--st-prod-merged);
+        border-color: color-mix(in srgb, var(--st-prod-merged) 45%, transparent);
+      }
+      .hbadge.bad {
+        color: var(--danger);
+        border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+      }
+      .feed ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .feed li {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+      }
+      .feed li:last-child {
+        border-bottom: none;
+      }
+      .evt {
+        font-weight: 600;
+        color: var(--accent);
+        min-width: 120px;
+      }
+      .branch {
+        font-family: ui-monospace, SFMono-Regular, monospace;
+        font-size: 12px;
+      }
+      .feed .meta {
+        margin-left: auto;
+        font-size: 12px;
+      }
+      @media (max-width: 860px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }

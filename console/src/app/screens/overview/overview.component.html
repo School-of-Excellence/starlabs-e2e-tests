@@ -1,0 +1,95 @@
+
+    <header class="head">
+      <h2>Mission Control</h2>
+      <p class="muted">Live state of every tracked branch across the release pipeline.</p>
+    </header>
+
+    <!-- Stat cards -->
+    <section class="stats">
+      <a class="stat" routerLink="/branches">
+        <div class="n">{{ rcs().length }}</div>
+        <div class="l">Branches tracked</div>
+      </a>
+      <a class="stat" routerLink="/previews">
+        <div class="n">{{ previewsLive() }}</div>
+        <div class="l">Previews live</div>
+      </a>
+      <a class="stat" routerLink="/branches">
+        <div class="n">{{ prsOpen() }}</div>
+        <div class="l">PRs open</div>
+      </a>
+      <a class="stat warn" routerLink="/branches" [class.muted-card]="staleCount() === 0">
+        <div class="n">{{ staleCount() }}</div>
+        <div class="l">Stale / drifted</div>
+      </a>
+      <div class="stat">
+        <div class="n">
+          <span class="ok">{{ testsPassed() }}</span
+          ><span class="sep">/</span><span class="bad">{{ testsFailed() }}</span>
+        </div>
+        <div class="l">Tests pass / fail</div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- Pipeline funnel -->
+      <section class="panel">
+        <h3>Pipeline funnel</h3>
+        <div class="funnel">
+          @for (row of funnel(); track row.status) {
+            <div class="frow">
+              <div class="flabel" [style.--c]="'var(' + row.varName + ')'">{{ row.label }}</div>
+              <div class="ftrack">
+                <div class="fbar" [style.width.%]="row.pct" [style.--c]="'var(' + row.varName + ')'"></div>
+              </div>
+              <div class="fcount">{{ row.count }}</div>
+            </div>
+          }
+        </div>
+      </section>
+
+      <!-- Deploy health -->
+      <section class="panel">
+        <h3>Deploy health</h3>
+        <div class="health">
+          <div class="hrow">
+            <span class="hlabel">starlabs-test (dev)</span>
+            <span class="hbadge ok">{{ devDeploys() }} merged → deployed</span>
+          </div>
+          <div class="hrow">
+            <span class="hlabel">fir-sample (prod)</span>
+            <span class="hbadge prod">{{ prodDeploys() }} shipped</span>
+          </div>
+          <div class="hrow">
+            <span class="hlabel">Preview builds failing</span>
+            <span class="hbadge" [class.bad]="previewsFailed() > 0" [class.ok]="previewsFailed() === 0">
+              {{ previewsFailed() }}
+            </span>
+          </div>
+          <div class="hrow">
+            <span class="hlabel">Needs a human decision</span>
+            <span class="hbadge" [class.bad]="needsDecision() > 0" [class.ok]="needsDecision() === 0">
+              {{ needsDecision() }}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Activity feed -->
+      <section class="panel feed">
+        <h3>Live activity</h3>
+        <ul>
+          @for (item of feed(); track item.rc.id + item.at) {
+            <li>
+              <span class="evt">{{ pretty(item.type) }}</span>
+              <span class="branch">{{ item.rc.repo }}/{{ item.rc.branch }}</span>
+              <span class="meta muted">
+                {{ item.actor }} · {{ item.at | date: 'MMM d, HH:mm' }}
+              </span>
+            </li>
+          } @empty {
+            <li class="muted">No activity yet.</li>
+          }
+        </ul>
+      </section>
+    </div>

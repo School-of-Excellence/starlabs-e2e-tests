@@ -1,0 +1,79 @@
+
+    @if (auth.isAdmin()) {
+      <header class="head">
+        <h2>Members & Roles</h2>
+        <p class="muted">
+          Roles are additive — a member's capabilities are the union of their roles.
+          Only <code>&#64;{{ domain }}</code> accounts can sign in.
+        </p>
+      </header>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Member</th>
+            <th class="c">Developer</th>
+            <th class="c">Tester</th>
+            <th class="c">Admin</th>
+            <th class="c">Active</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (m of drafts(); track m.email) {
+            <tr [class.inactive]="!m.active">
+              <td>
+                @if (m.isNew) {
+                  <input
+                    class="email-input"
+                    type="email"
+                    placeholder="name@{{ domain }}"
+                    [value]="m.email"
+                    (input)="setEmail(m, asValue($event))"
+                  />
+                  <input
+                    class="name-input"
+                    type="text"
+                    placeholder="Display name"
+                    [value]="m.displayName"
+                    (input)="setName(m, asValue($event))"
+                  />
+                } @else {
+                  <div class="name">{{ m.displayName || m.email }}</div>
+                  <div class="email muted">{{ m.email }}</div>
+                }
+              </td>
+              @for (r of roles; track r) {
+                <td class="c">
+                  <input
+                    type="checkbox"
+                    [checked]="m.roles.has(r)"
+                    (change)="toggleRole(m, r, asChecked($event))"
+                  />
+                </td>
+              }
+              <td class="c">
+                <input
+                  type="checkbox"
+                  [checked]="m.active"
+                  (change)="toggleActive(m, asChecked($event))"
+                />
+              </td>
+              <td class="c">
+                <button
+                  class="primary"
+                  [disabled]="!m.dirty || !valid(m) || busy() === m.email"
+                  (click)="save(m)"
+                >
+                  Save
+                </button>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      @if (!hasNewRow()) {
+        <button class="add" (click)="addRow()">+ Add member</button>
+      }
+    }

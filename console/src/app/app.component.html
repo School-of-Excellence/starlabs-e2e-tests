@@ -1,0 +1,79 @@
+
+    @if (auth.user(); as u) {
+      <div class="shell">
+        <!-- Side nav -->
+        <aside class="nav">
+          <div class="brand">
+            <span class="logo">◆</span>
+            <span class="title">Release Console</span>
+          </div>
+          <nav>
+            @for (item of nav; track item.path) {
+              @if (item.visible()) {
+                <a
+                  [routerLink]="item.path"
+                  routerLinkActive="active"
+                  [routerLinkActiveOptions]="{ exact: item.path === '' }"
+                >
+                  <span class="ic">{{ item.icon }}</span>
+                  {{ item.label }}
+                </a>
+              }
+            }
+          </nav>
+          <div class="nav-foot">
+            @if (fb.useMock) {
+              <span class="env mock">mock data</span>
+            } @else {
+              <span class="env live">live · starlabs-cicd</span>
+            }
+          </div>
+        </aside>
+
+        <!-- Header + main -->
+        <div class="body">
+          <header class="topbar">
+            <div class="who">
+              <span class="email">{{ u.displayName || u.email }}</span>
+              <span class="roles">
+                @for (r of roles(); track r) {
+                  <span class="role" [attr.data-role]="r">{{ r }}</span>
+                }
+                @if (roles().length === 0) {
+                  <span class="role" data-role="none">no roles</span>
+                }
+              </span>
+            </div>
+            <button (click)="auth.signOut()">Sign out</button>
+          </header>
+
+          <main>
+            <router-outlet />
+          </main>
+        </div>
+      </div>
+      <rc-toast-host />
+    } @else {
+      <!-- Login gate -->
+      <div class="gate">
+        <div class="gate-card">
+          <span class="logo">◆</span>
+          <h1>Release Console</h1>
+          <p class="muted">School of Excellence · CI/CD mission control</p>
+
+          @if (auth.checking()) {
+            <div class="spinner" aria-label="Checking access"></div>
+            <p class="muted">Verifying your access…</p>
+          } @else {
+            <button class="primary signin" (click)="auth.signIn()">
+              Sign in with Google
+            </button>
+            <p class="hint muted">Use your &#64;soexcellence.com account.</p>
+          }
+
+          @if (auth.signInError(); as err) {
+            <div class="error">{{ err }}</div>
+          }
+        </div>
+      </div>
+    }

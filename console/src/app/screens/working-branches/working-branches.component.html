@@ -1,0 +1,141 @@
+    <header class="head">
+      <h2>Working Branches</h2>
+      <p class="muted">Every tracked branch and what it's waiting on. Developers act here.</p>
+    </header>
+
+    <rc-filter-bar [candidates]="rcs()" (changed)="filter.set($event)" />
+
+    <div class="list">
+      @for (rc of filtered(); track rc.id) {
+        <article class="card" [class.drift]="rc.reconcile !== 'IN_SYNC'">
+          <!-- Top row: identity + status -->
+          <div class="top">
+            <div class="ident">
+              <div class="branch">{{ rc.branch }}</div>
+              <div class="sub muted">
+                {{ rc.repo }} · <code>{{ short(rc.headSha) }}</code>
+                @if (rc.headCommit?.msg) {
+                  · {{ rc.headCommit?.msg }}
+                }
+              </div>
+            </div>
+            <rc-status-chip [status]="rc.derivedStatus" />
+          </div>
+
+          <!-- Per-state guidance: what's next, or why nothing is needed -->
+          <div class="statemsg" [attr.data-tone]="stateMessage(rc).tone">{{ stateMessage(rc).text }}</div>
+
+          <!-- Facet badges -->
+          <div class="facets">
+            <span class="badge" [attr.data-tone]="buildTone(rc)">
+              preview: {{ rc.preview.buildState }}
+              @if (previewStale(rc)) { <em class="stale">stale</em> }
+            </span>
+            <span class="badge" [attr.data-tone]="gateTone(rc.devGate.verdict)">
+              dev gate: {{ rc.devGate.verdict }}
+              @if (signoffStale(rc.devGate, rc.headSha)) { <em class="stale">stale</em> }
+            </span>
+            @if (rc.prDev.state !== 'NONE') {
+              <span class="badge" [attr.data-tone]="prTone(rc.prDev.state)">
+                PR→dev #{{ rc.prDev.number }}: {{ rc.prDev.state }}
+                @if (rc.prDev.mergeable === false) { · not mergeable }
+                @if (rc.prDev.checksState) { · checks {{ rc.prDev.checksState }} }
+                @if (prHasUnreviewed(rc.prDev, rc.devGate)) { <em class="stale">unreviewed</em> }
+              </span>
+            }
+            <span class="badge" [attr.data-tone]="gateTone(rc.prodGate.verdict)">
+              prod gate: {{ rc.prodGate.verdict }}
+              @if (signoffStale(rc.prodGate, rc.headSha)) { <em class="stale">stale</em> }
+            </span>
+            @if (rc.prProd.state !== 'NONE') {
+              <span class="badge" [attr.data-tone]="prTone(rc.prProd.state)">
+                PR→prod #{{ rc.prProd.number }}: {{ rc.prProd.state }}
+                @if (rc.prProd.mergeable === false) { · not mergeable }
+                @if (rc.prProd.checksState) { · checks {{ rc.prProd.checksState }} }
+              </span>
+            }
+          </div>
+
+          <!-- Last activity + history drawer trigger -->
+          @if (rc.lastActivity; as la) {
+            <div class="lastact">
+              <span class="la-label muted">Last activity</span>
+              <span class="la-text">{{ actLabel(la.type) }} · {{ la.actor || '—' }} · {{ la.at | date: 'MMM d, HH:mm' }}</span>
+              <button class="histbtn" title="View full activity log" (click)="openLog(rc)">
+                <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+                  <circle cx="8" cy="8" r="6.2" />
+                  <path d="M8 4.5V8l2.4 1.5" stroke-linecap="round" />
+                </svg>
+                log
+              </button>
+            </div>
+          }
+
+          <!-- e2e gate report (on the open PR) -->
+          @if (rc.gateRun && rc.gateRun.status !== 'NONE') {
+            <div class="gate" [attr.data-tone]="gateRunTone(rc.gateRun.status)">
+              <span class="gdot"></span>
+              <strong>Test suite</strong>
+              <span>{{ gateRunLabel(rc.gateRun.status) }}</span>
+              @if (rc.testSummary && (rc.gateRun.status === 'PASSED' || rc.gateRun.status === 'FAILED')) {
+                <span class="muted">· {{ rc.testSummary.passed ?? 0 }}/{{ rc.testSummary.total ?? 0 }} passed</span>
+              }
+              @if (rc.gateRun.status === 'PASSED') { <span class="verdict ok">safe to merge</span> }
+              @if (rc.gateRun.status === 'FAILED') { <span class="verdict bad">do not merge</span> }
+              @if (reportUrl(rc); as url) {
+                <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
+              }
+            </div>
+          }
+
+          <!-- Reconcile banner -->
+          @if (rc.reconcile !== 'IN_SYNC') {
+            <div class="recon" [attr.data-level]="rc.reconcile">
+              <div class="recon-head">
+                <strong>{{ reconcileTitle(rc.reconcile) }}</strong>
+                <span class="muted">{{ reconcileDesc(rc.reconcile) }}</span>
+              </div>
+              @if (rc.reconcile === 'NEEDS_DECISION' || rc.reconcile === 'ANOMALY') {
+                <div class="recon-actions">
+                  @for (opt of reconcileOptions; track opt.decision) {
+                    <button
+                      class="recon-btn"
+                      [disabled]="!canAct() || busy() === rc.id"
+                      (click)="decide(rc, opt.decision)"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  }
+                </div>
+              }
+            </div>
+          }
+
+          <!-- Action buttons -->
+          <div class="actions">
+            @for (a of actionsFor(rc); track a.action) {
+              <button
+                [class.primary]="a.enabled && a.action !== 'deployPreview'"
+                [disabled]="!a.enabled || busy() === rc.id"
+                [title]="a.reason || a.label"
+                (click)="run(rc, a.action)"
+              >
+                {{ a.label }}
+              </button>
+            }
+            @if (openPrUrl(rc); as url) {
+              <a class="ghlink" [href]="url" target="_blank" rel="noopener">
+                Open PR on GitHub ↗
+              </a>
+            }
+            <span class="ts muted">updated {{ rc.updatedAt | date: 'MMM d, HH:mm' }}</span>
+          </div>
+        </article>
+      } @empty {
+        <div class="empty muted">No branches match the current filter.</div>
+      }
+    </div>
+
+    @if (selected(); as s) {
+      <rc-activity-drawer [branchId]="s.id" [label]="s.label" (closed)="selected.set(null)" />
+    }

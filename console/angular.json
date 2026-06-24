@@ -8,6 +8,12 @@
       "root": "",
       "sourceRoot": "src",
       "prefix": "rc",
+      "schematics": {
+        "@schematics/angular:component": {
+          "style": "css",
+          "skipTests": true
+        }
+      },
       "architect": {
         "build": {
           "builder": "@angular-devkit/build-angular:application",

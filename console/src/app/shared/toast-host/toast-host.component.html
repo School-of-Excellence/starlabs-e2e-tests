@@ -1,0 +1,8 @@
+    <div class="stack">
+      @for (t of toast.toasts(); track t.id) {
+        <div class="toast" [class.err]="!t.ok" (click)="toast.dismiss(t.id)">
+          <span class="dot"></span>
+          <span class="msg">{{ t.message }}</span>
+        </div>
+      }
+    </div>

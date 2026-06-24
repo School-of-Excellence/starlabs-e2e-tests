@@ -1,6 +1,6 @@
 import { Component, computed, input, output, signal } from '@angular/core';
-import { ReleaseCandidate, RcStatus } from '../core/release-candidate.model';
-import { STATUS_META } from '../core/status-meta';
+import { ReleaseCandidate, RcStatus } from '../../core/release-candidate.model';
+import { STATUS_META } from '../../core/status-meta';
 
 /** The filter model emitted by the bar and consumed by the list screens. */
 export interface RcFilter {
@@ -42,99 +42,8 @@ export function applyFilter(
 @Component({
   selector: 'rc-filter-bar',
   standalone: true,
-  template: `
-    <div class="bar">
-      <input
-        class="search"
-        type="search"
-        placeholder="Search branch, repo, commit…"
-        [value]="f().search"
-        (input)="patch({ search: asValue($event) })"
-      />
-
-      <select [value]="f().repo" (change)="patch({ repo: asValue($event) })">
-        <option value="">All repos</option>
-        @for (r of repos(); track r) {
-          <option [value]="r">{{ r }}</option>
-        }
-      </select>
-
-      <select [value]="f().status" (change)="patch({ status: asValue($event) })">
-        <option value="">All statuses</option>
-        @for (s of statuses; track s.value) {
-          <option [value]="s.value">{{ s.label }}</option>
-        }
-      </select>
-
-      <label class="mine">
-        <input
-          type="checkbox"
-          [checked]="f().mineOnly"
-          (change)="patch({ mineOnly: asChecked($event) })"
-        />
-        Mine only
-      </label>
-
-      @if (dirty()) {
-        <button class="link" (click)="reset()">Clear</button>
-      }
-    </div>
-  `,
-  styles: [
-    `
-      .bar {
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap;
-        padding: 12px 0 18px;
-      }
-      input.search {
-        flex: 1;
-        min-width: 220px;
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        color: var(--fg);
-        border-radius: 6px;
-        padding: 7px 10px;
-        font-size: 13px;
-      }
-      select {
-        background: var(--panel-2);
-        border: 1px solid var(--border);
-        color: var(--fg);
-        border-radius: 6px;
-        padding: 7px 10px;
-        font-size: 13px;
-      }
-      input.search:focus,
-      select:focus {
-        outline: none;
-        border-color: var(--accent);
-      }
-      .mine {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 13px;
-        color: var(--muted);
-        user-select: none;
-      }
-      .mine input {
-        accent-color: var(--accent);
-      }
-      button.link {
-        background: none;
-        border: none;
-        color: var(--accent);
-        padding: 4px 6px;
-        font-size: 12px;
-      }
-      button.link:hover {
-        text-decoration: underline;
-      }
-    `,
-  ],
+  templateUrl: './filter-bar.component.html',
+  styleUrl: './filter-bar.component.css',
 })
 export class FilterBarComponent {
   /** The full candidate set — used to populate the repo dropdown. */

@@ -1,0 +1,77 @@
+
+      :host {
+        display: block;
+      }
+      .head h2 {
+        margin: 0 0 4px;
+        font-size: 20px;
+      }
+      .head p {
+        margin: 0 0 18px;
+        font-size: 13px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+      th,
+      td {
+        padding: 12px 14px;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+        font-size: 13px;
+      }
+      th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--muted);
+        background: var(--panel-2);
+      }
+      tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .c {
+        text-align: center;
+        width: 90px;
+      }
+      tr.inactive .name,
+      tr.inactive .email {
+        opacity: 0.5;
+      }
+      .name {
+        font-weight: 600;
+      }
+      .email {
+        font-size: 12px;
+      }
+      input[type='checkbox'] {
+        accent-color: var(--accent);
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+      }
+      .email-input,
+      .name-input {
+        display: block;
+        width: 100%;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        color: var(--fg);
+        border-radius: 6px;
+        padding: 6px 9px;
+        font-size: 13px;
+        margin-bottom: 6px;
+      }
+      .email-input:focus,
+      .name-input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      .add {
+        margin-top: 14px;
+      }

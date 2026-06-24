@@ -1,0 +1,31 @@
+    <div class="backdrop" (click)="closed.emit()"></div>
+    <aside class="drawer" role="dialog" aria-label="Activity log">
+      <header>
+        <div>
+          <div class="title">Activity log</div>
+          <div class="sub muted">{{ label() }}</div>
+        </div>
+        <button class="x" (click)="closed.emit()" title="Close">✕</button>
+      </header>
+      <div class="body">
+        @for (e of ordered(); track $index) {
+          <div class="row" [attr.data-type]="e.type">
+            <span class="dot"></span>
+            <div class="content">
+              <div class="rtop">
+                <span class="type">{{ labelFor(e.type) }}</span>
+                <span class="time muted">{{ e.eventTime | date: 'MMM d, HH:mm' }}</span>
+              </div>
+              <div class="meta muted">
+                {{ e.actor || '—' }}
+                @if (short(e.sha)) { · <code>{{ short(e.sha) }}</code> }
+                · <span class="src" [attr.data-src]="e.source">{{ e.source }}</span>
+                @if (!e.confirmed) { · <em class="pending">pending</em> }
+              </div>
+            </div>
+          </div>
+        } @empty {
+          <div class="empty muted">No activity recorded for this branch yet.</div>
+        }
+      </div>
+    </aside>
