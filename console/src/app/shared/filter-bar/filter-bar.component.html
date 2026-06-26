@@ -21,15 +21,6 @@
         }
       </select>
 
-      <label class="mine">
-        <input
-          type="checkbox"
-          [checked]="f().mineOnly"
-          (change)="patch({ mineOnly: asChecked($event) })"
-        />
-        Mine only
-      </label>
-
       @if (dirty()) {
         <button class="link" (click)="reset()">Clear</button>
       }

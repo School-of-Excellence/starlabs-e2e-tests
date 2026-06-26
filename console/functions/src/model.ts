@@ -133,6 +133,18 @@ export interface ReleaseCandidate {
   /** Latest deploy health from the deploy workflow_run / deployment_status (D10). */
   lastDeploymentState?: string;
 
+  // --- Promotion lane (the `development` candidate; promotion-chain plan 2026-06-24) ---
+  /** `development` has feature(s) merged in but not yet promoted to production. */
+  hasUnreleased?: boolean;
+  /** `development` is ready to promote: hasUnreleased AND its dev deploy succeeded. */
+  promotable?: boolean;
+  /**
+   * FEATURE candidate: its PR merged to `development` but is NOT yet shipped to production — i.e.
+   * part of the current promotion BATCH (D2, 2026-06-26). Set on the feature→dev merge; cleared on
+   * the development→production merge (the whole batch releases together).
+   */
+  unreleased?: boolean;
+
   derivedStatus: ReleaseStatus;
   lastActivity?: LastActivity;
   reconcile: Reconcile;
@@ -185,7 +197,9 @@ export type Capability =
   | 'MANAGE_MEMBERS';
 
 export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
-  developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV', 'CREATE_PR_PROD'],
+  // Promotion to production is ADMIN-ONLY (D1, 2026-06-26). The server enforces this too via
+  // requireCapability(CREATE_PR_PROD) in createPullRequest, so a developer cannot promote by API.
+  developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV'],
   tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD'],
   admin: [
     'DEPLOY_PREVIEW',

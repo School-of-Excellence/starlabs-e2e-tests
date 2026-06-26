@@ -156,3 +156,30 @@
         padding: 40px;
         text-align: center;
       }
+      .section {
+        margin: 22px 2px 8px;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .card.env {
+        border-left: 3px solid var(--accent);
+      }
+      .histbtn {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font: inherit;
+        font-size: 12px;
+        margin-left: 8px;
+        padding: 3px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        vertical-align: middle;
+      }
+      .histbtn:hover { border-color: var(--accent); color: var(--accent); }

@@ -14,6 +14,9 @@
             <div class="content">
               <div class="rtop">
                 <span class="type">{{ labelFor(e.type) }}</span>
+                @if (detailFor(e); as d) {
+                  <span class="dtl" [attr.data-tone]="detailTone(e)">{{ d }}</span>
+                }
                 <span class="time muted">{{ e.eventTime | date: 'MMM d, HH:mm' }}</span>
               </div>
               <div class="meta muted">

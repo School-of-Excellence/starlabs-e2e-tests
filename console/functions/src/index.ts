@@ -53,7 +53,8 @@ import {
   hasCapability,
   isAllowedDomain,
 } from './model';
-import { mutateCandidate } from './candidate';
+import { mutateCandidate, computePromotable, previewUrl } from './candidate';
+import { projectCandidate } from './projection';
 import { appendWebhookActivity, appendActivity } from './activity';
 
 initializeApp();
@@ -418,10 +419,49 @@ async function handlePullRequest(deliveryId: string, payload: any): Promise<bool
       facet.url = url ?? facet.url;
       facet.state = 'MERGED';
       facet.headSha = prHeadSha ?? facet.headSha;
+      // A feature merged into development joins the current promotion BATCH (D2) until the next
+      // development→production release clears it.
+      if (isDev) c.unreleased = true;
     } else if (isClosedUnmerged) {
       facet.state = 'CLOSED';
     }
   });
+
+  // --- Promotion lane maintenance (promotion-chain plan 2026-06-24) ---
+  // A feature merged INTO development → development now has unreleased changes. Create-PR-to-prod
+  // still waits for the dev deploy to succeed (promotable is set in the deploy handler).
+  if (isDev && isMerged) {
+    await mutateCandidate(repo, 'development', lastActivityFrom(entry), (c) => {
+      c.hasUnreleased = true;
+    });
+  }
+  // A development → production PR: mirror it onto the production candidate (so the Production entry
+  // shows it) and, once merged, clear development's unreleased/promotable flags (batch released).
+  if (!isDev && head === 'development') {
+    await mutateCandidate(repo, 'production', lastActivityFrom(entry), (c) => {
+      c.prProd.number = number ?? c.prProd.number;
+      c.prProd.url = url ?? c.prProd.url;
+      c.prProd.headSha = prHeadSha ?? c.prProd.headSha;
+      c.prProd.state = isMerged ? 'MERGED' : isOpen ? 'OPEN' : isClosedUnmerged ? 'CLOSED' : c.prProd.state;
+    });
+    if (isMerged) {
+      await mutateCandidate(repo, 'development', lastActivityFrom(entry), (c) => {
+        c.hasUnreleased = false;
+        c.promotable = false;
+        c.prodGate = { verdict: 'NONE' }; // released — the next batch needs a fresh tester validation
+      });
+      // The whole batch shipped to production: clear `unreleased` on every feature candidate for
+      // this repo (D2 — "merged since last prod release" resets at each release).
+      const feats = await db.collection(PATHS.releaseCandidates).where('repo', '==', repo).get();
+      for (const d of feats.docs) {
+        const fc = d.data() as ReleaseCandidate;
+        if (!isProtected(fc.branch) && fc.unreleased) {
+          await d.ref.set({ unreleased: false, updatedAt: Date.now() }, { merge: true });
+        }
+      }
+    }
+  }
+
   return true;
 }
 
@@ -445,8 +485,11 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
   const headSha: string | undefined = run.head_sha ?? undefined;
   const eventTime = toMillis(run.updated_at ?? run.run_started_at ?? run.created_at);
 
-  const isPreview = file === PREVIEW_WORKFLOW;
-  const isDeploy = file === DEPLOY_WORKFLOW;
+  // Match by workflow FILE when the payload carries `workflow_run.path`; fall back to the workflow
+  // display NAME when it doesn't. Some webhook payloads omit `path` → `file` is '' → a preview run
+  // would otherwise be dropped as "not tracked" and preview.buildState stays stuck at BUILDING.
+  const isPreview = file ? file === PREVIEW_WORKFLOW : name.includes('preview');
+  const isDeploy = file ? file === DEPLOY_WORKFLOW : name.includes('deploy');
   const isGate = !isPreview && !isDeploy && name.includes(E2E_GATE_HINT);
 
   if (!isPreview && !isDeploy && !isGate) {
@@ -483,13 +526,20 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
       } else if (status === 'completed') {
         c.preview.buildState = conclusion === 'success' ? 'LIVE' : 'FAILED';
         c.preview.builtAt = eventTime;
-        // NOTE: the real preview-channel URL has a random hash and is NOT predictable,
-        // so we do NOT compute it here. preview.yml writes the actual URL to the
-        // candidate after `hosting:channel:deploy` (the only place that knows it).
+        // Record the deterministic preview-channel URL (breakthroughs-test-<branchid>) on success
+        // so the console shows the right link without waiting on a preview.yml write-back.
+        if (conclusion === 'success') c.preview.url = previewUrl(branch);
       }
       c.preview.sha = headSha ?? c.preview.sha;
     } else if (isDeploy) {
       c.lastDeploymentState = status === 'completed' ? conclusion ?? 'unknown' : status;
+      // A NEW successful development deploy invalidates any prior tester validation — the tester
+      // must re-approve THIS deploy before it can be promoted ("after every deploy, tester says
+      // okay"). `promotable` itself is DERIVED in mutateCandidate from (hasUnreleased + deploy
+      // success + tester prodGate OK).
+      if (branch === 'development' && status === 'completed' && conclusion === 'success') {
+        c.prodGate = { verdict: 'NONE' };
+      }
     } else if (isGate) {
       // Lifecycle status for the Working-Branches gate report.
       const gateStatus =
@@ -521,14 +571,18 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
 }
 
 /**
- * deployment_status — optional (D10). Record the latest deploy state if the
- * deployment ref maps to a tracked feature branch.
+ * deployment_status — record the latest deploy state for ANY branch, INCLUDING the protected
+ * environments (development → starlabs-test, production → fir-sample). This is essential for the
+ * promotion lane: the Development entry's deploy badge + the tester's "OK to promote" gate key off
+ * `lastDeploymentState`, and a dev deploy reached directly (a push straight to `development`, no
+ * feature PR) may only ever surface here. Previously protected branches were skipped, so such
+ * deploys were invisible and the promote button never appeared. (promotion-chain, 2026-06-25)
  */
 async function handleDeploymentStatus(deliveryId: string, payload: any): Promise<boolean> {
   const repo = shortRepo(payload);
   const state: string = payload.deployment_status?.state ?? '';
-  const branch: string = payload.deployment?.ref ?? '';
-  if (!branch || isProtected(branch)) return false;
+  const branch: string = payload.deployment?.ref ?? payload.deployment?.environment ?? '';
+  if (!branch) return false;
 
   const eventTime = toMillis(payload.deployment_status?.updated_at ?? payload.deployment_status?.created_at);
   const entry = activityEntry({
@@ -545,6 +599,11 @@ async function handleDeploymentStatus(deliveryId: string, payload: any): Promise
 
   await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
     c.lastDeploymentState = state;
+    // A new SUCCESSFUL development deploy invalidates any prior tester validation — re-validate
+    // before promoting ("after every deploy, tester says okay"). Mirrors the workflow_run path.
+    if (branch === 'development' && state === 'success') {
+      c.prodGate = { verdict: 'NONE' };
+    }
   });
   return true;
 }
@@ -722,22 +781,13 @@ export const createPullRequest = onCall<CreatePullRequestData>(
         );
       }
     } else {
-      // After the prod sign-off the status advances to OK_FOR_PROD (which already
-      // implies the prod gate is OK). Still require the dev PR to have merged first,
-      // so the strict dev→prod order holds.
-      if (cand.derivedStatus !== ReleaseStatus.OK_FOR_PROD) {
+      // Promotion (development → production): head is the `development` branch, so `cand` is the
+      // development candidate. It is promotable only after a feature merged in (hasUnreleased) AND
+      // its dev deploy succeeded — promotion-chain plan 2026-06-24 ("deploy then promote").
+      if (!cand.promotable) {
         throw new HttpsError(
           'failed-precondition',
-          `Prod PR requires status OK_FOR_PROD (got ${cand.derivedStatus}).`,
-        );
-      }
-      if (cand.prDev.state !== 'MERGED') {
-        throw new HttpsError('failed-precondition', 'Prod PR requires the dev PR to be merged first.');
-      }
-      if (cand.prodGate.sha && cand.headSha && cand.prodGate.sha !== cand.headSha) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Prod sign-off is stale (new commits since sign-off). Re-request QA.',
+          'Development is not ready to promote — it needs unreleased changes with a successful dev deploy.',
         );
       }
     }
@@ -755,8 +805,18 @@ export const createPullRequest = onCall<CreatePullRequestData>(
       });
       pr = resp.data;
     } catch (err: any) {
+      const msg = String(err?.message ?? err);
       logger.error('GitHub PR create failed', err);
-      throw new HttpsError('internal', `GitHub PR create failed: ${err?.message ?? err}`);
+      // GitHub rejects a PR with no diff ("No commits between X and Y"). Rewrite to actionable text.
+      if (/no commits between/i.test(msg)) {
+        throw new HttpsError(
+          'failed-precondition',
+          base === 'production'
+            ? 'Nothing to promote — development has no commits ahead of production.'
+            : 'No new commits ahead of development. Sync your branch with development, commit your changes, and push before opening a PR → dev.',
+        );
+      }
+      throw new HttpsError('internal', `GitHub PR create failed: ${msg}`);
     }
 
     const isDev = base === 'development';
@@ -991,9 +1051,97 @@ function memberCollection() {
 export const reconcilePoll = onSchedule(
   { region, schedule: 'every 30 minutes', secrets: [GITHUB_APP_PRIVATE_KEY] },
   async () => {
-    logger.info('reconcilePoll tick — STUB (no backfill implemented yet). See TODO(reconcile).');
-    // Intentionally a no-op stub. Wiring the schedule now so the function exists
-    // and can be fleshed out without a deploy-shape change.
-    return;
+    // RE-PROJECTION pass: recompute derivedStatus/reconcile for every candidate from its stored
+    // facets. This self-heals docs whose cached projection is stale after a projection-logic change
+    // (so an operator no longer has to push/sign-off to un-stick a branch), and is the foundation
+    // for the GitHub-backfill TODO below.
+    const snap = await db.collection(PATHS.releaseCandidates).get();
+    let updated = 0;
+    for (const doc of snap.docs) {
+      const c = doc.data() as ReleaseCandidate;
+      const { derivedStatus, reconcile } = projectCandidate(c);
+      const promotable = computePromotable(c);
+      if (
+        c.derivedStatus !== derivedStatus ||
+        c.reconcile !== reconcile ||
+        (c.promotable ?? false) !== promotable
+      ) {
+        await doc.ref.set({ derivedStatus, reconcile, promotable, updatedAt: Date.now() }, { merge: true });
+        updated++;
+      }
+    }
+    logger.info(`reconcilePoll: re-projected ${snap.size} candidates, ${updated} updated`);
+
+    // GITHUB BACKFILL: heal preview builds STUCK at BUILDING. buildState only flips to LIVE/FAILED
+    // via the preview.yml `workflow_run: completed` webhook; if that delivery is dropped/unmatched,
+    // the optimistic BUILDING (set on dispatch) never gets corrected. Poll GitHub Actions directly
+    // for the latest preview run per stuck candidate and reconcile the facet. (promotion-chain /
+    // reconcile backfill, 2026-06-25)
+    const all = snap.docs.map((d) => d.data() as ReleaseCandidate);
+    let octokit: Octokit | undefined;
+    try {
+      octokit = appOctokit();
+    } catch (e) {
+      logger.error('reconcilePoll: octokit init failed; skipping GitHub backfills', e);
+    }
+
+    // (a) Heal preview builds STUCK at BUILDING (dropped/unmatched workflow_run: completed).
+    const stuck = all.filter((c) => c.preview?.buildState === 'BUILDING' && !isProtected(c.branch));
+    let healed = 0;
+    for (const c of octokit ? stuck : []) {
+      try {
+        const runs = await octokit!.actions.listWorkflowRuns({
+          owner: GITHUB_ORG,
+          repo: c.repo,
+          workflow_id: PREVIEW_WORKFLOW,
+          branch: c.branch,
+          per_page: 1,
+        });
+        const latest = runs.data.workflow_runs?.[0];
+        if (latest && latest.status === 'completed') {
+          const buildState = latest.conclusion === 'success' ? 'LIVE' : 'FAILED';
+          await mutateCandidate(
+            c.repo,
+            c.branch,
+            { type: 'preview_build', sha: latest.head_sha ?? undefined, actor: 'reconcile', at: Date.now() },
+            (cc) => {
+              cc.preview.buildState = buildState;
+              cc.preview.builtAt = Date.now();
+              if (latest.conclusion === 'success') cc.preview.url = previewUrl(c.branch);
+              cc.preview.sha = latest.head_sha ?? cc.preview.sha;
+            },
+          );
+          healed++;
+        }
+      } catch (e) {
+        logger.error(`reconcilePoll: preview backfill failed for ${c.repo}/${c.branch}`, e);
+      }
+    }
+
+    // (b) Recompute `hasUnreleased` on each development candidate from the real GitHub diff
+    // (production…development). This is the authoritative "is there anything to promote" signal —
+    // it self-heals after a release (ahead_by → 0 ⇒ no more "Create PR → prod") and after any
+    // missed merge event, so `promotable` can never go stale. (2026-06-26)
+    const devs = all.filter((c) => c.branch === 'development');
+    let synced = 0;
+    for (const c of octokit ? devs : []) {
+      try {
+        const cmp = await octokit!.repos.compareCommitsWithBasehead({
+          owner: GITHUB_ORG,
+          repo: c.repo,
+          basehead: 'production...development',
+        });
+        const ahead = (cmp.data.ahead_by ?? 0) > 0;
+        if ((c.hasUnreleased ?? false) !== ahead) {
+          await mutateCandidate(c.repo, 'development', c.lastActivity ?? { type: 'reconcile', at: Date.now() }, (cc) => {
+            cc.hasUnreleased = ahead;
+          });
+          synced++;
+        }
+      } catch (e) {
+        logger.error(`reconcilePoll: hasUnreleased backfill failed for ${c.repo}`, e);
+      }
+    }
+    logger.info(`reconcilePoll: backfilled ${healed}/${stuck.length} previews, synced ${synced} dev hasUnreleased`);
   },
 );

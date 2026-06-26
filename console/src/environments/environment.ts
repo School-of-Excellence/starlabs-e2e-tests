@@ -9,4 +9,9 @@ export const environment = {
   // Deployed cicd-audit history dashboard base URL. When set, the gate "View report"
   // link deep-links here by githubRunId; when empty, it falls back to the GitHub run page.
   historyDashboardUrl: '',
+  // Fixed deploy URLs per environment branch (operator-provided, D3 2026-06-26).
+  environmentUrls: {
+    development: 'https://breakthroughs-test.web.app/',
+    production: 'https://breakthroughs.app/',
+  } as Record<string, string>,
 };

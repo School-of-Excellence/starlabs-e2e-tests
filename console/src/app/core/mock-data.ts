@@ -21,7 +21,7 @@ function previewUrl(branch: string): string {
     .replace(/\//g, '-')
     .replace(/[^a-z0-9-]/g, '')
     .slice(0, 40);
-  return `https://${slug}---breakthroughs-test.web.app`;
+  return `https://breakthroughs-test-${slug}.web.app`;
 }
 
 export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
@@ -170,14 +170,19 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     id: 'starlabs-angular__feature/search-ranking',
     repo: 'starlabs-angular',
     branch: 'feature/search-ranking',
-    headSha: 'ggg7777',
-    headCommit: { msg: 'Tune ranking weights', author: 'dev@soexcellence.com', at: '2026-06-18T09:00:00Z' },
-    preview: { sha: 'ggg7777', url: previewUrl('feature/search-ranking'), buildState: 'LIVE', builtAt: '2026-06-18T09:20:00Z' },
+    // AUTO NEW-ITERATION: a new commit (ggg8888) landed after this branch was merged to dev
+    // (#318 @ ggg7777); the preview was redeployed and the tester RE-APPROVED at ggg8888, so the
+    // branch is back at OK_FOR_DEV and "Create PR → dev" is enabled to open a NEW PR for ggg8888 —
+    // even though the old PR #318 shows MERGED. The projection no longer pins DEV_MERGED because
+    // prDev.headSha (ggg7777) ≠ headSha (ggg8888).
+    headSha: 'ggg8888',
+    headCommit: { msg: 'Hotfix: tie-breaker for equal scores', author: 'dev@soexcellence.com', at: '2026-06-19T08:00:00Z' },
+    preview: { sha: 'ggg8888', url: previewUrl('feature/search-ranking'), buildState: 'LIVE', builtAt: '2026-06-19T08:20:00Z' },
     devGate: {
       verdict: 'OK',
-      sha: 'ggg7777',
+      sha: 'ggg8888',
       by: 'tester@soexcellence.com',
-      at: '2026-06-18T10:00:00Z',
+      at: '2026-06-19T09:00:00Z',
     },
     prDev: {
       number: 318,
@@ -189,14 +194,14 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     },
     prodGate: { verdict: 'NONE' },
     prProd: { state: 'NONE' },
-    testSummary: { conclusion: 'success', passed: 55, failed: 0, total: 55, at: '2026-06-18T09:25:00Z' },
-    derivedStatus: 'DEV_MERGED',
-    lastActivity: { type: 'dev_merged', sha: 'ggg7777', actor: 'dev@soexcellence.com', at: '2026-06-18T11:00:00Z' },
+    testSummary: { conclusion: 'success', passed: 55, failed: 0, total: 55, at: '2026-06-19T08:25:00Z' },
+    derivedStatus: 'OK_FOR_DEV',
+    lastActivity: { type: 'signoff_dev', sha: 'ggg8888', actor: 'tester@soexcellence.com', at: '2026-06-19T09:00:00Z' },
     reconcile: 'IN_SYNC',
-    updatedAt: '2026-06-18T11:00:00Z',
+    updatedAt: '2026-06-19T09:00:00Z',
   },
 
-  // 8) Tester signed off for prod — developer may open PR → prod.
+  // 8) Merged into development (terminal for a feature; promoted to prod via development).
   {
     id: 'starlabs-angular__feature/billing-portal',
     repo: 'starlabs-angular',
@@ -212,22 +217,17 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       headSha: 'hhh8888',
       checksState: 'success',
     },
-    prodGate: {
-      verdict: 'OK',
-      sha: 'hhh8888',
-      by: 'tester@soexcellence.com',
-      at: '2026-06-17T16:00:00Z',
-      notes: [{ by: 'tester@soexcellence.com', at: '2026-06-17T16:00:00Z', text: 'Dev deploy validated. Safe for prod.' }],
-    },
+    prodGate: { verdict: 'NONE' },
     prProd: { state: 'NONE' },
     testSummary: { conclusion: 'success', passed: 58, failed: 0, total: 58, at: '2026-06-17T09:25:00Z' },
-    derivedStatus: 'OK_FOR_PROD',
-    lastActivity: { type: 'signoff_prod', sha: 'hhh8888', actor: 'tester@soexcellence.com', at: '2026-06-17T16:00:00Z' },
+    unreleased: true,
+    derivedStatus: 'DEV_MERGED',
+    lastActivity: { type: 'dev_merged', sha: 'hhh8888', actor: 'dev@soexcellence.com', at: '2026-06-17T12:00:00Z' },
     reconcile: 'IN_SYNC',
     updatedAt: '2026-06-17T16:00:00Z',
   },
 
-  // 9) PR → prod open and mergeable.
+  // 9) Merged into development (Flutter feature; terminal).
   {
     id: 'breakthroughs-flutter__feature/flutter-onboarding',
     repo: 'breakthroughs-flutter',
@@ -243,23 +243,16 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       headSha: 'iii9999',
       checksState: 'success',
     },
-    prodGate: { verdict: 'OK', sha: 'iii9999', by: 'tester@soexcellence.com', at: '2026-06-16T15:00:00Z' },
-    prProd: {
-      number: 79,
-      url: `https://github.com/${ORG}/breakthroughs-flutter/pull/79`,
-      state: 'OPEN',
-      headSha: 'iii9999',
-      mergeable: true,
-      checksState: 'success',
-    },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
     testSummary: { conclusion: 'success', passed: 40, failed: 0, total: 40, at: '2026-06-16T09:25:00Z' },
-    derivedStatus: 'PR_TO_PROD',
-    lastActivity: { type: 'pr_to_prod', sha: 'iii9999', actor: 'mobile@soexcellence.com', at: '2026-06-16T15:30:00Z' },
+    derivedStatus: 'DEV_MERGED',
+    lastActivity: { type: 'dev_merged', sha: 'iii9999', actor: 'mobile@soexcellence.com', at: '2026-06-16T12:00:00Z' },
     reconcile: 'IN_SYNC',
     updatedAt: '2026-06-16T15:30:00Z',
   },
 
-  // 10) Shipped to production.
+  // 10) Merged into development (terminal); shipped to prod earlier via a promotion.
   {
     id: 'starlabs-angular__feature/checkout-v2',
     repo: 'starlabs-angular',
@@ -275,17 +268,12 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       headSha: 'jjj0000',
       checksState: 'success',
     },
-    prodGate: { verdict: 'OK', sha: 'jjj0000', by: 'tester@soexcellence.com', at: '2026-06-10T15:00:00Z' },
-    prProd: {
-      number: 305,
-      url: `https://github.com/${ORG}/starlabs-angular/pull/305`,
-      state: 'MERGED',
-      headSha: 'jjj0000',
-      checksState: 'success',
-    },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
     testSummary: { conclusion: 'success', passed: 62, failed: 0, total: 62, at: '2026-06-10T09:25:00Z' },
-    derivedStatus: 'PROD_MERGED',
-    lastActivity: { type: 'prod_merged', sha: 'jjj0000', actor: 'dev@soexcellence.com', at: '2026-06-10T20:10:00Z' },
+    unreleased: true,
+    derivedStatus: 'DEV_MERGED',
+    lastActivity: { type: 'dev_merged', sha: 'jjj0000', actor: 'dev@soexcellence.com', at: '2026-06-10T12:00:00Z' },
     reconcile: 'IN_SYNC',
     updatedAt: '2026-06-10T20:10:00Z',
   },
@@ -329,6 +317,61 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     lastActivity: { type: 'push', sha: 'kkk2222', actor: 'dev@soexcellence.com', at: '2026-06-15T18:00:00Z' },
     reconcile: 'NEEDS_DECISION',
     updatedAt: '2026-06-15T18:10:00Z',
+  },
+
+  // 12) DEVELOPMENT — promotion hub. Integrated dev branch, ready to promote → production.
+  {
+    id: 'starlabs-angular__development',
+    repo: 'starlabs-angular',
+    branch: 'development',
+    headSha: 'devtip7',
+    headCommit: { msg: 'Merge billing-portal, search-ranking, checkout-v2', author: 'dev@soexcellence.com', at: '2026-06-18T12:00:00Z' },
+    preview: { buildState: 'NONE' },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
+    lastDeploymentState: 'success',
+    hasUnreleased: true,
+    promotable: false, // deployed, but awaiting the tester's "OK to promote" (Preview Channels)
+    testSummary: { conclusion: 'success', passed: 64, failed: 0, total: 64, at: '2026-06-18T12:20:00Z' },
+    derivedStatus: 'DEV_MERGED',
+    lastActivity: { type: 'dev_merged', sha: 'devtip7', actor: 'dev@soexcellence.com', at: '2026-06-18T12:00:00Z' },
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-06-18T12:20:00Z',
+  },
+
+  // 13) PRODUCTION — receives the development → production promotion. Last release accepted (#480).
+  {
+    id: 'starlabs-angular__production',
+    repo: 'starlabs-angular',
+    branch: 'production',
+    headSha: 'prodcur6',
+    headCommit: { msg: 'Release 2026-06-10', author: 'dev@soexcellence.com', at: '2026-06-10T20:10:00Z' },
+    preview: { buildState: 'NONE' },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: {
+      number: 480,
+      url: `https://github.com/${ORG}/starlabs-angular/pull/480`,
+      state: 'MERGED',
+      headSha: 'prodcur6',
+      checksState: 'success',
+    },
+    lastDeploymentState: 'success',
+    gateRun: {
+      stage: 'prod',
+      status: 'PASSED',
+      runId: '7900',
+      runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7900`,
+      reportRunId: '7900',
+      at: '2026-06-10T19:30:00Z',
+    },
+    derivedStatus: 'PROD_MERGED',
+    lastActivity: { type: 'prod_merged', sha: 'prodcur6', actor: 'dev@soexcellence.com', at: '2026-06-10T20:10:00Z' },
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-06-10T20:10:00Z',
   },
 ];
 

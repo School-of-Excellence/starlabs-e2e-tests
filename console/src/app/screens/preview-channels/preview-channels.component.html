@@ -45,8 +45,14 @@
                 @if (signoffStale(rc.devGate, rc.headSha)) { <span class="warn">stale vs HEAD</span> }
               </div>
             }
-            @for (n of rc.devGate.notes ?? []; track n.at) {
-              <div class="note">“{{ n.text }}” — {{ n.by }}</div>
+            @if (latestNote(rc.devGate); as n) {
+              <div class="note">
+                “{{ n.text }}” — {{ n.by }} · {{ n.at | date: 'MMM d, HH:mm' }}
+                <button class="histbtn" title="Full release-note history" (click)="openLog(rc)">
+                  <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2" /><path d="M8 4.5V8l2.4 1.5" stroke-linecap="round" /></svg>
+                  log
+                </button>
+              </div>
             }
             @if (devReason(rc); as reason) {
               <div class="disabled muted">{{ reason }}</div>
@@ -70,49 +76,80 @@
             }
           </section>
 
-          <!-- PROD gate (only when dev-merged or beyond) -->
-          @if (showProdGate(rc)) {
-            <section class="gate prod">
-              <div class="gate-head">
-                <strong>PROD gate</strong>
-                <span class="muted">validate the dev deploy → safe for prod</span>
-                <span class="verdict" [attr.data-tone]="gateTone(rc.prodGate.verdict)">
-                  {{ rc.prodGate.verdict }}
-                </span>
-              </div>
-              @if (rc.prodGate.by) {
-                <div class="by muted">
-                  {{ rc.prodGate.by }} · {{ rc.prodGate.at | date: 'MMM d, HH:mm' }}
-                  @if (signoffStale(rc.prodGate, rc.headSha)) { <span class="warn">stale vs HEAD</span> }
-                </div>
-              }
-              @for (n of rc.prodGate.notes ?? []; track n.at) {
-                <div class="note">“{{ n.text }}” — {{ n.by }}</div>
-              }
-              @if (prodReason(rc); as reason) {
-                <div class="disabled muted">{{ reason }}</div>
-              } @else {
-                <div class="gate-actions">
-                  <textarea
-                    rows="2"
-                    placeholder="Optional QA note…"
-                    [value]="prodNote()"
-                    (input)="prodNote.set(asValue($event))"
-                  ></textarea>
-                  <div class="btns">
-                    <button class="primary" [disabled]="busy() === rc.id" (click)="signProd(rc, 'OK')">
-                      Safe for prod
-                    </button>
-                    <button class="reject" [disabled]="busy() === rc.id" (click)="signProd(rc, 'REJECTED')">
-                      Hold
-                    </button>
-                  </div>
-                </div>
-              }
-            </section>
-          }
         </article>
       } @empty {
         <div class="empty muted">No preview channels match the current filter.</div>
       }
     </div>
+
+    <!-- ===================== ENVIRONMENT DEPLOYS (tester validation) ===================== -->
+    @if (envEntries().length) {
+      <h3 class="section">Environment deploys</h3>
+      <div class="list">
+        @for (rc of envEntries(); track rc.id) {
+          <article class="card env">
+            <div class="top">
+              <div class="ident">
+                <div class="branch">{{ rc.branch }}</div>
+                <div class="sub muted">
+                  {{ rc.repo }} ·
+                  @if (envUrl(rc.branch); as u) {
+                    <a [href]="u" target="_blank" rel="noopener">{{ u }} ↗</a> ·
+                  }
+                  {{ isProd(rc) ? 'production → fir-sample' : 'development → starlabs-test' }}
+                </div>
+              </div>
+              @if (deployLabel(rc); as dl) {
+                <span class="pstate" [attr.data-tone]="deployTone(rc)">{{ dl }}</span>
+              }
+            </div>
+
+            <section class="gate">
+              <div class="gate-head">
+                <strong>{{ isProd(rc) ? 'Production validation' : 'Promote gate' }}</strong>
+                <span class="muted">
+                  {{ isProd(rc) ? 'validate the production release' : 'validate the dev deploy → OK to promote' }}
+                </span>
+                <span class="verdict" [attr.data-tone]="gateTone(rc.prodGate.verdict)">{{ rc.prodGate.verdict }}</span>
+              </div>
+              @if (rc.prodGate.by) {
+                <div class="by muted">{{ rc.prodGate.by }} · {{ rc.prodGate.at | date: 'MMM d, HH:mm' }}</div>
+              }
+              @if (latestNote(rc.prodGate); as n) {
+                <div class="note">
+                  “{{ n.text }}” — {{ n.by }} · {{ n.at | date: 'MMM d, HH:mm' }}
+                  <button class="histbtn" title="Full release-note history" (click)="openLog(rc)">
+                    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6.2" /><path d="M8 4.5V8l2.4 1.5" stroke-linecap="round" /></svg>
+                    log
+                  </button>
+                </div>
+              }
+              @if (envReason(rc); as reason) {
+                <div class="disabled muted">{{ reason }}</div>
+              } @else {
+                <div class="gate-actions">
+                  <textarea
+                    rows="2"
+                    placeholder="Optional note…"
+                    [value]="prodNote()"
+                    (input)="prodNote.set(asValue($event))"
+                  ></textarea>
+                  <div class="btns">
+                    <button class="primary" [disabled]="busy() === rc.id" (click)="signEnv(rc, 'OK')">
+                      {{ isProd(rc) ? 'Validated' : 'OK to promote' }}
+                    </button>
+                    <button class="reject" [disabled]="busy() === rc.id" (click)="signEnv(rc, 'REJECTED')">
+                      {{ isProd(rc) ? 'Issue' : 'Hold' }}
+                    </button>
+                  </div>
+                </div>
+              }
+            </section>
+          </article>
+        }
+      </div>
+    }
+
+    @if (selected(); as s) {
+      <rc-activity-drawer [branchId]="s.id" [label]="s.label" (closed)="selected.set(null)" />
+    }

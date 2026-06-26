@@ -16,6 +16,7 @@ import {
   ActivityLogEntry,
   GateVerdict,
   toMillis,
+  isProtectedBranch,
 } from './release-candidate.model';
 import { Member } from './roles';
 import {
@@ -116,12 +117,12 @@ export class FirebaseService {
    * slug = branch lowercased, `/`→`-`, strip non `[a-z0-9-]`, cap 40 chars.
    */
   previewUrlFor(repo: string, branch: string): string {
-    const slug = branch
+    const branchId = branch
       .toLowerCase()
       .replace(/\//g, '-')
       .replace(/[^a-z0-9-]/g, '')
       .slice(0, 40);
-    return `https://${slug}---breakthroughs-test.web.app`;
+    return `https://breakthroughs-test-${branchId}.web.app`;
   }
 
   /**
@@ -266,6 +267,65 @@ export class FirebaseService {
     );
   }
 
+  /**
+   * TEST/MOCK ONLY — simulate a reviewer MERGING the open PR on GitHub (the webhook event the
+   * console can never fire itself, since D3: the console never merges). This faithfully replicates
+   * the backend `handlePullRequest` MERGE path so the post-merge state can be tested end-to-end:
+   *  - feature→dev merge  → prDev MERGED · feature.unreleased=true · development.hasUnreleased=true
+   *  - dev→prod merge     → prProd MERGED · clear development hasUnreleased/promotable/prodGate ·
+   *                         clear `unreleased` on every feature of the repo (batch shipped)
+   */
+  mockMerge(id: string): void {
+    if (!this.useMock) return;
+    const now = new Date().toISOString();
+    this.mockStore.update((list) => {
+      const target = list.find((rc) => rc.id === id);
+      if (!target) return list;
+      const isProdMerge = target.prProd?.state === 'OPEN';
+      const isDevMerge = !isProdMerge && target.prDev?.state === 'OPEN';
+      let next = list.map((rc) => {
+        if (rc.id !== id) return rc;
+        if (isProdMerge) {
+          return {
+            ...rc,
+            prProd: { ...rc.prProd, state: 'MERGED' as const },
+            hasUnreleased: false,
+            promotable: false,
+            prodGate: { verdict: 'NONE' as GateVerdict },
+            derivedStatus: 'PROD_MERGED' as RcStatus,
+            lastDeploymentState: rc.lastDeploymentState,
+            updatedAt: now,
+          };
+        }
+        if (isDevMerge) {
+          return {
+            ...rc,
+            prDev: { ...rc.prDev, state: 'MERGED' as const },
+            unreleased: true,
+            derivedStatus: 'DEV_MERGED' as RcStatus,
+            updatedAt: now,
+          };
+        }
+        return rc;
+      });
+      if (isProdMerge) {
+        next = next.map((rc) =>
+          rc.repo === target.repo && !isProtectedBranch(rc.branch) && rc.unreleased
+            ? { ...rc, unreleased: false, updatedAt: now }
+            : rc,
+        );
+      }
+      if (isDevMerge) {
+        next = next.map((rc) =>
+          rc.repo === target.repo && rc.branch === 'development'
+            ? { ...rc, hasUnreleased: true, updatedAt: now }
+            : rc,
+        );
+      }
+      return next;
+    });
+  }
+
   private applyPreviewBuilding(id: string): void {
     this.patch(id, (rc) => ({
       ...rc,
@@ -273,6 +333,25 @@ export class FirebaseService {
       derivedStatus: 'PREVIEW_BUILDING',
       lastActivity: { type: 'preview_dispatch', sha: rc.headSha, at: new Date().toISOString() },
     }));
+    // MOCK ONLY: simulate CI finishing the preview build so the feature lane is fully clickable.
+    setTimeout(() => {
+      this.patch(id, (rc) =>
+        rc.preview.buildState !== 'BUILDING'
+          ? rc
+          : {
+              ...rc,
+              preview: {
+                ...rc.preview,
+                sha: rc.headSha,
+                url: this.previewUrlFor(rc.repo, rc.branch),
+                buildState: 'LIVE',
+                builtAt: new Date().toISOString(),
+              },
+              derivedStatus: rc.derivedStatus === 'PREVIEW_BUILDING' ? 'PREVIEW_LIVE' : rc.derivedStatus,
+              lastActivity: { type: 'preview_build', sha: rc.headSha, at: new Date().toISOString(), actor: 'github-actions' },
+            },
+      );
+    }, 1200);
   }
 
   private applyGate(
@@ -300,6 +379,9 @@ export class FirebaseService {
       return {
         ...rc,
         prodGate: { ...rc.prodGate, ...gate },
+        // Mirror the backend's computePromotable: a tester OK on a SUCCESSFUL dev deploy makes the
+        // development candidate promotable → Create PR → prod enables.
+        promotable: verdict === 'OK' && rc.lastDeploymentState === 'success' && !!rc.hasUnreleased,
         derivedStatus: verdict === 'OK' ? 'OK_FOR_PROD' : rc.derivedStatus,
         lastActivity: { type: 'signoff_prod', sha: rc.headSha, at },
       };

@@ -31,16 +31,16 @@ export function emptyCandidate(repo: string, branch: string): ReleaseCandidate {
 }
 
 /**
- * Deterministic preview URL (plan D10): `https://<slug>---breakthroughs-test.web.app`.
- * slug = branch lowercased, `/`→`-`, strip non `[a-z0-9-]`, cap 40 chars.
+ * Deterministic preview URL: `https://breakthroughs-test-<branchid>.web.app` (operator, 2026-06-26).
+ * branchid = branch lowercased, `/`→`-`, strip non `[a-z0-9-]`, cap 40 chars.
  */
 export function previewUrl(branch: string): string {
-  const slug = branch
+  const branchId = branch
     .toLowerCase()
     .replace(/\//g, '-')
     .replace(/[^a-z0-9-]/g, '')
     .slice(0, 40);
-  return `https://${slug}---breakthroughs-test.web.app`;
+  return `https://breakthroughs-test-${branchId}.web.app`;
 }
 
 /**
@@ -80,8 +80,27 @@ export async function mutateCandidate(
   const { derivedStatus, reconcile } = projectCandidate(candidate);
   candidate.derivedStatus = derivedStatus;
   candidate.reconcile = reconcile;
+  candidate.promotable = computePromotable(candidate);
   candidate.updatedAt = Date.now();
 
   await ref.set(candidate, { merge: true });
   return candidate;
+}
+
+/**
+ * `development` is promotable (Create PR → prod) when its dev deploy SUCCEEDED and a TESTER
+ * validated that deploy (prodGate OK). The tester's approval of a green deploy IS the signal to
+ * promote — we deliberately do NOT also require a `hasUnreleased` flag (that flag is set only by
+ * the merge webhook and proved fragile: a pre-deploy/missed merge left a deployed, tester-approved
+ * branch un-promotable). DERIVED (not ad-hoc) so it recomputes on every write + reconcilePoll tick.
+ * Only the `development` candidate ever gets a prodGate OK (via the env sign-off), so feature
+ * candidates stay non-promotable. tester-gate revision 2026-06-25.
+ */
+export function computePromotable(c: ReleaseCandidate): boolean {
+  // Must have something to promote (development ahead of production = hasUnreleased), a SUCCESSFUL
+  // dev deploy, AND a tester validation. Without the hasUnreleased term, promotable stayed true
+  // after a release (prodGate + deploy still green) and Create-PR-to-prod kept reappearing for an
+  // already-shipped batch. `hasUnreleased` is kept current by the merge handlers AND a GitHub
+  // compare(production…development) backfill in reconcilePoll, so it can't go stale. (2026-06-26)
+  return !!c.hasUnreleased && c.lastDeploymentState === 'success' && c.prodGate?.verdict === 'OK';
 }

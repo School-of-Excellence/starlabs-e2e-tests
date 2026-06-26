@@ -54,4 +54,42 @@ export class ActivityDrawerComponent {
   short(sha?: string): string {
     return sha ? sha.slice(0, 7) : '';
   }
+
+  /**
+   * A short outcome tag from the entry's `detail` so look-alike rows are distinguishable:
+   * sign-offs show OK/Rejected, preview/deploy show building/live/failed, reconcile shows the
+   * decision, PRs show the number. Returns null when there's nothing useful to add.
+   */
+  detailFor(e: ActivityLogEntry): string | null {
+    const d = e.detail ?? {};
+    switch (e.type) {
+      case 'signoff_dev':
+      case 'signoff_prod':
+        return d['verdict'] === 'REJECTED' ? 'Rejected' : d['verdict'] === 'OK' ? 'OK' : null;
+      case 'preview_build': {
+        if (d['status'] === 'completed') return d['conclusion'] === 'success' ? 'live' : 'failed';
+        if (d['status'] === 'in_progress' || d['status'] === 'queued') return 'building';
+        return null;
+      }
+      case 'deploy_status':
+        return d['status'] === 'completed' ? (d['conclusion'] ? String(d['conclusion']) : null) : d['status'] ? String(d['status']) : null;
+      case 'reconcile_decision':
+        return d['decision'] ? String(d['decision']) : null;
+      case 'pr_to_dev':
+      case 'pr_to_prod':
+        return d['number'] ? `#${d['number']}` : null;
+      default:
+        return null;
+    }
+  }
+
+  /** Tone for the detail tag (ok / bad / active / neutral). */
+  detailTone(e: ActivityLogEntry): string {
+    const v = this.detailFor(e);
+    if (!v) return 'neutral';
+    if (v === 'OK' || v === 'live' || v === 'success') return 'ok';
+    if (v === 'Rejected' || v === 'failed' || v === 'failure') return 'bad';
+    if (v === 'building') return 'active';
+    return 'neutral';
+  }
 }

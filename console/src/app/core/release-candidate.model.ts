@@ -139,6 +139,16 @@ export interface ReleaseCandidate {
   gateRun?: GateRunFacet;
   testSummary?: TestSummary;
 
+  /** Latest deploy health (dev → starlabs-test, prod → fir-sample). */
+  lastDeploymentState?: string;
+  // --- Promotion lane (the `development` candidate; promotion-chain plan 2026-06-24) ---
+  /** `development` has feature(s) merged in but not yet promoted. */
+  hasUnreleased?: boolean;
+  /** `development` is ready to promote: hasUnreleased AND its dev deploy succeeded. */
+  promotable?: boolean;
+  /** FEATURE candidate: merged to development, not yet shipped to production (in the batch, D2). */
+  unreleased?: boolean;
+
   /** Projection: the milestone derived from the activity log (plan D8). */
   derivedStatus: RcStatus;
   /** The newest event, regardless of type. */

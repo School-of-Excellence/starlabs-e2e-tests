@@ -1,0 +1,160 @@
+    <header class="head">
+      <h2>Release Channel</h2>
+      <p class="muted">Admin cockpit — review PRs into development (merge on GitHub), then promote development → production.</p>
+    </header>
+
+    @if (!isAdmin()) {
+      <div class="empty muted">This screen is for admins. Ask an admin to review &amp; promote releases.</div>
+    } @else {
+
+      <!-- ============================ DEVELOPMENT ============================ -->
+      <h3 class="section">Development</h3>
+      @for (rc of devEntries(); track rc.id) {
+        <article class="card env">
+          <div class="top">
+            <div class="ident">
+              <div class="branch">development <span class="envtag">{{ rc.repo }}</span></div>
+              <div class="sub muted">
+                @if (envUrl('development'); as u) {
+                  <a [href]="u" target="_blank" rel="noopener">{{ u }} ↗</a> ·
+                }
+                integrated dev branch → production
+              </div>
+            </div>
+            <rc-status-chip [status]="rc.derivedStatus" />
+          </div>
+
+          <div class="facets">
+            @if (deployLabel(rc); as dl) {
+              <span class="badge" [attr.data-tone]="deployTone(rc)">dev deploy: {{ dl }}</span>
+            }
+            <span class="badge" [attr.data-tone]="rc.promotable ? 'ok' : 'none'">
+              {{ rc.promotable ? 'tester-validated' : 'awaiting tester validation' }}
+            </span>
+          </div>
+
+          <!-- Incoming feature → development PRs (review & merge on GitHub) -->
+          <div class="prlist">
+            <div class="prlist-h muted">Incoming PRs → development · review &amp; merge on GitHub</div>
+            @for (f of incomingPrs(rc); track f.id) {
+              <div class="prrow">
+                <span class="prbranch">{{ f.branch }}</span>
+                <span class="badge sm" [attr.data-tone]="prTone(f.prDev.state)">#{{ f.prDev.number }} · {{ prLabel(f) }}</span>
+                @if (f.gateRun && f.gateRun.status !== 'NONE') {
+                  <span class="badge sm" [attr.data-tone]="gateRunTone(f.gateRun.status)">tests {{ gateRunLabel(f.gateRun.status) }}</span>
+                }
+                @if (reportUrl(f); as url) { <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">report ↗</a> }
+                @if (f.prDev.url) { <a class="ghlink sm" [href]="f.prDev.url" target="_blank" rel="noopener">PR ↗</a> }
+              </div>
+            } @empty {
+              <div class="empty muted sm">No PRs to development.</div>
+            }
+          </div>
+
+          <!-- The promotion batch (merged since last prod release) -->
+          <div class="prlist">
+            <div class="prlist-h muted">
+              @if (rc.prProd.state === 'OPEN') {
+                Ships to production when PR #{{ rc.prProd.number }} is accepted
+              } @else {
+                Pending batch · merged since last release
+              }
+            </div>
+            @for (b of batch(rc); track b.id) {
+              <div class="prrow">
+                <span class="prbranch">{{ b.branch }}</span>
+                <span class="badge sm" data-tone="merged">merged #{{ b.prDev.number }}</span>
+              </div>
+            } @empty {
+              <div class="empty muted sm">Nothing new to promote.</div>
+            }
+          </div>
+
+          <div class="actions">
+            @if (rc.prProd.state === 'OPEN') {
+              <span class="badge" data-tone="active">PR→prod #{{ rc.prProd.number }}: OPEN</span>
+              @if (rc.prProd.url) {
+                <a class="ghlink" [href]="rc.prProd.url" target="_blank" rel="noopener">Open prod PR on GitHub ↗</a>
+              }
+            } @else if (releasedUpToDate(rc)) {
+              <span class="badge" data-tone="ok">✓ Production is up to date — nothing to promote</span>
+            } @else {
+              <button
+                class="primary"
+                [disabled]="!canPromote(rc) || busy() === rc.id"
+                [title]="promoteReason(rc) || 'Create PR → prod'"
+                (click)="promote(rc)"
+              >
+                Create PR → prod
+              </button>
+            }
+            <button class="histbtn" title="View activity log" (click)="openLog(rc)">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+                <circle cx="8" cy="8" r="6.2" /><path d="M8 4.5V8l2.4 1.5" stroke-linecap="round" />
+              </svg>
+              log
+            </button>
+            <span class="ts muted">updated {{ rc.updatedAt | date: 'MMM d, HH:mm' }}</span>
+          </div>
+        </article>
+      } @empty {
+        <div class="empty muted">No development branch tracked yet.</div>
+      }
+
+      <!-- ============================ PRODUCTION ============================ -->
+      <h3 class="section">Production</h3>
+      @for (rc of prodEntries(); track rc.id) {
+        <article class="card env">
+          <div class="top">
+            <div class="ident">
+              <div class="branch">production <span class="envtag">{{ rc.repo }}</span></div>
+              <div class="sub muted">
+                @if (envUrl('production'); as u) {
+                  <a [href]="u" target="_blank" rel="noopener">{{ u }} ↗</a> ·
+                }
+                receives the development → production promotion
+              </div>
+            </div>
+            <rc-status-chip [status]="rc.derivedStatus" />
+          </div>
+
+          <div class="facets">
+            @if (deployLabel(rc); as dl) {
+              <span class="badge" [attr.data-tone]="deployTone(rc)">prod deploy: {{ dl }}</span>
+            }
+          </div>
+
+          @if (rc.prProd.state !== 'NONE') {
+            <div class="prlist">
+              <div class="prlist-h muted">Promotion PR → production</div>
+              <div class="prrow">
+                <span class="prbranch">development</span>
+                <span class="badge sm" [attr.data-tone]="prTone(rc.prProd.state)">
+                  #{{ rc.prProd.number }} ·
+                  {{ rc.prProd.state === 'MERGED' ? 'accepted' : rc.prProd.state === 'CLOSED' ? 'denied' : 'awaiting review' }}
+                </span>
+                @if (rc.prProd.url) { <a class="ghlink sm" [href]="rc.prProd.url" target="_blank" rel="noopener">PR ↗</a> }
+              </div>
+            </div>
+          } @else {
+            <div class="statemsg" data-tone="muted">No promotion PR yet — create one from the Development section above.</div>
+          }
+
+          <div class="actions">
+            <button class="histbtn" title="View activity log" (click)="openLog(rc)">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
+                <circle cx="8" cy="8" r="6.2" /><path d="M8 4.5V8l2.4 1.5" stroke-linecap="round" />
+              </svg>
+              log
+            </button>
+            <span class="ts muted">updated {{ rc.updatedAt | date: 'MMM d, HH:mm' }}</span>
+          </div>
+        </article>
+      } @empty {
+        <div class="empty muted">No production branch tracked yet.</div>
+      }
+    }
+
+    @if (selected(); as s) {
+      <rc-activity-drawer [branchId]="s.id" [label]="s.label" (closed)="selected.set(null)" />
+    }

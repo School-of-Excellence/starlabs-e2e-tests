@@ -35,17 +35,35 @@ const ACTION_CAPABILITY: Record<RcAction, Capability> = {
   createPrToProd: 'CREATE_PR_PROD',
 };
 
+/** Every feature-lane status — used by deployPreview (a new commit can re-iterate at any stage). */
+const ALL_STATUSES: RcStatus[] = [
+  'NO_ACTION',
+  'PREVIEW_BUILDING',
+  'PREVIEW_LIVE',
+  'PREVIEW_FAILED',
+  'OK_FOR_DEV',
+  'PR_TO_DEV',
+  'DEV_MERGED',
+  'OK_FOR_PROD',
+  'PR_TO_PROD',
+  'PROD_MERGED',
+];
+
 /**
  * Per-action enablement BY STATUS (the workflow gate, plan §4):
- *  - deployPreview:  from NO_ACTION or any PREVIEW_* (re-deploy after build/live/fail).
+ *  - deployPreview:  ANY status (promotion-chain AUTO-REITERATE, 2026-06-24). A new commit can
+ *      land at any stage; the freshness gate (isFresh) — not the status — decides when there is
+ *      actually something new to preview. This replaces the old "only before a PR is open" rule.
  *  - signoffDev:     from PREVIEW_LIVE (tester validates the live preview channel).
  *  - createPrToDev:  from OK_FOR_DEV (and must be fresh).
  *  - signoffProd:    from DEV_MERGED (tester validates the dev deploy).
  *  - createPrToProd: from OK_FOR_PROD (and must be fresh).
  */
 const ACTION_ALLOWED_FROM: Record<RcAction, RcStatus[]> = {
-  deployPreview: ['NO_ACTION', 'PREVIEW_BUILDING', 'PREVIEW_LIVE', 'PREVIEW_FAILED'],
-  signoffDev: ['PREVIEW_LIVE'],
+  deployPreview: ALL_STATUSES,
+  // A tester can (re-)sign-off whenever there is a current live preview — even on a branch that
+  // already advanced and then got a fresh preview (auto-reiterate). Freshness does the real gating.
+  signoffDev: ALL_STATUSES,
   createPrToDev: ['OK_FOR_DEV'],
   signoffProd: ['DEV_MERGED'],
   createPrToProd: ['OK_FOR_PROD'],
@@ -81,7 +99,8 @@ export function isFresh(action: RcAction, rc: ReleaseCandidate): boolean {
       if (rc.preview.buildState === 'LIVE') return previewStale(rc);
       return true;
     case 'signoffDev':
-      return !previewStale(rc);
+      // Need a CURRENT live preview to sign off (a redeployed preview re-opens sign-off).
+      return rc.preview.buildState === 'LIVE' && !previewStale(rc);
     case 'signoffProd':
       return !signoffStale(rc.devGate, rc.headSha);
     case 'createPrToDev':
@@ -93,7 +112,7 @@ export function isFresh(action: RcAction, rc: ReleaseCandidate): boolean {
 
 /** Human-readable disabled-state labels per action (for the not-allowed-by-status case). */
 const STATUS_REASON: Record<RcAction, string> = {
-  deployPreview: 'Preview can only be deployed before a PR is open.',
+  deployPreview: 'Deploy a preview when there is a new commit to validate.',
   signoffDev: 'Sign-off for dev needs a live preview channel first.',
   signoffProd: 'Sign-off for prod needs the dev deploy merged first.',
   createPrToDev: 'Open the PR → dev only after a tester signs off for dev.',

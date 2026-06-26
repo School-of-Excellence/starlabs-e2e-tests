@@ -29,7 +29,9 @@ export type Capability =
 
 /** The capability grant per role. (plan §2) NOTE: console NEVER merges (D3) — there is no merge capability. */
 export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
-  developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV', 'CREATE_PR_PROD'],
+  // Promotion to production is ADMIN-ONLY (D1, 2026-06-26): developers open feature→dev PRs from
+  // Working Branches; only admins open development→production PRs from the Release Channel.
+  developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV'],
   tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD'],
   admin: [
     'DEPLOY_PREVIEW',

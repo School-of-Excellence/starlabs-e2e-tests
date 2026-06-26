@@ -45,15 +45,38 @@ export interface ProjectionResult {
  * ANOMALY signal handled in `reconcileVerdict`.
  */
 function deriveStatus(c: ProjectionInput): ReleaseStatus {
+  // HEAD-AWARE projection (auto new-iteration, promotion-chain plan 2026-06-24).
+  //
+  // derivedStatus reflects the milestone the CURRENT head commit has reached — NOT the highest
+  // milestone ever reached on the branch. A merged/open PR or a sign-off only pins its milestone
+  // while it still covers the current head; once a new commit lands, those become history (kept in
+  // the activity log + facets) and the branch falls through to whatever the NEW commit has reached.
+  //
+  // Without this, a branch that was once merged to dev (or, under the legacy feature→prod topology,
+  // to prod) stays pinned at DEV_MERGED / PROD_MERGED forever, so a fresh push → preview →
+  // re-sign-off can never return it to OK_FOR_DEV and "Create PR → dev" never re-enables.
+  //
+  // "Covers head" requires POSITIVE proof the facet is for the current commit: a recorded sha that
+  // equals headSha. A facet with no sha (legacy data, e.g. an old feature→prod merge) CANNOT prove
+  // it covers the current head, so it does NOT pin its milestone — the branch instead shows the
+  // lower lane that matches the current head. (A missing-sha fallback to "covers" would let a stale
+  // merge pin PROD_MERGED/DEV_MERGED forever even after a new push — the exact bug this fixes.)
+  // FEATURE branches track headSha (set on every push), so we demand positive proof a facet covers
+  // it. ENVIRONMENT candidates (development/production) DON'T track a headSha (pushes to protected
+  // branches are skipped), so head is undefined there — in that case project straight from facet
+  // state (no covers gate), else they would collapse to NO_ACTION even with an open promotion PR.
+  const head = c.headSha;
+  const covers = (sha?: string): boolean => (head ? !!sha && sha === head : true);
+
   // PROD lane (highest) ----------------------------------------------------
-  if (c.prProd.state === 'MERGED') return ReleaseStatus.PROD_MERGED;
-  if (c.prProd.state === 'OPEN') return ReleaseStatus.PR_TO_PROD;
-  if (c.prodGate.verdict === 'OK') return ReleaseStatus.OK_FOR_PROD;
+  if (c.prProd.state === 'MERGED' && covers(c.prProd.headSha)) return ReleaseStatus.PROD_MERGED;
+  if (c.prProd.state === 'OPEN' && covers(c.prProd.headSha)) return ReleaseStatus.PR_TO_PROD;
+  if (c.prodGate.verdict === 'OK' && covers(c.prodGate.sha)) return ReleaseStatus.OK_FOR_PROD;
 
   // DEV lane ---------------------------------------------------------------
-  if (c.prDev.state === 'MERGED') return ReleaseStatus.DEV_MERGED;
-  if (c.prDev.state === 'OPEN') return ReleaseStatus.PR_TO_DEV;
-  if (c.devGate.verdict === 'OK') return ReleaseStatus.OK_FOR_DEV;
+  if (c.prDev.state === 'MERGED' && covers(c.prDev.headSha)) return ReleaseStatus.DEV_MERGED;
+  if (c.prDev.state === 'OPEN' && covers(c.prDev.headSha)) return ReleaseStatus.PR_TO_DEV;
+  if (c.devGate.verdict === 'OK' && covers(c.devGate.sha)) return ReleaseStatus.OK_FOR_DEV;
 
   // PREVIEW lane -----------------------------------------------------------
   if (c.preview.buildState === 'LIVE') return ReleaseStatus.PREVIEW_LIVE;
@@ -116,13 +139,14 @@ function reconcileVerdict(c: ProjectionInput, status: ReleaseStatus): Reconcile 
   }
 
   // A dev sign-off exists but new commits landed on the branch past the signed sha.
+  // If a PR is already OPEN the rule above governs. If the lane already MERGED, that sign-off
+  // belongs to a COMPLETED old cycle (history, not pending drift) — only an uncompleted lane
+  // (NONE/CLOSED) warrants a re-test decision (head-aware, promotion-chain plan 2026-06-24).
   if (c.devGate.verdict === 'OK' && c.devGate.sha && head && c.devGate.sha !== head) {
-    // If a PR is already open the rule above governs; otherwise the sign-off is
-    // stale relative to fresh content — a decision (re-test) is warranted.
-    if (c.prDev.state !== 'OPEN') return 'NEEDS_DECISION';
+    if (c.prDev.state !== 'OPEN' && c.prDev.state !== 'MERGED') return 'NEEDS_DECISION';
   }
   if (c.prodGate.verdict === 'OK' && c.prodGate.sha && head && c.prodGate.sha !== head) {
-    if (c.prProd.state !== 'OPEN') return 'NEEDS_DECISION';
+    if (c.prProd.state !== 'OPEN' && c.prProd.state !== 'MERGED') return 'NEEDS_DECISION';
   }
 
   // A push arrived before any sign-off (gates intact) → benign new content.

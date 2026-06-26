@@ -42,6 +42,7 @@ export class AppComponent {
       icon: '◷',
       visible: () => this.auth.isDeveloper() || this.auth.isTester() || this.auth.isAdmin(),
     },
+    { path: 'release-channel', label: 'Release Channel', icon: '🚀', visible: () => this.auth.isAdmin() },
     { path: 'settings', label: 'Settings', icon: '⚙', visible: () => this.auth.isAdmin() },
   ];
 }

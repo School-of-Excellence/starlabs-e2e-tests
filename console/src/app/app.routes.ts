@@ -30,6 +30,13 @@ export const routes: Routes = [
     title: 'Preview Channels · Release Console',
   },
   {
+    path: 'release-channel',
+    canActivate: [adminGuard],
+    loadComponent: () =>
+      import('./screens/release-channel/release-channel.component').then((m) => m.ReleaseChannelComponent),
+    title: 'Release Channel · Release Console',
+  },
+  {
     path: 'settings',
     canActivate: [adminGuard],
     loadComponent: () =>
