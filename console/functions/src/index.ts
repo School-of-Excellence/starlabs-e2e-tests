@@ -72,6 +72,10 @@ db.settings({ ignoreUndefinedProperties: true });
 
 const GITHUB_WEBHOOK_SECRET = defineSecret('GITHUB_WEBHOOK_SECRET');
 const GITHUB_APP_PRIVATE_KEY = defineSecret('GITHUB_APP_PRIVATE_KEY');
+// Shared bearer token authenticating CI's preview-URL push (recordPreviewUrl). LOW-PRIVILEGE
+// (only this endpoint, only writes preview.url) — NOT a service account. Rotate freely.
+//   firebase functions:secrets:set CONSOLE_INGEST_TOKEN --project starlabs-cicd
+const CONSOLE_INGEST_TOKEN = defineSecret('CONSOLE_INGEST_TOKEN');
 
 const GITHUB_ORG = process.env.GITHUB_ORG ?? 'School-of-Excellence';
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID ?? 'TODO_APP_ID';
@@ -1145,5 +1149,105 @@ export const reconcilePoll = onSchedule(
       }
     }
     logger.info(`reconcilePoll: backfilled ${healed}/${stuck.length} previews, synced ${synced} dev hasUnreleased`);
+  },
+);
+
+// ===========================================================================
+// 9. recordPreviewUrl (HTTPS) — CI pushes the REAL preview-channel URL (Option A)
+// ===========================================================================
+//
+// A Firebase Hosting preview channel URL contains a random hash the console CANNOT
+// reconstruct (e.g. breakthroughs-test--<branch>-<hash>.web.app). The deploying workflow
+// (preview.yml) is the only place that knows it, so after the channel deploy it POSTs the
+// real URL here. Auth is a shared bearer token (CONSOLE_INGEST_TOKEN) — a low-privilege
+// secret scoped to THIS endpoint only (a leak can at most set a preview URL on the
+// breakthroughs-test domain for an allowlisted repo; it is NOT a service account). The
+// payload shape is strictly validated, and only the preview facet is written (via
+// mutateCandidate, so derivedStatus/reconcile/promotable stay consistent).
+
+/** Repos permitted to push a preview URL (the org's repos). */
+const INGEST_REPO_ALLOWLIST = new Set([
+  'starlabs-angular',
+  'starlabs-cloud-function',
+  'breakthroughs-flutter',
+  'starlabs-e2e-tests',
+]);
+
+/** A preview URL may ONLY be a breakthroughs-test Firebase Hosting channel (no off-domain links). */
+const PREVIEW_URL_RE = /^https:\/\/breakthroughs-test--[a-z0-9-]+\.web\.app\/?$/;
+
+/** Constant-time bearer-token check. */
+function bearerOk(authHeader: string | undefined, token: string): boolean {
+  if (!authHeader || !token) return false;
+  const m = /^Bearer\s+(.+)$/.exec(authHeader.trim());
+  if (!m) return false;
+  const a = Buffer.from(m[1]);
+  const b = Buffer.from(token);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+export const recordPreviewUrl = onRequest(
+  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  async (req: Request, res: Response) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+    if (!bearerOk(req.header('authorization'), CONSOLE_INGEST_TOKEN.value())) {
+      res.status(401).json({ ok: false, error: 'unauthorized' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    const sha =
+      typeof body.sha === 'string' && /^[0-9a-f]{40}$/i.test(body.sha) ? body.sha : undefined;
+
+    // Strict structure check — reject anything that isn't a known repo + a real preview URL.
+    if (!INGEST_REPO_ALLOWLIST.has(repo)) {
+      res.status(400).json({ ok: false, error: 'repo not allowed' });
+      return;
+    }
+    if (!branch || branch.length > 200) {
+      res.status(400).json({ ok: false, error: 'invalid branch' });
+      return;
+    }
+    if (!PREVIEW_URL_RE.test(url)) {
+      res.status(400).json({ ok: false, error: 'invalid preview url' });
+      return;
+    }
+
+    try {
+      const now = Date.now();
+      const entry = activityEntry({
+        repo,
+        branch,
+        type: 'preview_build',
+        source: 'webhook',
+        confirmed: true,
+        eventTime: now,
+        sha,
+        actor: 'ci',
+        detail: { url, via: 'recordPreviewUrl' },
+      });
+      await appendActivity(entry);
+
+      // Write ONLY the preview facet; mutateCandidate re-projects the candidate.
+      await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
+        c.preview.url = url;
+        c.preview.buildState = 'LIVE';
+        c.preview.builtAt = now;
+        if (sha) c.preview.sha = sha;
+      });
+
+      logger.info(`recordPreviewUrl ${repo}/${branch} → ${url}`);
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      logger.error('recordPreviewUrl failed', err);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
   },
 );
