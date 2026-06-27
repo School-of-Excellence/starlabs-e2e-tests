@@ -53,7 +53,7 @@ import {
   hasCapability,
   isAllowedDomain,
 } from './model';
-import { mutateCandidate, computePromotable, previewUrl } from './candidate';
+import { mutateCandidate, computePromotable } from './candidate';
 import { projectCandidate } from './projection';
 import { appendWebhookActivity, appendActivity } from './activity';
 
@@ -526,9 +526,11 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
       } else if (status === 'completed') {
         c.preview.buildState = conclusion === 'success' ? 'LIVE' : 'FAILED';
         c.preview.builtAt = eventTime;
-        // Record the deterministic preview-channel URL (breakthroughs-test-<branchid>) on success
-        // so the console shows the right link without waiting on a preview.yml write-back.
-        if (conclusion === 'success') c.preview.url = previewUrl(branch);
+        // NOTE: preview.url is OWNED BY CI (preview.yml's record step writes the REAL hashed
+        // channel URL directly to this doc). The function must NOT write a URL here — the old
+        // deterministic reconstruction (breakthroughs-test-<branchid>) is hash-less and wrong,
+        // and the completed-webhook lands AFTER CI's write, so it would clobber the real URL.
+        // The UI falls back to previewUrlFor() when preview.url is empty. (2026-06-27)
       }
       c.preview.sha = headSha ?? c.preview.sha;
     } else if (isDeploy) {
@@ -1107,7 +1109,7 @@ export const reconcilePoll = onSchedule(
             (cc) => {
               cc.preview.buildState = buildState;
               cc.preview.builtAt = Date.now();
-              if (latest.conclusion === 'success') cc.preview.url = previewUrl(c.branch);
+              // preview.url is owned by CI (preview.yml) — do NOT reconstruct/overwrite it here.
               cc.preview.sha = latest.head_sha ?? cc.preview.sha;
             },
           );

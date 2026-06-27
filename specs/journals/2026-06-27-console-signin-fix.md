@@ -78,7 +78,22 @@ handler, so localhost auth is inherently cross-origin. To develop locally, eithe
   reliable on localhost / redirect breaks with 3p cookies" — both break cross-origin.
 - `firebase.config.ts`: `authDomain` → `cicdconsole.web.app` (staged; needs operator step).
 
-## Pending
-- [ ] OPERATOR: add `cicdconsole.web.app` to Firebase Auth Authorized domains.
-- [ ] Re-verify sign-in on the deployed console after authorization.
-- [ ] Decide localhost dev approach (3p cookies vs auth emulator) and document in CLAUDE.md.
+## Outcome — RESOLVED (confirmed working on localhost AND production)
+Two changes, one per environment:
+- **Production**: `environment.ts` now sets `authDomain` per host → deployed console
+  (`cicdconsole.web.app`) uses a SAME-ORIGIN handler. Operator added `cicdconsole.web.app`
+  to Firebase Auth → Authorized domains (clears the `redirect_uri_mismatch`). Same-origin →
+  no third-party storage → sign-in completes.
+- **Localhost**: `auth.service.ts` now falls back to `signInWithRedirect` on
+  `auth/popup-closed-by-user` (previously only on `popup-blocked`/`cancelled`). The popup
+  completes OAuth but can't post the credential back cross-origin; the redirect retry keeps
+  every hop top-level/first-party and completes. localhost keeps the authorized
+  `starlabs-cicd.firebaseapp.com` authDomain (can't be same-origin with a *.web.app domain).
+
+Net: the 3-check gate / Firestore / member logic was never at fault — it was purely the
+cross-origin OAuth handshake.
+
+## Follow-ups (optional)
+- [ ] Document the per-host authDomain + the required Authorized-domains step in CLAUDE.md.
+- [ ] Consider trimming the verbose `[auth]` step logs (kept for now — cheap, and invaluable
+      for this class of bug).
