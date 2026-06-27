@@ -67,13 +67,19 @@ export class AuthService {
       return;
     }
 
-    getRedirectResult(this.auth).catch((e: any) => {
-      console.error('[auth] redirect result error:', e?.code, e?.message);
-      this.signInError.set(e?.message ?? 'Sign-in failed');
-    });
+    console.info('[auth] init — processing any pending redirect result…');
+    getRedirectResult(this.auth)
+      .then((cred) => {
+        console.info('[auth] getRedirectResult →', cred ? `user ${cred.user.email}` : 'null (no pending redirect)');
+      })
+      .catch((e: any) => {
+        console.error('[auth] redirect result error:', e?.code, e?.message);
+        this.signInError.set(e?.message ?? 'Sign-in failed');
+      });
 
     // React to auth state across tabs / reloads. The gate runs on every sign-in.
     authState(this.auth).subscribe((u) => {
+      console.info('[auth] authState emitted:', u ? `user ${u.email} (uid ${u.uid})` : 'null (signed out)');
       if (u) {
         void this.gate(u);
       } else {
@@ -88,22 +94,27 @@ export class AuthService {
     this.checking.set(true);
     try {
       const email = u.email ?? '';
+      console.info('[auth] gate: start for', email);
 
       // Check 1 — domain.
       if (!isAllowedDomain(email)) {
+        console.warn('[auth] gate: REJECT — domain not allowed:', email);
         this.rejectAndSignOut(`Use your @${ALLOWED_DOMAIN} account to sign in.`);
         return;
       }
 
       // Check 2 — active member. One doc per member in the top-level CICD-Users
       // collection, id = lowercased email.
+      console.info('[auth] gate: reading CICD-Users/' + email.toLowerCase());
       const snap = await getDoc(doc(this.fs, 'CICD-Users', email.toLowerCase()));
+      console.info('[auth] gate: member doc exists =', snap.exists());
       if (!snap.exists()) {
         this.rejectAndSignOut('You are not authorized for the console. Ask an admin to add you.');
         return;
       }
       const m = snap.data() as Member;
       if (!m.active) {
+        console.warn('[auth] gate: REJECT — member inactive');
         this.rejectAndSignOut('Your console access is inactive. Ask an admin to reactivate it.');
         return;
       }
@@ -112,8 +123,9 @@ export class AuthService {
       this.member.set({ ...m, email: email.toLowerCase() });
       this.user.set({ email: email, displayName: u.displayName ?? undefined });
       this.signInError.set(null);
+      console.info('[auth] gate: GRANTED — roles =', m.roles);
     } catch (e: any) {
-      console.error('[auth] gate failed:', e);
+      console.error('[auth] gate failed:', e?.code, e?.message, e);
       this.rejectAndSignOut('Could not verify your access. Try again.');
     } finally {
       this.checking.set(false);
@@ -148,17 +160,31 @@ export class AuthService {
     // Hint Google to the org domain (defence-in-depth; the gate still verifies).
     provider.setCustomParameters({ hd: ALLOWED_DOMAIN, prompt: 'select_account' });
     try {
-      // Popup is reliable on localhost. (signInWithRedirect breaks when the browser
-      // blocks the third-party cookies the Firebase auth handler needs.) The authState
-      // subscription runs the 3-check gate on the returned user.
-      await signInWithPopup(this.auth, provider);
+      // Sign-in only works when the OAuth handler (environment.firebase.authDomain) is the
+      // SAME ORIGIN as the app, or third-party storage is allowed. If authDomain is a
+      // different origin (e.g. *.firebaseapp.com vs the app's hosting domain), modern
+      // browsers isolate third-party storage, the popup can't post the credential back to
+      // the opener, and Firebase surfaces auth/popup-closed-by-user even though the Google
+      // sign-in itself succeeded. See specs/journals/2026-06-27-console-signin-fix.md.
+      console.info('[auth] signIn: opening Google popup…');
+      const cred = await signInWithPopup(this.auth, provider);
+      console.info('[auth] signIn: popup resolved →', cred.user.email);
     } catch (e: any) {
-      // If the popup is blocked, fall back to the redirect flow.
-      if (e?.code === 'auth/popup-blocked' || e?.code === 'auth/cancelled-popup-request') {
+      console.warn('[auth] signIn: popup failed', e?.code, e?.message);
+      // Popup blocked OR the cross-origin handshake was severed (popup-closed-by-user):
+      // fall back to the full-page redirect flow, which keeps every hop top-level.
+      if (
+        e?.code === 'auth/popup-blocked' ||
+        e?.code === 'auth/cancelled-popup-request' ||
+        e?.code === 'auth/popup-closed-by-user'
+      ) {
         try {
+          console.info('[auth] signIn: falling back to redirect flow…');
+          this.checking.set(true);
           await signInWithRedirect(this.auth, provider);
-          return;
+          return; // page navigates away; getRedirectResult() finishes the gate on return
         } catch (e2: any) {
+          this.checking.set(false);
           e = e2;
         }
       }
