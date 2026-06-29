@@ -180,6 +180,7 @@ jobs:
           RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
           REPORT_DIR=playwright-report \
           ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
           node scripts/history/record-run.cjs
           # NOTE: SUITE is now parameterised (was hardcoded `queue`). ATTACH is still queue-specific fixtures;
           #       it is best-effort/optional (only runs when STARLABS_CICD_SA is set). Parameterise per-suite later

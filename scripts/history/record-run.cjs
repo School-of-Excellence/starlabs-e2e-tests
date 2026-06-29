@@ -1,24 +1,30 @@
 #!/usr/bin/env node
 /*
- * record-run.cjs — APPEND-ONLY CI/CD run history (the report-overwrite fix).
+ * record-run.cjs — APPEND-ONLY CI/CD run history.
  *
- * Problem: Playwright writes to playwright-report/ every run, so each run clobbers the last. This script
- * captures a run as an IMMUTABLE record keyed by run-id + SHA + branch + author + timestamp, and stores it in
- * the `starlabs-cicd` project: the HTML report + any attachments (e.g. the seed snapshot) go to Cloud Storage,
- * and a queryable index doc goes to Firestore `cicd-audit`. Nothing is ever overwritten — a duplicate run-id
- * is REFUSED. Local CLI runs and CI runs write to the SAME store (distinguished by `source`).
+ * Captures a run as an IMMUTABLE record keyed by run-id + SHA + branch + author + timestamp, stored in the
+ * `starlabs-cicd` project: the HTML report + any attachments go to Cloud Storage, and a queryable index doc
+ * goes to Firestore `cicd-audit`. Nothing is overwritten — a duplicate run-id is REFUSED.
+ *
+ * STORAGE UPLOAD (why raw REST, not admin.storage().bucket().upload):
+ *   The @google-cloud/storage SDK bundled under firebase-admin uses an old gaxios/JWT stack whose token fetch
+ *   intermittently dies with ERR_STREAM_PREMATURE_CLOSE on CI runners. We bypass it: we mint an access token
+ *   via firebase-admin's OWN credential (admin's token path, modern endpoint — the path that works for
+ *   Firestore) and PUT each file to the GCS JSON upload API directly. No @google-cloud/storage auth involved.
+ *
+ * RESILIENCE: the Storage upload is best-effort and DECOUPLED from the Firestore write — a failed upload never
+ *   loses the record. The Firestore doc is ALWAYS written (with whatever uploaded, plus RUN_URL), so the run is
+ *   captured even if Storage is unreachable. If/when Storage auth is healthy the same code populates GCS too.
  *
  * Usage (env-driven; all optional except a service-account file):
- *   STARLABS_CICD_SA=/abs/sa.json \      # or GOOGLE_APPLICATION_CREDENTIALS — the starlabs-cicd SA
- *   REPO=starlabs-angular BRANCH=feature/x SHA=$(git rev-parse HEAD) ACTOR=vignesh-027 \
- *   SOURCE=ci RESULT=pass SUITE=queue STAGE=gate \
- *   REPORT_DIR=playwright-report ATTACH=fixtures/sample-queue-config.json,fixtures/firestore-seed.json \
+ *   STARLABS_CICD_SA=/abs/sa.json REPO=… BRANCH=… SHA=… ACTOR=… SOURCE=ci RESULT=pass SUITE=queue STAGE=gate \
+ *   REPORT_DIR=playwright-report ATTACH=a.json,b.json RUN_URL=https://github.com/…/actions/runs/123 \
  *   node scripts/history/record-run.cjs
  *
  * Behavior:
  *   - No SA file present  → logs and exits 0 (non-fatal; history is best-effort so it never blocks a gate).
  *   - Duplicate run-id    → exits 1 (immutability guard). Pass a unique RUN_ID to retry.
- *   - On any other error  → exits 0 unless HISTORY_STRICT=1 (so a flaky upload doesn't red a green gate).
+ *   - On any other error  → exits 0 unless HISTORY_STRICT=1 (so a flaky write doesn't red a green gate).
  */
 const fs = require('fs');
 const path = require('path');
@@ -70,58 +76,65 @@ function listFiles(dir) {
   return out;
 }
 
-(async () => {
-  // [diag] confirm the SA parsed and the key is well-formed (no secret values printed).
-  try {
-    const _sa = require(path.resolve(SA));
-    const pk = typeof _sa.private_key === 'string' ? _sa.private_key : '';
-    console.error('[history][diag] SA project_id:', _sa.project_id, '| client_email set:', !!_sa.client_email,
-      '| token_uri:', _sa.token_uri, '| pk BEGIN:', pk.includes('BEGIN PRIVATE KEY'),
-      '| pk END:', pk.trim().endsWith('-----'), '| pk len:', pk.length, '| pk newlines:', (pk.match(/\n/g) || []).length);
-    console.error('[history][diag] PROJECT:', PROJECT, '| BUCKET:', BUCKET, '| node:', process.version, '| firebase-admin:', require('firebase-admin/package.json').version);
-  } catch (e) { console.error('[history][diag] SA parse error:', e && e.message); }
-  admin.initializeApp({
-    credential: admin.credential.cert(require(path.resolve(SA))),
-    storageBucket: BUCKET,
-    projectId: PROJECT,
-  });
-  const db = admin.firestore();
-  const bucket = admin.storage().bucket();
+const MIME = {
+  '.html': 'text/html', '.htm': 'text/html', '.css': 'text/css', '.js': 'application/javascript',
+  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webm': 'video/webm', '.zip': 'application/zip', '.txt': 'text/plain', '.md': 'text/markdown',
+  '.svg': 'image/svg+xml', '.xml': 'application/xml', '.woff2': 'font/woff2', '.map': 'application/json',
+};
+const mimeOf = (f) => MIME[path.extname(f).toLowerCase()] || 'application/octet-stream';
 
-  // Immutability guard: never overwrite an existing run record.
+(async () => {
+  const credential = admin.credential.cert(require(path.resolve(SA)));
+  admin.initializeApp({ credential, storageBucket: BUCKET, projectId: PROJECT });
+  const db = admin.firestore();
+
+  // Immutability guard: never overwrite an existing run record. (Firestore over gRPC — the working auth path.)
   const docRef = db.collection('cicd-audit').doc(runId);
   if ((await docRef.get()).exists) {
     return die(1, `[history] cicd-audit/${runId} already exists — refusing to overwrite (append-only). Pass a unique RUN_ID.`);
   }
 
   const base = `cicd-audit/${meta.repo}/${runId}`;
+
+  // Upload via the GCS JSON API using firebase-admin's own access token (bypasses the broken @google-cloud/storage auth).
   const uploadInto = async (localPath, subdir) => {
     const urls = [];
     if (!localPath || !fs.existsSync(localPath)) return urls;
     const isDir = fs.statSync(localPath).isDirectory();
     const files = isDir ? listFiles(localPath) : [localPath];
+    const { access_token: token } = await credential.getAccessToken();
     for (const f of files) {
       const rel = isDir ? path.relative(localPath, f) : path.basename(f);
-      const dest = `${base}/${subdir}/${rel}`;
-      await bucket.upload(f, { destination: dest, resumable: false });
-      urls.push(`gs://${bucket.name}/${dest}`);
+      const dest = `${base}/${subdir}/${rel}`.split(path.sep).join('/');
+      const url = `https://storage.googleapis.com/upload/storage/v1/b/${encodeURIComponent(BUCKET)}/o?uploadType=media&name=${encodeURIComponent(dest)}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': mimeOf(f) },
+        body: fs.readFileSync(f),
+      });
+      if (!res.ok) throw new Error(`GCS upload ${res.status} for ${dest}: ${(await res.text().catch(() => '')).slice(0, 300)}`);
+      urls.push(`gs://${BUCKET}/${dest}`);
     }
     return urls;
   };
 
-  const report = await uploadInto(env('REPORT_DIR', 'playwright-report'), 'report');
+  // Best-effort + DECOUPLED: a Storage failure must NOT prevent the Firestore record from being written.
+  let report = [];
+  try { report = await uploadInto(env('REPORT_DIR', 'playwright-report'), 'report'); }
+  catch (e) { console.error(`[history] report upload to GCS failed (non-fatal; Firestore record still written): ${e && e.message}`); }
+
   const attachments = [];
   for (const a of env('ATTACH', '').split(',').map((s) => s.trim()).filter(Boolean)) {
-    attachments.push(...await uploadInto(a, `attach/${path.basename(a)}`));
+    try { attachments.push(...await uploadInto(a, `attach/${path.basename(a)}`)); }
+    catch (e) { console.error(`[history] attachment upload failed (non-fatal): ${a}: ${e && e.message}`); }
   }
 
-  await docRef.set({ ...meta, storage: { base: `gs://${bucket.name}/${base}`, report, attachments } });
-  console.log(`[history] ✓ cicd-audit/${runId}  (${report.length} report files, ${attachments.length} attachments)  → gs://${bucket.name}/${base}`);
+  await docRef.set({
+    ...meta,
+    runUrl: env('RUN_URL', ''),
+    storage: { base: `gs://${BUCKET}/${base}`, report, attachments },
+  });
+  console.log(`[history] ✓ cicd-audit/${runId}  (${report.length} report files, ${attachments.length} attachments)  → gs://${BUCKET}/${base}`);
   process.exit(0);
-})().catch((e) => {
-  // [diag] dump the FULL error so we see the underlying cause, not just the wrapped message.
-  console.error('[history][diag] name:', e && e.name, '| code:', e && (e.code || e.errno));
-  console.error('[history][diag] cause:', e && e.cause ? `${e.cause.name || ''} ${e.cause.code || ''} ${e.cause.message || ''}` : '(none)');
-  console.error('[history][diag] stack:', e && e.stack);
-  die(1, `[history] FAILED: ${e && e.message ? e.message : e}`);
-});
+})().catch((e) => die(1, `[history] FAILED: ${e && e.stack ? e.stack : e}`));
