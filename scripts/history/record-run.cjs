@@ -48,6 +48,7 @@ catch (e) { console.log('[history] firebase-admin not installed — skipping his
 
 const PROJECT = env('HISTORY_PROJECT', 'starlabs-cicd');
 const BUCKET = env('HISTORY_BUCKET', `${PROJECT}.appspot.com`);
+const PREFIX = env('HISTORY_PREFIX', 'cicd-audit'); // top-level "folder" (object-name prefix) inside the bucket
 
 const meta = {
   repo: env('REPO', 'unknown'),
@@ -95,7 +96,7 @@ const mimeOf = (f) => MIME[path.extname(f).toLowerCase()] || 'application/octet-
     return die(1, `[history] cicd-audit/${runId} already exists — refusing to overwrite (append-only). Pass a unique RUN_ID.`);
   }
 
-  const base = `cicd-audit/${meta.repo}/${runId}`;
+  const base = `${PREFIX}/${meta.repo}/${runId}`;
 
   // Upload via the GCS JSON API using firebase-admin's own access token (bypasses the broken @google-cloud/storage auth).
   const uploadInto = async (localPath, subdir) => {
