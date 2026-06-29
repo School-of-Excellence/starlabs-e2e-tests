@@ -98,12 +98,18 @@ export type GateStatus = 'NONE' | 'QUEUED' | 'RUNNING' | 'PASSED' | 'FAILED';
 
 /** The e2e gate run attached to the branch's open PR (from gate workflow_run events). */
 export interface GateRunFacet {
-  stage?: 'dev' | 'prod';
+  /**
+   * Which run this is. 'preview' = the preview-time gate (preview-e2e.yml, runs before any PR — the
+   * report the tester reads at sign-off, 2026-06-29). 'dev'/'prod' = a gate on the open PR.
+   */
+  stage?: 'preview' | 'dev' | 'prod';
   status: GateStatus;
   runId?: string;
   runUrl?: string;
   /** GitHub run id used to resolve the rich report in the cicd-audit dashboard. */
   reportRunId?: string;
+  /** The SHA this gate ran against — lets the UI tie the report to a specific build / flag staleness. */
+  sha?: string;
   at?: number;
 }
 

@@ -119,6 +119,22 @@ export class PreviewChannelsComponent {
     return v === 'OK' ? 'ok' : v === 'REJECTED' ? 'bad' : 'none';
   }
 
+  // --- Preview-time test-suite gate (preview-e2e.yml report, shown at sign-off) ---------------
+  gateRunLabel(s: string): string {
+    return s === 'RUNNING' ? 'running…' : s === 'QUEUED' ? 'queued' : s === 'PASSED' ? 'passed' : 'failed';
+  }
+  gateRunTone(s: string): string {
+    return s === 'PASSED' ? 'ok' : s === 'FAILED' ? 'bad' : 'active';
+  }
+  /** "View report" deep-link for the gate run (cicd-audit dashboard or run page). */
+  reportUrl(rc: ReleaseCandidate): string | null {
+    return this.fb.reportUrlFor(rc);
+  }
+  /** The test report ran against an older build than HEAD — re-test before trusting it. */
+  gateStale(rc: ReleaseCandidate): boolean {
+    return !!rc.gateRun?.sha && !!rc.headSha && rc.gateRun.sha !== rc.headSha;
+  }
+
   /** Deploy-status pill for an environment entry. */
   deployLabel(rc: ReleaseCandidate): string | null {
     const s = (rc.lastDeploymentState ?? '').toLowerCase();

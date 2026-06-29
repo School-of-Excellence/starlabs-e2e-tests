@@ -96,8 +96,11 @@ export type GateStatus = 'NONE' | 'QUEUED' | 'RUNNING' | 'PASSED' | 'FAILED';
  * link to the report BEFORE merging on GitHub.
  */
 export interface GateRunFacet {
-  /** Which PR the gate ran against, when derivable. */
-  stage?: 'dev' | 'prod';
+  /**
+   * Which lane the gate ran against. 'preview' = the preview-time gate (preview-e2e.yml, runs before
+   * any PR — the report the tester reads at sign-off). 'dev'/'prod' = a gate on the open PR.
+   */
+  stage?: 'preview' | 'dev' | 'prod';
   status: GateStatus;
   /** GitHub workflow run id (numeric, as string). */
   runId?: string;
@@ -105,6 +108,8 @@ export interface GateRunFacet {
   runUrl?: string;
   /** GitHub run id used to resolve the rich report in the cicd-audit dashboard. */
   reportRunId?: string;
+  /** The SHA this gate ran against — lets the UI tie the report to a build / flag staleness. */
+  sha?: string;
   at?: string;
 }
 

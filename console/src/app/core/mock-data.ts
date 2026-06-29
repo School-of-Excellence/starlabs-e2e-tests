@@ -74,6 +74,16 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     prDev: { state: 'NONE' },
     prodGate: { verdict: 'NONE' },
     prProd: { state: 'NONE' },
+    // Preview-time gate (preview-e2e.yml): the report the tester reads BEFORE "OK for dev".
+    gateRun: {
+      stage: 'preview',
+      status: 'PASSED',
+      runId: '7050',
+      runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7050`,
+      reportRunId: '7050',
+      sha: 'ccc3333',
+      at: '2026-06-21T17:24:00Z',
+    },
     testSummary: { conclusion: 'success', passed: 51, failed: 0, total: 51, at: '2026-06-21T17:25:00Z' },
     derivedStatus: 'PREVIEW_LIVE',
     lastActivity: { type: 'preview_build', sha: 'ccc3333', actor: 'github-actions', at: '2026-06-21T17:20:00Z' },
@@ -334,6 +344,17 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     lastDeploymentState: 'success',
     hasUnreleased: true,
     promotable: false, // deployed, but awaiting the tester's "OK to promote" (Preview Channels)
+    // Batch gate on the integrated development branch (preview-e2e on `development`) — shown on the
+    // Release Channel so the admin sees the suite result before promoting development → production.
+    gateRun: {
+      stage: 'preview',
+      status: 'PASSED',
+      runId: '7800',
+      runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7800`,
+      reportRunId: '7800',
+      sha: 'devtip7',
+      at: '2026-06-18T12:21:00Z',
+    },
     testSummary: { conclusion: 'success', passed: 64, failed: 0, total: 64, at: '2026-06-18T12:20:00Z' },
     derivedStatus: 'DEV_MERGED',
     lastActivity: { type: 'dev_merged', sha: 'devtip7', actor: 'dev@soexcellence.com', at: '2026-06-18T12:00:00Z' },

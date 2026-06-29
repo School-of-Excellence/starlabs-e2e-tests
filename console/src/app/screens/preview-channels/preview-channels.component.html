@@ -30,6 +30,21 @@
             }
           </div>
 
+          <!-- Preview-time test-suite report — the tester reads this BEFORE "OK for dev" -->
+          @if (rc.gateRun && rc.gateRun.status !== 'NONE') {
+            <div class="gaterun" [attr.data-tone]="gateRunTone(rc.gateRun.status)">
+              <span class="gdot"></span>
+              <strong>Test suite</strong>
+              <span>{{ gateRunLabel(rc.gateRun.status) }}</span>
+              @if (rc.gateRun.status === 'PASSED') { <span class="verdict ok">all checks passed</span> }
+              @if (rc.gateRun.status === 'FAILED') { <span class="verdict bad">checks failed</span> }
+              @if (gateStale(rc)) { <span class="warn">stale — ran on <code>{{ short(rc.gateRun.sha) }}</code>, redeploy + re-test</span> }
+              @if (reportUrl(rc); as url) {
+                <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
+              }
+            </div>
+          }
+
           <!-- DEV gate -->
           <section class="gate">
             <div class="gate-head">

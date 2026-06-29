@@ -41,6 +41,10 @@ on:
         description: 'Emulator project id — MUST match the app overlay projectId (starlabs-cicd) or auth/reads silently break (SETUP §3)'
         type: string
         default: starlabs-cicd
+      stage:
+        description: "History stage tag: 'gate' (PR-creation gate) or 'preview-gate' (preview-time gate). Distinguishes the two runs in cicd-audit."
+        type: string
+        default: gate
       evidence:
         description: "EVIDENCE=1 captures a screenshot + trace per test into the uploaded report (debugging)"
         type: string
@@ -62,6 +66,7 @@ jobs:
       CF_BRANCH: ${{ inputs.cf_branch }}
       ONLY: ${{ inputs.only }}
       EVIDENCE: ${{ inputs.evidence }}
+      STAGE: ${{ inputs.stage }}
       CI: 'true'
     steps:
       - name: Checkout app (the caller repo, e.g. starlabs-angular)
@@ -166,7 +171,7 @@ jobs:
           ACTOR="${{ github.actor }}" \
           SOURCE=ci \
           SUITE=queue \
-          STAGE=gate \
+          STAGE="${STAGE:-gate}" \
           RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
           REPORT_DIR=playwright-report \
           ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \

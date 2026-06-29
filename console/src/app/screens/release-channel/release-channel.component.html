@@ -31,6 +31,14 @@
             <span class="badge" [attr.data-tone]="rc.promotable ? 'ok' : 'none'">
               {{ rc.promotable ? 'tester-validated' : 'awaiting tester validation' }}
             </span>
+            @if (rc.gateRun && rc.gateRun.status !== 'NONE') {
+              <span class="badge" [attr.data-tone]="gateRunTone(rc.gateRun.status)">
+                test suite {{ gateRunLabel(rc.gateRun.status) }}
+              </span>
+              @if (reportUrl(rc); as url) {
+                <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">report ↗</a>
+              }
+            }
           </div>
 
           <!-- Incoming feature → development PRs (review & merge on GitHub) -->

@@ -85,6 +85,8 @@ const region = 'us-central1';
 
 /** Workflow file names (plan §7, D5/D10). */
 const PREVIEW_WORKFLOW = 'preview.yml';
+/** The preview-time test gate, dispatched alongside preview.yml on deploy (2026-06-29). */
+const PREVIEW_E2E_WORKFLOW = 'preview-e2e.yml';
 const DEPLOY_WORKFLOW = 'deploy_19.yml';
 /** Workflow_run "name" substring that identifies the e2e gate run. */
 const E2E_GATE_HINT = 'e2e';
@@ -519,9 +521,10 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
   const won = await appendWebhookActivity(deliveryId, entry);
   if (!won) return false;
 
-  // Protected-branch deploy/gate runs have no feature candidate; record health
-  // only when there is a candidate to host it (feature branches).
-  if (isProtected(branch) && !isDeploy) return true;
+  // Protected-branch PREVIEW runs have no feature candidate; skip them. Deploy + gate runs DO get
+  // recorded on the protected candidate: deploy → lastDeploymentState; gate → the dev→prod batch
+  // gate shown on the Release Channel (2026-06-29).
+  if (isProtected(branch) && !isDeploy && !isGate) return true;
 
   await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
     if (isPreview) {
@@ -556,8 +559,9 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
             : conclusion === 'success'
               ? 'PASSED'
               : 'FAILED';
-      // Stage = which open PR this gate run validates, when derivable.
-      const stage = c.prProd.state === 'OPEN' ? 'prod' : c.prDev.state === 'OPEN' ? 'dev' : undefined;
+      // Stage = which lane this gate run validates. An OPEN PR → that PR's gate; otherwise this is the
+      // PREVIEW-time gate (preview-e2e.yml, before any PR) — the report the tester reads at sign-off.
+      const stage = c.prProd.state === 'OPEN' ? 'prod' : c.prDev.state === 'OPEN' ? 'dev' : 'preview';
       c.gateRun = {
         stage,
         status: gateStatus,
@@ -566,6 +570,9 @@ async function handleWorkflowRun(deliveryId: string, payload: any): Promise<bool
         // The cicd-audit recorder stores this github run id, so the dashboard can
         // resolve the rich report by it (see scripts/history/record-run.cjs).
         reportRunId: run.id !== undefined ? String(run.id) : undefined,
+        // Tie the report to the build it ran against (the preview SHA), so the UI can flag a report
+        // as stale once a newer build is pushed.
+        sha: headSha ?? c.preview.sha,
         at: eventTime,
       };
       if (status === 'completed') {
@@ -651,6 +658,21 @@ export const deployPreview = onCall<DeployPreviewData>(
     } catch (err: any) {
       logger.error('workflow_dispatch (preview) failed', err);
       throw new HttpsError('internal', `Preview dispatch failed: ${err?.message ?? err}`);
+    }
+
+    // Fire the preview-time TEST GATE alongside the build: one deploy ⇒ two runs (preview.yml +
+    // preview-e2e.yml). The gate path-routes the full branch diff (base: development) and runs the
+    // respective suites. Best-effort — a gate-dispatch hiccup must NOT fail the preview build.
+    // preview-e2e.yml's inputs (only/evidence) are optional → no inputs needed for the routed run.
+    try {
+      await octokit.actions.createWorkflowDispatch({
+        owner: GITHUB_ORG,
+        repo,
+        workflow_id: PREVIEW_E2E_WORKFLOW,
+        ref: branch,
+      });
+    } catch (err: any) {
+      logger.error('workflow_dispatch (preview-e2e gate) failed — preview build continues', err);
     }
 
     // Optimistic intent (confirmed:false until the workflow_run webhook confirms).

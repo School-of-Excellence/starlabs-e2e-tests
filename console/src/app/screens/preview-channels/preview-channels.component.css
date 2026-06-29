@@ -71,6 +71,44 @@
         color: var(--st-pr-prod);
         font-size: 12px;
       }
+      /* Preview-time test-suite report row (preview-e2e.yml gate). */
+      .gaterun {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+        font-size: 12px;
+        color: var(--fg);
+      }
+      .gaterun .gdot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--muted);
+      }
+      .gaterun[data-tone='ok'] .gdot { background: var(--st-ok); }
+      .gaterun[data-tone='bad'] .gdot { background: var(--danger); }
+      .gaterun[data-tone='active'] .gdot {
+        background: var(--accent);
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+      .gaterun .verdict {
+        margin-left: 0;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+      }
+      .gaterun .verdict.ok { color: var(--st-ok); border-color: color-mix(in srgb, var(--st-ok) 45%, transparent); }
+      .gaterun .verdict.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+      .gaterun .ghlink {
+        font-size: 12px;
+        padding: 2px 8px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      .gaterun .ghlink:hover { border-color: var(--accent); text-decoration: none; }
       .gate {
         margin-top: 12px;
         padding: 12px 14px;
