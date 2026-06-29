@@ -71,6 +71,15 @@ function listFiles(dir) {
 }
 
 (async () => {
+  // [diag] confirm the SA parsed and the key is well-formed (no secret values printed).
+  try {
+    const _sa = require(path.resolve(SA));
+    const pk = typeof _sa.private_key === 'string' ? _sa.private_key : '';
+    console.error('[history][diag] SA project_id:', _sa.project_id, '| client_email set:', !!_sa.client_email,
+      '| token_uri:', _sa.token_uri, '| pk BEGIN:', pk.includes('BEGIN PRIVATE KEY'),
+      '| pk END:', pk.trim().endsWith('-----'), '| pk len:', pk.length, '| pk newlines:', (pk.match(/\n/g) || []).length);
+    console.error('[history][diag] PROJECT:', PROJECT, '| BUCKET:', BUCKET, '| node:', process.version, '| firebase-admin:', require('firebase-admin/package.json').version);
+  } catch (e) { console.error('[history][diag] SA parse error:', e && e.message); }
   admin.initializeApp({
     credential: admin.credential.cert(require(path.resolve(SA))),
     storageBucket: BUCKET,
@@ -109,4 +118,10 @@ function listFiles(dir) {
   await docRef.set({ ...meta, storage: { base: `gs://${bucket.name}/${base}`, report, attachments } });
   console.log(`[history] ✓ cicd-audit/${runId}  (${report.length} report files, ${attachments.length} attachments)  → gs://${bucket.name}/${base}`);
   process.exit(0);
-})().catch((e) => die(1, `[history] FAILED: ${e && e.message ? e.message : e}`));
+})().catch((e) => {
+  // [diag] dump the FULL error so we see the underlying cause, not just the wrapped message.
+  console.error('[history][diag] name:', e && e.name, '| code:', e && (e.code || e.errno));
+  console.error('[history][diag] cause:', e && e.cause ? `${e.cause.name || ''} ${e.cause.code || ''} ${e.cause.message || ''}` : '(none)');
+  console.error('[history][diag] stack:', e && e.stack);
+  die(1, `[history] FAILED: ${e && e.message ? e.message : e}`);
+});
