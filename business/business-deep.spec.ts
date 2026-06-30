@@ -596,12 +596,23 @@ test.describe('Business deep — participant-touchpoint date window + time-delay
 
   // Open the touchpoint filter multi-select and reduce it to ONLY our run-unique type (mirrors BM-15), so
   // dataSource.data + the time-delay timeline are exactly our 5 seeded rows.
-  async function isolateSeededType(page: import('@playwright/test').Page) {
+  // Open the Material multi-select RELIABLY. A single click toggles the overlay, but on the emulator the
+  // component's live Firestore streams (classify/touchpoint + participant touchpoint) emit a snapshot just
+  // after load that re-renders the <mat-select> and swallows the first open — so the panel deterministically
+  // ends up closed. Retry the open until a role=option is actually visible (an already-open panel = success).
+  async function openTouchpointFilter(page: import('@playwright/test').Page) {
     const filterSelect = page.getByRole('combobox', { name: /Filter Touch Points/i });
     await expect(filterSelect, 'touchpoint: the filter must render').toBeVisible({ timeout: 30_000 });
-    await filterSelect.click({ force: true });
+    const firstOption = page.getByRole('option').first();
+    await expect(async () => {
+      if (!(await firstOption.isVisible().catch(() => false))) await filterSelect.click();
+      await expect(firstOption, 'touchpoint: the filter panel must open').toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+  }
+
+  async function isolateSeededType(page: import('@playwright/test').Page) {
+    await openTouchpointFilter(page);
     const options = page.getByRole('option');
-    await expect(options.first(), 'touchpoint: the filter panel must open').toBeVisible({ timeout: 10_000 });
     const n = await options.count();
     const ours = `BIZ Touch ${RUN}`;
     for (let i = 0; i < n; i++) {
@@ -616,7 +627,7 @@ test.describe('Business deep — participant-touchpoint date window + time-delay
 
   // BM-TP-DELAY — the "Average Time Delay" label is computed by the component from the timeline of its OWN
   // loaded unique-type rows. Our 5 rows are dated 1..5 days ago (consecutive 1-day gaps) → "1d 0h 0m 0s".
-  test.fixme('BM-TP-DELAY participant-touchpoint computes the deterministic 1-day average delay for the seeded rows', async ({ page }) => {
+  test('BM-TP-DELAY participant-touchpoint computes the deterministic 1-day average delay for the seeded rows', async ({ page }) => {
     // [INDEPENDENT TRUTH] the seeded unique-type rows are spaced exactly one day apart → avg gap = 1 day.
     const all = await queryWhere('participant touchpoint', [['touchpoint', '==', `BIZ Touch ${RUN}`]]);
     expect(all.length, 'BM-TP-DELAY: precondition — ≥3 seeded unique-type touchpoints').toBeGreaterThanOrEqual(3);
