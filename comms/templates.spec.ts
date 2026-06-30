@@ -59,44 +59,62 @@ test.describe('Comms — template list renders (real UI, anti-circular)', () => 
   test('CN-14 onewaytemplates list renders the seeded template', async ({ page }) => {
     await loginAsCommsAdmin(page);
 
-    // ROOT CAUSE (CI-only, root-caused via a runtime probe of the failing run): the authGuard's
-    // routeConfig (authguard.service.ts:320) reads EVERY `dashboard` grant via getDocs on each navigation.
-    // On the FIRST deep-link nav to this route right after a fresh login, that read can race the grants
-    // being available — routeConfig then resolves EMPTY roles+profiles for /onewaytemplates, the guard
-    // computes hasAccess=false and bounces to /EISDashboard (so app-oneway-templates never mounts). Only
-    // THIS route trips it: it lazy-loads the heaviest comms chunk (ngx-editor + emoji-mart), which delays
-    // the app enough to lose the race. (Verified there is exactly ONE /onewaytemplates grant, with the
-    // admin role — so it is timing, not data.) Real menu-driven navigation is unaffected.
+    // ROOT CAUSE (CI-only — re-derived from the failing run's Playwright TRACE, not the earlier guess).
+    // The authGuard (auth.guard.ts) runs THREE sequential Firestore reads on EVERY navigation —
+    // getRoles() [getDocs(profile_data)+getDoc(role_ref)], username() [getDocs(profile_data)] and
+    // routeConfig() [getDocs(dashboard)]. On the COLD first deep-link right after login, those reads
+    // stall (the Firestore client + the app's many onSnapshot listeners are still warming), so CanActivate
+    // never resolves and the target never mounts. Firestore here uses the DEFAULT MEMORY cache
+    // (app.config.ts: `provideFirestore(() => getFirestore())`, no persistentLocalCache) — so a
+    // `page.goto` reload tears down the page, gives a fresh COLD client, and re-hits the same stall. That
+    // is why the prior retry-`page.goto` never cleared CI (every retry reloads → re-cold).
+    // The trace also disproved the old "heaviest-chunk delays the guard" note: canActivate runs BEFORE
+    // loadComponent, the onewaytemplates chunk is never even fetched, and a stray programmatic
+    // navigateByUrl can resolve to the `**` catch-all (ExceptionalroutingComponent → redirects to
+    // /EISDashboard after 1.5s), which is the observed "bounce".
     //
-    // FIX (STATUS doc approach #1 — warm, then in-app nav; no reload): the prior retry-`page.goto`
-    // never cleared CI because every `page.goto` is a FULL RELOAD that re-initializes the app and
-    // re-hits the same cold first-nav race. Instead: first warm the app on a LIGHT comms route
-    // (`/email-templates` — the route CN-02 proves admits cleanly on a fresh-login deep link). Its own
-    // authGuard runs the same `getDocs(dashboard)`, and the fact that it ADMITS proves that read returned
-    // the populated grant set (a cold/empty read would bounce it too). Then reach /onewaytemplates via an
-    // IN-APP Angular Router navigation (AppComponent.router, dev-mode `ng` debug API) so the app stays
-    // initialized and the now-warm `getDocs(dashboard)` resolves the /onewaytemplates grant → guard admits
-    // instead of bouncing to /EISDashboard. No reload = no re-race. (Not `/communication`: that dashboard
-    // throws a runtime `profilelist` error on the emulator seed and would trip the console guard.)
+    // FIX: (1) WARM the guard's read path IN THIS PAGE SESSION on a LIGHT guarded route (/email-templates —
+    // CN-02 proves it admits on a fresh-login deep link). Waiting for its component to fully MOUNT proves
+    // all three guard reads completed → the Firestore client is warm. (Not /communication: it throws a
+    // runtime `profilelist` error on the emulator seed and would trip the console guard.) (2) Reach
+    // /onewaytemplates via an IN-APP Angular Router navigation so the warm client is PRESERVED (no reload),
+    // RETRYING the in-app nav until the host mounts — because a single programmatic navigateByUrl can land
+    // on the `**` catch-all, but a retry (still no reload, so still warm) converges. This is a fresh-login
+    // deep-link hardening only; real menu-driven navigation is unaffected.
     await page.goto('/email-templates', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/email-templates/, { timeout: 30_000 });
     await expect(
       page.locator('app-create-email-template'),
-      'CN-14 warm-up: /email-templates must mount (guard admits → getDocs(dashboard) is warm)',
+      'CN-14 warm-up: /email-templates must fully mount (all three authGuard reads completed → warm)',
     ).toBeVisible({ timeout: 30_000 });
 
-    // In-app router navigation — no page.goto, so the app is not reloaded and the grant read stays warm.
-    // AppComponent exposes `public router = inject(Router)`; reach it via the dev-build `ng` debug API.
+    // Preload the heavy onewaytemplates lazy chunk via its route loader so the navigation itself only has
+    // to run the (now-warm) guard, not also fetch+transform ngx-editor/emoji-mart. Best-effort.
     await page.evaluate(async () => {
       const ng = (window as unknown as { ng: any }).ng;
       const app = ng.getComponent(document.querySelector('app-root'));
-      await app.router.navigateByUrl('/onewaytemplates');
+      const route = (app.router.config || []).find((r: any) => r.path === 'onewaytemplates');
+      if (route?.loadComponent) { try { await route.loadComponent(); } catch { /* preload best-effort */ } }
     });
+
+    // IN-APP navigation, retried (NO page.goto = no reload = warm Firestore client preserved across retries).
+    // Each attempt fires navigateByUrl (timeout-guarded so a stalled guard can't hang the retry loop) and
+    // checks the host mounted; if it bounced to /EISDashboard or the `**` catch-all, toPass re-issues it.
+    await expect(async () => {
+      await page.evaluate(async () => {
+        const ng = (window as unknown as { ng: any }).ng;
+        const app = ng.getComponent(document.querySelector('app-root'));
+        await Promise.race([
+          app.router.navigateByUrl('/onewaytemplates').catch(() => {}),
+          new Promise((r) => setTimeout(r, 8000)),
+        ]);
+      });
+      await expect(
+        page.locator('app-oneway-templates'),
+        'CN-14: onewaytemplates must mount (guard admits — not bounced to /EISDashboard or the ** route)',
+      ).toBeVisible({ timeout: 8_000 });
+    }).toPass({ timeout: 90_000, intervals: [1_000, 2_000, 3_000] });
     await expect(page).toHaveURL(/onewaytemplates/, { timeout: 30_000 });
-    await expect(
-      page.locator('app-oneway-templates'),
-      'CN-14: onewaytemplates must mount (guard admits — not bounced to /EISDashboard)',
-    ).toBeVisible({ timeout: 30_000 });
 
     // [REAL-UI] viewMode defaults to 'list'; ngOnInit → loadTemplates() runs
     // getDocs(onewaytemplates, orderBy('createddate','desc')).filter(!delete) and renders a MatTable. The
