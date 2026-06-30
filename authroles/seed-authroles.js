@@ -26,6 +26,20 @@ const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.AUTH_RUNID || 'auth';
 
+// EMULATOR support: when FIRESTORE_EMULATOR_HOST is set, init an emulator-pinned admin (projectId from
+// FIREBASE_PROJECT, default starlabs-cicd) instead of the cloud-allowlisted seed.initAdmin(). firebase-admin
+// then routes Firestore/Auth to the local emulator automatically. Mirrors journey/seed-journey.js's
+// initAdminAuto(); the cloud path (no emulator host set) is unchanged.
+function initAdminAuto() {
+  if (process.env.FIRESTORE_EMULATOR_HOST) {
+    const a = require('firebase-admin');
+    const PROJECT = process.env.FIREBASE_PROJECT || 'starlabs-cicd';
+    if (!a.apps.length) a.initializeApp({ projectId: PROJECT, storageBucket: `${PROJECT}.appspot.com` });
+    return a;
+  }
+  return seed.initAdmin();
+}
+
 // Actors. profileids are run-prefixed; emails follow the actors.ts convention `<role>+<run>@example.com`.
 const PF = {
   admin: `${TESTRUNID}_pf_admin`,
@@ -157,7 +171,7 @@ async function seedLoginEdgeProfiles(db, tag) {
 }
 
 async function seedAuthRoles() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const tag = TAG(TESTRUNID);
@@ -205,7 +219,7 @@ async function seedAuthRoles() {
 const SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard'];
 
 async function teardownAuthRoles() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const { FieldValue } = require('firebase-admin/firestore');
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
