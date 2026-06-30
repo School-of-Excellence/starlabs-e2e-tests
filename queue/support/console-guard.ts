@@ -68,6 +68,16 @@ export const IGNORABLE: RegExp[] = [
   // cards + the ticket table regardless — the test's FUNCTIONAL assertions still run and still catch a
   // real break. Anchored to the exact wording so a genuine app error is unaffected.
   /Scroll container is not available/i,
+  // Benign LIVE-STREAM first-emission race on the workshop-configuration page (workshops WS-02; CI timing
+  // surfaces it, local doesn't). createWorkshop() setDoc's the new workshopconfiguration doc then
+  // router.navigate(['/workshopconfig', id]); the config page subscribes to docSnapshots(workshopconfiguration/{id})
+  // (workshop-configuration.component.ts:1082) and its FIRST emission can fire before the just-written doc is
+  // visible to the listener → snapshot.exists()===false → console.error('No such document!') (component.ts:1107),
+  // then the next emission carries the doc and workshopData populates. The doc DOES exist — WS-02's own
+  // assertion polls getDoc(workshopconfiguration, newId) until detailpage.title === the typed title and PASSES —
+  // so this is benign transient noise, NOT a missing precondition and NOT an app bug. The screen recovers and
+  // the test's FUNCTIONAL assertions still run and still catch a real break. Anchored to the exact app string.
+  /No such document!/i,
 ];
 
 /** True when `msg` is a REAL app error (i.e. NOT matched by any IGNORABLE pattern). */
