@@ -66,17 +66,37 @@ test.describe('Comms — template list renders (real UI, anti-circular)', () => 
     // computes hasAccess=false and bounces to /EISDashboard (so app-oneway-templates never mounts). Only
     // THIS route trips it: it lazy-loads the heaviest comms chunk (ngx-editor + emoji-mart), which delays
     // the app enough to lose the race. (Verified there is exactly ONE /onewaytemplates grant, with the
-    // admin role — so it is timing, not data.) Re-navigate until the guard admits and the component host
-    // mounts; the grants are warm on a retry. Real menu-driven navigation is unaffected — this only hardens
-    // the test's fresh-login deep-link. The data assertions below are unchanged.
-    await expect(async () => {
-      await page.goto('/onewaytemplates', { waitUntil: 'domcontentloaded' });
-      await expect(
-        page.locator('app-oneway-templates'),
-        'CN-14: onewaytemplates must mount (guard admits — not bounced to /EISDashboard)',
-      ).toBeVisible({ timeout: 8_000 });
-    }).toPass({ timeout: 90_000 });
+    // admin role — so it is timing, not data.) Real menu-driven navigation is unaffected.
+    //
+    // FIX (STATUS doc approach #1 — warm, then in-app nav; no reload): the prior retry-`page.goto`
+    // never cleared CI because every `page.goto` is a FULL RELOAD that re-initializes the app and
+    // re-hits the same cold first-nav race. Instead: first warm the app on a LIGHT comms route
+    // (`/email-templates` — the route CN-02 proves admits cleanly on a fresh-login deep link). Its own
+    // authGuard runs the same `getDocs(dashboard)`, and the fact that it ADMITS proves that read returned
+    // the populated grant set (a cold/empty read would bounce it too). Then reach /onewaytemplates via an
+    // IN-APP Angular Router navigation (AppComponent.router, dev-mode `ng` debug API) so the app stays
+    // initialized and the now-warm `getDocs(dashboard)` resolves the /onewaytemplates grant → guard admits
+    // instead of bouncing to /EISDashboard. No reload = no re-race. (Not `/communication`: that dashboard
+    // throws a runtime `profilelist` error on the emulator seed and would trip the console guard.)
+    await page.goto('/email-templates', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/email-templates/, { timeout: 30_000 });
+    await expect(
+      page.locator('app-create-email-template'),
+      'CN-14 warm-up: /email-templates must mount (guard admits → getDocs(dashboard) is warm)',
+    ).toBeVisible({ timeout: 30_000 });
+
+    // In-app router navigation — no page.goto, so the app is not reloaded and the grant read stays warm.
+    // AppComponent exposes `public router = inject(Router)`; reach it via the dev-build `ng` debug API.
+    await page.evaluate(async () => {
+      const ng = (window as unknown as { ng: any }).ng;
+      const app = ng.getComponent(document.querySelector('app-root'));
+      await app.router.navigateByUrl('/onewaytemplates');
+    });
     await expect(page).toHaveURL(/onewaytemplates/, { timeout: 30_000 });
+    await expect(
+      page.locator('app-oneway-templates'),
+      'CN-14: onewaytemplates must mount (guard admits — not bounced to /EISDashboard)',
+    ).toBeVisible({ timeout: 30_000 });
 
     // [REAL-UI] viewMode defaults to 'list'; ngOnInit → loadTemplates() runs
     // getDocs(onewaytemplates, orderBy('createddate','desc')).filter(!delete) and renders a MatTable. The
