@@ -166,10 +166,18 @@ test.describe('Evolution Mapping — admin catalogue (real UI, anti-circular)', 
       (d) => !!d && Array.isArray((d as any).videolist) && (d as any).videolist.length === 1,
       { label: 'EM-07: pDel videolist length 2 -> 1', timeoutMs: 30_000 },
     );
-    // The removed url's catalogue row had urllive flipped to false by the app (deleteVideo step 2).
+    // The app flips the removed url's catalogue row urllive:false in deleteVideo STEP 2, which runs strictly
+    // AFTER step 1 (the videolist arrayRemove polled above) and commits a beat later (~1s). POLL for it — a
+    // one-shot read observes the pre-flip value, and ending the test then tears the page down before this
+    // sequential second write lands. Same pollUntil discipline this test already uses for step 1; the app
+    // performs the write correctly (verified) — we just wait for the async second hop to commit.
     const remainingUrl = (afterDoc as any).videolist[0];
     const removedUrl = remainingUrl === evoUrls.X1 ? evoUrls.X2 : evoUrls.X1;
-    const removedRow = await queryWhere('evolutionmappingvideo', [['videourl', '==', removedUrl]]);
+    const removedRow = await pollUntil(
+      () => queryWhere('evolutionmappingvideo', [['videourl', '==', removedUrl]]),
+      (rows) => Array.isArray(rows) && rows.length >= 1 && rows[0].urllive === false,
+      { label: 'EM-07: app flipped the removed row urllive:false (deleteVideo step 2)', timeoutMs: 30_000 },
+    );
     expect(removedRow.length, 'EM-07: the removed url maps to a catalogue row').toBeGreaterThanOrEqual(1);
     expect(removedRow[0].urllive, 'EM-07: the app flipped the removed row urllive:false').toBe(false);
   });
