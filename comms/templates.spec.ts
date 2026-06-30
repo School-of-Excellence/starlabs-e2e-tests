@@ -57,6 +57,13 @@ test.describe('Comms — template list renders (real UI, anti-circular)', () => 
   // CN-14 — /onewaytemplates list renders the seeded one-way template (app's loadTemplates query)
   // ===========================================================================================
   test('CN-14 onewaytemplates list renders the seeded template', async ({ page }) => {
+    // TEMP DIAGNOSTIC (root-causing the CI-only onewaytemplates non-mount) — collect browser console +
+    // pageerror for the whole test, then dump the component's runtime state if the row never appears.
+    const logs: string[] = [];
+    page.on('console', (m) => logs.push(`[console.${m.type()}] ${m.text()}`.slice(0, 300)));
+    page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}`.slice(0, 300)));
+    page.on('requestfailed', (r) => logs.push(`[requestfailed] ${r.url()} ${r.failure()?.errorText || ''}`.slice(0, 300)));
+
     await loginAsCommsAdmin(page);
     await page.goto('/onewaytemplates', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/onewaytemplates/, { timeout: 30_000 });
@@ -65,7 +72,24 @@ test.describe('Comms — template list renders (real UI, anti-circular)', () => 
     // getDocs(onewaytemplates, orderBy('createddate','desc')).filter(!delete) and renders a MatTable. The
     // seeded template (unique name) must appear in the .template-name cell the app rendered.
     const name = page.locator('.template-name', { hasText: `Seeded Oneway ${RUN}` });
-    await expect(name, 'CN-14: the seeded one-way template must render in the list').toBeVisible({ timeout: 30_000 });
+    try {
+      await expect(name, 'CN-14: the seeded one-way template must render in the list').toBeVisible({ timeout: 30_000 });
+    } catch (err) {
+      const host = await page.locator('app-oneway-templates').count().catch(() => -1);
+      const listSec = await page.locator('.templates-list-section').count().catch(() => -1);
+      const loading = await page.locator('.loading-container').count().catch(() => -1);
+      const emptyState = await page.locator('.empty-state').count().catch(() => -1);
+      const rows = await page.locator('tr[mat-row], tr.mat-mdc-row').count().catch(() => -1);
+      const headings = await page.locator('h1,h2,h3,h4').allInnerTexts().catch(() => []);
+      console.log('===== CN-14 DIAG =====');
+      console.log('url=', page.url());
+      console.log('app-oneway-templates host count=', host);
+      console.log('.templates-list-section=', listSec, '.loading-container=', loading, '.empty-state=', emptyState, 'mat-rows=', rows);
+      console.log('headings=', JSON.stringify(headings));
+      console.log('logs(last40)=', JSON.stringify(logs.slice(-40)));
+      console.log('===== /CN-14 DIAG =====');
+      throw err;
+    }
 
     // Its category cell is the app rendering the seeded field on the same row (a non-tautological signal).
     const row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: `Seeded Oneway ${RUN}` });
