@@ -181,13 +181,18 @@ test.describe('Business — read reconciliation (real UI, anti-circular)', () =>
     // (every type selected). De-select the four stock types so only our run-unique type remains → the
     // component's calculateTimeDelay() rebuilds dataSource.data = rows whose touchpoint is in
     // filterTouchPoint, i.e. exactly our seeded rows.
+    // Open the Material multi-select RELIABLY. On the emulator the component's live Firestore streams emit a
+    // snapshot just after load that re-renders the <mat-select> and swallows a single click's open, so the
+    // panel deterministically ends up closed. Retry the open until a role=option is visible (already-open = ok).
     const filterSelect = page.getByRole('combobox', { name: /Filter Touch Points/i });
     await expect(filterSelect, 'BM-15: the touchpoint filter must render').toBeVisible({ timeout: 30_000 });
-    await filterSelect.click({ force: true });
+    const options = page.getByRole('option');
+    await expect(async () => {
+      if (!(await options.first().isVisible().catch(() => false))) await filterSelect.click();
+      await expect(options.first(), 'BM-15: the filter panel must open with options').toBeVisible({ timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
     // De-select EVERY option except our run-unique type (the list also carries other suites' types, so
     // we cannot hardcode the stock set — toggle off any currently-selected option that isn't ours).
-    const options = page.getByRole('option');
-    await expect(options.first(), 'BM-15: the filter panel must open with options').toBeVisible({ timeout: 10_000 });
     const optCount = await options.count();
     for (let i = 0; i < optCount; i++) {
       const opt = options.nth(i);
