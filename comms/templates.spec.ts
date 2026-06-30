@@ -61,11 +61,18 @@ test.describe('Comms — template list renders (real UI, anti-circular)', () => 
     await page.goto('/onewaytemplates', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/onewaytemplates/, { timeout: 30_000 });
 
-    // [REAL-UI] viewMode defaults to 'list'; ngOnInit → loadTemplates() runs
-    // getDocs(onewaytemplates, orderBy('createddate','desc')).filter(!delete) and renders a MatTable. The
-    // seeded template (unique name) must appear in the .template-name cell the app rendered.
+    // [REAL-UI] viewMode defaults to 'list'; ngOnInit → loadTemplates() runs a ONE-SHOT
+    // getDocs(onewaytemplates, orderBy('createddate','desc')).filter(!delete) (oneway-templates.component.ts:413)
+    // — NOT a live onSnapshot. If that single query renders the table before our seeded row is queryable, the
+    // list never re-queries, so a plain wait can't recover. Reload (re-runs loadTemplates) until our row
+    // appears — robust against the one-shot-getDocs race seen in CI; the assertions below are unchanged.
     const name = page.locator('.template-name', { hasText: `Seeded Oneway ${RUN}` });
-    await expect(name, 'CN-14: the seeded one-way template must render in the list').toBeVisible({ timeout: 30_000 });
+    await expect(async () => {
+      if (!(await name.isVisible().catch(() => false))) {
+        await page.reload({ waitUntil: 'domcontentloaded' });
+      }
+      await expect(name, 'CN-14: the seeded one-way template must render in the list').toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 45_000 });
 
     // Its category cell is the app rendering the seeded field on the same row (a non-tautological signal).
     const row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: `Seeded Oneway ${RUN}` });
