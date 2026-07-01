@@ -32,8 +32,13 @@ const SEED_FILTER = `Profile Test User`;
 // dashboard screens fan out auxiliary widget queries that need composite indexes NOT provisioned on the
 // disposable test project, and build a doc() ref from an absent optional id on sparse seed. The asserted
 // behavior (the rendered table/filter/selection the cases check) still computes. A real bug is a distinct
-// message — these two regexes only swallow the documented environment gaps.
-const TOLERATE = [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i];
+// message — these regexes only swallow the documented environment gaps. Also the by-design Watson
+// secondary-app init failure: participants-analytics.component.ts:303 lazily getApp("watson") for a legacy
+// cross-project analytics widget the test env intentionally never wires (environment.emulator.ts nulls
+// watson) → getApp throws app/no-app, but the screen still renders its participant-metadata table. Same
+// by-design tolerance as journey (journey/support/journey.ts JOURNEY_IGNORABLE).
+const TOLERATE = [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i,
+  /No Firebase App '?watson'?/i, /Firebase App named '?watson'? already exists|app\/no-app/i];
 
 test.describe('Profiles — analytics filter-builder + dashboards (deep, real UI, anti-circular)', () => {
   let guard: ConsoleGuard;

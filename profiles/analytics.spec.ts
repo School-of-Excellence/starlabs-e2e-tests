@@ -31,8 +31,12 @@ test.describe('Profiles — analytics + form/break viewers (real UI, anti-circul
   // fullfillmentchallenge) that need composite indexes not provisioned on the disposable test project →
   // benign "requires an index" console errors from queries NOT under test. The rendered rows/filters the
   // cases assert still compute. Tolerate ONLY that error class here (documented environment gap).
+  // ...plus the by-design Watson secondary-app init failure (getApp("watson") app/no-app — the legacy
+  // cross-project analytics widget the emulator env never wires; screen still renders). Same tolerance as
+  // journey's JOURNEY_IGNORABLE.
   test.afterEach(() => assertNoFatal(guard, 'analytics: no fatal console errors / pageerrors',
-    [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i]));
+    [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i,
+     /No Firebase App '?watson'?/i, /Firebase App named '?watson'? already exists|app\/no-app/i]));
 
   // ===========================================================================================
   // PA-07 (+PA-09) — analytics renders the table the app built + its /profilesummary links.
@@ -87,6 +91,11 @@ test.describe('Profiles — analytics + form/break viewers (real UI, anti-circul
   // PA-13 — view-participants-form renders the seeded formsByClient row (forms DB, last-30d)
   // ===========================================================================================
   test('PA-13 view-participants-form renders the seeded formsByClient row the app queried (forms DB)', async ({ page }) => {
+    // EMULATOR LIMITATION: the screen reads `formsByClient` from the `firestore-forms` NAMED DB via the client
+    // SDK. The Firestore emulator (firebase-tools) does not support named databases / per-named-db rules yet,
+    // so the named db has no permissive rules → client reads default to DENY (Admin seeds still reach it). This
+    // case validates the real forms-DB read against the CLOUD test project (playwright.profiles.config.ts).
+    test.skip(!!process.env.FIRESTORE_EMULATOR_HOST, 'EMULATOR LIMITATION: firestore-forms named DB has no rules in the emulator (multi-db unsupported) → client read denied; runs on the cloud config.');
     await loginAsProfileAdmin(page);
     await page.goto('/view-participants-form', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/view-participants-form/, { timeout: 30_000 });
