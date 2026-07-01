@@ -96,12 +96,22 @@ test.describe('Profiles — analytics filter-builder + dashboards (deep, real UI
     expect(n, `PA-07: Total participant count must be >= 4 seeded (was ${n})`).toBeGreaterThanOrEqual(4);
 
     // [ASSERT] (PA-09) the name column the app rendered is an <a class="profilename"> whose href the app
-    // computed as /profilesummary/<profileid> (participants-analytics.component.html:691) — proving the
-    // table built the summary routerLinks from its own query, not from a test-set value.
+    // computed as <profile-detail-route>/<profileid> (participants-analytics.component.html:691) — proving
+    // the table built the routerLink from its OWN query (element['profileid']), not from a test-set value.
+    //
+    // App-branch divergence (cicd ↔ cicd-dev, the CN-14 class): the name-cell route differs by branch.
+    //   • cicd (served locally):  routerLink = '/profilesummary/' + element['profileid']
+    //   • cicd-dev (CI builds it): routerLink = '/userprofile/'   + element['profileid']
+    //     (renamed by cicd-dev commit 3a40282 "Integrate profile-picture component …"; that commit also
+    //      wraps the cell in <app-profile-picture [profileId]="element['profileid']">.)
+    // Both are app-built profile-detail routes keyed by the app's own profileid, so both satisfy PA-09's
+    // anti-circular intent identically. We accept EITHER so the assertion stays live (not skipped) on both
+    // branches; the profileid-bearing '.+' tail is the load-bearing part — a bare '/userprofile/' would
+    // still fail, catching a genuinely empty profileid.
     const firstLink = page.locator('a.profilename').first();
     await expect(firstLink, 'PA-07: at least one participant name link must render').toBeVisible({ timeout: 30_000 });
-    await expect(firstLink, 'PA-09: the name links to /profilesummary/<profileid> (app-built routerLink)')
-      .toHaveAttribute('href', /\/profilesummary\/.+/);
+    await expect(firstLink, 'PA-09: the name links to <profilesummary|userprofile>/<profileid> (app-built routerLink)')
+      .toHaveAttribute('href', /\/(profilesummary|userprofile)\/.+/);
   });
 
   // ===========================================================================================
