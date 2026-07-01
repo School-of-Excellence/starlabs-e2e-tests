@@ -20,7 +20,9 @@
  */
 'use strict';
 
-const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
+// initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
+// FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.APPT_RUNID || 'appt';
 
@@ -113,7 +115,7 @@ const ROUTES = [
 ];
 
 async function seedAppointments() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const T = admin.firestore.Timestamp;
@@ -178,6 +180,20 @@ async function seedAppointments() {
       { type: 'appointment', status: 'ready', sequenceref: db.collection('deliverables').doc(ID.D1) },
     ] }], ...tag,
   });
+
+  // 4a) PARTICIPANT METADATA for the booked participants (p0, p1). In prod these docs are auto-created by a
+  //     Cloud Function (queuesystem.js) as participants move through flows; the emulator doesn't run that CF,
+  //     so — exactly like every sibling suite's seed — we create them here. The appointment-studio screen
+  //     enriches EVERY appointment via mapProfileMeta[bookedby.id].activejourney
+  //     (appointment-studio.component.ts:173/280, un-guarded), so a booked participant WITHOUT a metadata doc
+  //     crashes the studio (APPT-12/13 — was passing only on a dirty local emulator that had accumulated
+  //     these docs; failed on CI's fresh one). `name` is REQUIRED — getParticipantMetaMap() reads
+  //     participant metadata with orderBy('name'), which drops docs missing that field.
+  for (const [pf, email] of [[PF.p0, EMAIL.p0], [PF.p1, EMAIL.p1]]) {
+    await db.collection('participant metadata').doc(pf).set({
+      docid: pf, profileid: pf, name: email, activejourney: null, ...tag,
+    }, { merge: true });
+  }
 
   // 4b) BOOKING SUBJECT (p1): a SECOND participant product + delivery sequence whose bookable appointment
   //     (AT1, status "ready") drives the keystone booking flow (APPT-02/03/18). p1 deliberately has NO
@@ -365,12 +381,13 @@ const SEEDED = [
   'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
   'productToDeliverySequence', 'participantsproduct', 'participantdeliverysequence', 'deliverables',
   'appointments', 'availability', 'offtime', 'EISzoomcontact', 'customer_eismapping', 'deliverytime',
+  'participant metadata',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
 
 async function teardownAppointments() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
   // Also delete the Auth users (emails carry the run id).
@@ -386,7 +403,7 @@ async function teardownAppointments() {
  *  booking can be performed again. Anti-circular: these are SETUP writes; the test asserts only the
  *  values the APP writes on commit. */
 async function resetBookingSubject() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const T = admin.firestore.Timestamp;
   const productRef = (id) => db.collection('products').doc(id);
