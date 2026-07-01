@@ -156,6 +156,14 @@ test.describe('Evolution Mapping — admin write depth (real dialogs → Firesto
     await expect(dialog, 'EM-03: the edit dialog must open').toBeVisible({ timeout: 20_000 });
     const titleInput = dialog.locator('input[placeholder="Enter title"]');
     await expect(titleInput, 'EM-03: the editable Title input must render (edit mode)').toBeVisible({ timeout: 20_000 });
+    // WAIT for the dialog's source-video pre-selection to land before acting. In edit mode ngOnInit runs
+    // onSelect() — an async getDocs('participant videos') — and only its .then() does selectedVideos.add(matched);
+    // until that resolves selectedVideos is EMPTY, and addEvolution() guards on size===0 with an alert() that
+    // returns WITHOUT writing. A human edits/clicks long after this settles; the test must too, or it races the
+    // query (fast/warm wins it, a cold emulator loses it). The matched video card (title === the row's BEFORE
+    // title) turning .selected is exactly the selectedVideos guard going truthy — wait on that DOM signal.
+    await expect(dialog.locator('.video-title-card.selected').filter({ hasText: evoTitles.E1_BEFORE }),
+      'EM-03: the matched source video must be pre-selected (selectedVideos populated) before Update').toBeVisible({ timeout: 20_000 });
     // Replace the title with the run-unique AFTER value, then click Update Mapping.
     await titleInput.fill(evoTitles.E1_AFTER);
     await dialog.getByRole('button', { name: /Update Mapping/i }).click();
