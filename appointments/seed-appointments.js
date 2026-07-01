@@ -181,6 +181,20 @@ async function seedAppointments() {
     ] }], ...tag,
   });
 
+  // 4a) PARTICIPANT METADATA for the booked participants (p0, p1). In prod these docs are auto-created by a
+  //     Cloud Function (queuesystem.js) as participants move through flows; the emulator doesn't run that CF,
+  //     so — exactly like every sibling suite's seed — we create them here. The appointment-studio screen
+  //     enriches EVERY appointment via mapProfileMeta[bookedby.id].activejourney
+  //     (appointment-studio.component.ts:173/280, un-guarded), so a booked participant WITHOUT a metadata doc
+  //     crashes the studio (APPT-12/13 — was passing only on a dirty local emulator that had accumulated
+  //     these docs; failed on CI's fresh one). `name` is REQUIRED — getParticipantMetaMap() reads
+  //     participant metadata with orderBy('name'), which drops docs missing that field.
+  for (const [pf, email] of [[PF.p0, EMAIL.p0], [PF.p1, EMAIL.p1]]) {
+    await db.collection('participant metadata').doc(pf).set({
+      docid: pf, profileid: pf, name: email, activejourney: null, ...tag,
+    }, { merge: true });
+  }
+
   // 4b) BOOKING SUBJECT (p1): a SECOND participant product + delivery sequence whose bookable appointment
   //     (AT1, status "ready") drives the keystone booking flow (APPT-02/03/18). p1 deliberately has NO
   //     customer_eismapping → booking falls through to Roles-To-EIS (eis0+eis1 for R1). Reset helper
@@ -367,6 +381,7 @@ const SEEDED = [
   'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
   'productToDeliverySequence', 'participantsproduct', 'participantdeliverysequence', 'deliverables',
   'appointments', 'availability', 'offtime', 'EISzoomcontact', 'customer_eismapping', 'deliverytime',
+  'participant metadata',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
