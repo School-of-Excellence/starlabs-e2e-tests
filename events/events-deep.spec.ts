@@ -66,7 +66,15 @@ async function pickQueueOption(page: Page, queueName: string, queueId: string): 
     await expect(option).toBeVisible({ timeout: 3_000 });
     await option.click();
     await page.keyboard.press('Escape');
-    expect(await alreadySelected(), 'queue must be in selectedQueueList after the click').toBe(true);
+    // (onSelectionChange) updates selectedQueueList ASYNCHRONOUSLY (it also fires fetchQueueTokens), so
+    // POLL for it to land rather than checking immediately. Checking immediately raced the async update
+    // under CI load; the attempt then "failed" and the retry re-clicked this MULTIPLE mat-select option,
+    // TOGGLING the pending selection OFF → it oscillated and never converged (the CI-only
+    // "queue must be in selectedQueueList" failure; locally the update landed before the check so it passed).
+    // Polling here detects the landed selection within the same attempt, so the retry never re-clicks.
+    await expect
+      .poll(alreadySelected, { message: 'queue must be in selectedQueueList after the click', timeout: 10_000 })
+      .toBe(true);
   }).toPass({ timeout: 60_000 });
 }
 
