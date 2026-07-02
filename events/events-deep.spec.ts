@@ -64,14 +64,16 @@ async function pickQueueOption(page: Page, queueName: string, queueId: string): 
     if (await alreadySelected()) return; // selection landed — done (don't re-open & toggle off)
     await combo.click({ force: true });
     await expect(option).toBeVisible({ timeout: 3_000 });
-    await option.click();
+    // force: the <mat-option> is NOT STABLE — the EOD-v2 component's queue-token onSnapshot keeps re-emitting
+    // ("Queue tokens loaded: 2" fires repeatedly) and reflows the option list, so a plain click fails
+    // Playwright's actionability ("element is not stable") under CI's slower rendering and NEVER LANDS →
+    // selectedQueueList stays empty ("No queues selected"). The CI trace confirmed 14× "element is not
+    // stable" on this click while the click never registered. force dispatches the click regardless of
+    // stability. (Root cause = this instability, NOT an async race — locally the list settles fast enough.)
+    await option.click({ force: true });
     await page.keyboard.press('Escape');
-    // (onSelectionChange) updates selectedQueueList ASYNCHRONOUSLY (it also fires fetchQueueTokens), so
-    // POLL for it to land rather than checking immediately. Checking immediately raced the async update
-    // under CI load; the attempt then "failed" and the retry re-clicked this MULTIPLE mat-select option,
-    // TOGGLING the pending selection OFF → it oscillated and never converged (the CI-only
-    // "queue must be in selectedQueueList" failure; locally the update landed before the check so it passed).
-    // Polling here detects the landed selection within the same attempt, so the retry never re-clicks.
+    // (onSelectionChange) then updates selectedQueueList asynchronously — poll for it to land (do NOT
+    // re-click a MULTIPLE select on retry: that would toggle the selection back off).
     await expect
       .poll(alreadySelected, { message: 'queue must be in selectedQueueList after the click', timeout: 10_000 })
       .toBe(true);
