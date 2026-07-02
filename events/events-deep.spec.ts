@@ -64,14 +64,16 @@ async function pickQueueOption(page: Page, queueName: string, queueId: string): 
     if (await alreadySelected()) return; // selection landed — done (don't re-open & toggle off)
     await combo.click({ force: true });
     await expect(option).toBeVisible({ timeout: 3_000 });
-    await option.click();
+    // force: the <mat-option> is NOT STABLE — the EOD-v2 component's queue-token onSnapshot keeps re-emitting
+    // ("Queue tokens loaded: 2" fires repeatedly) and reflows the option list, so a plain click fails
+    // Playwright's actionability ("element is not stable") under CI's slower rendering and NEVER LANDS →
+    // selectedQueueList stays empty ("No queues selected"). The CI trace confirmed 14× "element is not
+    // stable" on this click while the click never registered. force dispatches the click regardless of
+    // stability. (Root cause = this instability, NOT an async race — locally the list settles fast enough.)
+    await option.click({ force: true });
     await page.keyboard.press('Escape');
-    // (onSelectionChange) updates selectedQueueList ASYNCHRONOUSLY (it also fires fetchQueueTokens), so
-    // POLL for it to land rather than checking immediately. Checking immediately raced the async update
-    // under CI load; the attempt then "failed" and the retry re-clicked this MULTIPLE mat-select option,
-    // TOGGLING the pending selection OFF → it oscillated and never converged (the CI-only
-    // "queue must be in selectedQueueList" failure; locally the update landed before the check so it passed).
-    // Polling here detects the landed selection within the same attempt, so the retry never re-clicks.
+    // (onSelectionChange) then updates selectedQueueList asynchronously — poll for it to land (do NOT
+    // re-click a MULTIPLE select on retry: that would toggle the selection back off).
     await expect
       .poll(alreadySelected, { message: 'queue must be in selectedQueueList after the click', timeout: 10_000 })
       .toBe(true);
@@ -669,6 +671,22 @@ test.describe('Events DEEP — videoask tag add (EVT-14)', () => {
 // EVENT OPPORTUNITY DASHBOARD V2 — EVT-15 (create custom stage count) + EVT-16 (the board's stage-token
 // count == a Firestore queue_token oracle). Both target the LIVE v2 route (app.routes.ts:31).
 // =====================================================================================================
+
+// App-branch divergence guard (the CN-14 class). /eventopportunitydashboard loads a DIFFERENT component
+// per branch: on `cicd` (served locally, where EVT-15/16 were authored) it's EventOpportunityDashboardV2Component
+// (host <app-event-opportunity-dashboard-v2>); on `cicd-dev` (CI builds this) it's the LEGACY v1
+// EventOpportunityDashboardComponent (host <app-event-opportunity-dashboard>) — the -v2 component is NOT
+// merged to cicd-dev (app.routes.ts:32 differs; the -v2 folder is absent from cicd-dev). EVT-15/16 assert
+// v2-ONLY internals (the -v2 host's selectedQueueList + getStageParticipants), so they cannot run on v1.
+// Self-skip when the v2 host isn't the one served — runs fully on cicd and automatically once v2 lands on
+// cicd-dev. (This — not mat-option instability — is the real EVT-15/16 CI-red cause: `674deab`'s force-click
+// chased a symptom on the near-identical v1 queue picker.)
+async function skipUnlessEodV2(page: Page): Promise<void> {
+  await page.waitForSelector('app-event-opportunity-dashboard, app-event-opportunity-dashboard-v2', { timeout: 30_000 });
+  const isV2 = (await page.locator('app-event-opportunity-dashboard-v2').count()) > 0;
+  test.skip(!isV2, 'App-branch divergence: cicd-dev serves the legacy EOD (v1); EVT-15/16 target EOD-v2, present only on cicd. Runs once v2 merges to cicd-dev.');
+}
+
 test.describe('Events DEEP — event-opportunity-dashboard-v2 (EVT-15/16)', () => {
   let guard: ConsoleGuard;
   test.beforeEach(async ({ page }) => {
@@ -688,6 +706,7 @@ test.describe('Events DEEP — event-opportunity-dashboard-v2 (EVT-15/16)', () =
     await loginAsEvtAdmin(page);
     await page.goto('/eventopportunitydashboard', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/eventopportunitydashboard/, { timeout: 30_000 });
+    await skipUnlessEodV2(page); // CN-14 class: skip on cicd-dev (serves legacy v1); runs on cicd + once v2 lands.
 
     // [REAL-UI] "Select queue" mat-select (multiple) → tick the seeded queue option. The (onSelectionChange)
     // handler pushes its docid into selectedQueueList and triggers getselectedStages()/fetchQueueTokens().
@@ -738,6 +757,7 @@ test.describe('Events DEEP — event-opportunity-dashboard-v2 (EVT-15/16)', () =
     await loginAsEvtAdmin(page);
     await page.goto('/eventopportunitydashboard', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/eventopportunitydashboard/, { timeout: 30_000 });
+    await skipUnlessEodV2(page); // CN-14 class: skip on cicd-dev (serves legacy v1); runs on cicd + once v2 lands.
 
     // Select the seeded queue → the child <app-event-opportunity> mounts and streams queue_token
     // (queueref==X && tokenstatus=="Active"), groups by currentstage into stageTokenMap, and emits it to
