@@ -840,6 +840,21 @@
       ]
     },
     {
+      "//": "modes PM-15 fetchInterimLog(): orderBy(lastupdate DESC) + range(createdon). Exact index Firestore returns for that query (see modes/interim-report.spec.ts:110). Un-skips PM-15 (isInterimLogIndexReady probe).",
+      "collectionGroup": "interimreport log",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "lastupdate",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "createdon",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "appointments",
       "queryScope": "COLLECTION",
       "fields": [
