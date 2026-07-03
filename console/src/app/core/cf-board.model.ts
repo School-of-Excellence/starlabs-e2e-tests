@@ -9,6 +9,9 @@ export interface CfEnvDeploy {
   branch?: string;
   at?: number;
   by?: string;
+  /** Git BLOB sha of the function's source file at the deployed commit — the content-based DRIFT
+   *  signal (branch-commit-independent, 2026-07-03). See computeCfMatrixState / cfDrift. */
+  fileSha?: string;
   /** true when reconcilePoll's Cloud-Functions-API check healed this cell (not a postdeploy report). */
   healed?: boolean;
 }
@@ -40,10 +43,17 @@ export function cfStateOf(f: CfFunctionDoc): CfMatrixState {
   return d && p ? 'both' : d ? 'dev-only' : p ? 'prod-only' : 'none';
 }
 
-/** DRIFT: both envs deployed but different shas — stored value first, fallback derivation. */
+/**
+ * DRIFT: both envs deployed but running DIFFERENT SOURCE — stored value first (Option A), else derive.
+ * Content signal = per-function blob sha (branch-commit-independent); falls back to the branch commit
+ * sha only until both envs carry fileSha. Mirrors the backend computeCfMatrixState exactly.
+ */
 export function cfDrift(f: CfFunctionDoc): boolean {
   if (typeof f.drift === 'boolean') return f.drift;
-  return !!f.dev?.deployed && !!f.prod?.deployed && !!f.dev.sha && !!f.prod.sha && f.dev.sha !== f.prod.sha;
+  const d = f.dev, p = f.prod;
+  if (!d?.deployed || !p?.deployed) return false;
+  if (d.fileSha && p.fileSha) return d.fileSha !== p.fileSha;
+  return !!d.sha && !!p.sha && d.sha !== p.sha;
 }
 
 // --- listCfBranches response (Branches tab) ------------------------------------------------------

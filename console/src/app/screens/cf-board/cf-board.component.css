@@ -303,3 +303,8 @@ h2 {
   font-size: 11.5px;
   color: var(--warn, #e0a83a);
 }
+.insync-note {
+  grid-column: 1 / -1;
+  font-size: 11.5px;
+  color: var(--st-preview-live, #3fbf6f);
+}

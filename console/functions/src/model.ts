@@ -317,6 +317,14 @@ export interface CfEnvDeploy {
   branch?: string;
   at?: number;
   by?: string;
+  /**
+   * Git BLOB sha of the function's source file at the deployed commit (resolved hub-side from the
+   * git tree at `sha`, 2026-07-03). This is the DRIFT signal: two envs running byte-identical source
+   * share a blob sha regardless of which branch commit deployed it — so a function developed straight
+   * on `development` and deployed to both projects at different HEADs no longer false-positives.
+   * File-level approximation (misses transitive imports), consistent with the board's `~` counts.
+   */
+  fileSha?: string;
   /** legacy healer marker (reconcilePoll era) — superseded by `via`. */
   healed?: boolean;
   /** which writer last touched this cell: postdeploy hook (rich) or 'audit-log' (flag only). */
@@ -356,7 +364,15 @@ export function computeCfMatrixState(
   const d = !!dev?.deployed;
   const p = !!prod?.deployed;
   const state: CfMatrixState = d && p ? 'both' : d ? 'dev-only' : p ? 'prod-only' : 'none';
-  const drift = d && p && !!dev?.sha && !!prod?.sha && dev.sha !== prod.sha;
+  // DRIFT = same function, different SOURCE (2026-07-03). Prefer the per-function blob sha (content
+  // identity, branch-commit-independent); fall back to the branch commit sha only until BOTH envs
+  // have redeployed and carry fileSha. Never compare fileSha against sha (different kinds) — that
+  // would false-positive during the transition.
+  let drift = false;
+  if (d && p) {
+    if (dev?.fileSha && prod?.fileSha) drift = dev.fileSha !== prod.fileSha;
+    else if (dev?.sha && prod?.sha) drift = dev.sha !== prod.sha;
+  }
   return { state, drift };
 }
 

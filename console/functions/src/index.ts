@@ -1445,7 +1445,9 @@ interface CfDeployBody {
 }
 
 export const recordCfDeploy = onRequest(
-  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  // GITHUB_APP_PRIVATE_KEY: resolve each function's source blob sha from the git tree at `sha`, so
+  // drift is content-based (branch-commit-independent), not a branch-HEAD compare (2026-07-03).
+  { region, secrets: [CONSOLE_INGEST_TOKEN, GITHUB_APP_PRIVATE_KEY], cors: false },
   async (req: Request, res: Response) => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
@@ -1484,6 +1486,26 @@ export const recordCfDeploy = onRequest(
 
     try {
       const now = Date.now();
+
+      // Content-based drift (2026-07-03): resolve each function's source blob sha from the git tree
+      // at the deployed commit — ONE GitHub call for the whole deploy, deduped by path. Two envs
+      // running byte-identical source share a blob sha regardless of branch commit. Best-effort: any
+      // failure (no sha, GitHub down, path not found) leaves fileSha undefined → drift falls back to
+      // the legacy branch-sha compare. Never fails the deploy record.
+      let blobByPath = new Map<string, string>();
+      if (sha) {
+        try {
+          const tree = await appOctokit().git.getTree({ owner: GITHUB_ORG, repo, tree_sha: sha, recursive: 'true' });
+          if (tree.data.truncated) logger.warn(`recordCfDeploy: git tree truncated at ${repo}@${sha} — some fileSha may be missing`);
+          blobByPath = new Map((tree.data.tree ?? []).filter((t) => t.type === 'blob' && t.path && t.sha).map((t) => [t.path as string, t.sha as string]));
+        } catch (e) {
+          logger.warn(`recordCfDeploy: git tree fetch failed at ${repo}@${sha} (fileSha skipped, drift falls back to branch sha)`, e);
+        }
+      }
+      // Manifest `file` may be repo-relative under functions/ (e.g. src/index.ts) or full — try both.
+      const fileShaFor = (file?: string): string | undefined =>
+        file ? blobByPath.get(file) ?? blobByPath.get(`functions/${file}`) ?? blobByPath.get(file.replace(/^functions\//, '')) : undefined;
+
       // Chunked read-then-write (Firestore batch cap 500): the OTHER env's cell is needed to derive
       // state/drift at write time (Option A, 2026-07-03).
       for (let i = 0; i < valid.length; i += 400) {
@@ -1493,7 +1515,8 @@ export const recordCfDeploy = onRequest(
         const batch = db.batch();
         chunk.forEach((f, idx) => {
           const existing = (snaps[idx].data() ?? {}) as Partial<CfFunctionDoc>;
-          const cell = { deployed: true, ...(sha ? { sha } : {}), branch, at: now, ...(by ? { by } : {}) };
+          const fileSha = fileShaFor(f.file);
+          const cell = { deployed: true, ...(sha ? { sha } : {}), ...(fileSha ? { fileSha } : {}), branch, at: now, ...(by ? { by } : {}) };
           const dev = envKey === 'dev' ? cell : existing.dev;
           const prod = envKey === 'prod' ? cell : existing.prod;
           const doc: Partial<CfFunctionDoc> & Record<string, unknown> = {
