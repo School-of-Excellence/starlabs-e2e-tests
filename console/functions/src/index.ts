@@ -25,11 +25,12 @@ import {
   Request,
 } from 'firebase-functions/v2/https';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
-import { onSchedule } from 'firebase-functions/v2/scheduler';
 import type { Response } from 'express';
 import { defineSecret } from 'firebase-functions/params';
 import * as logger from 'firebase-functions/logger';
-import { initializeApp, applicationDefault } from 'firebase-admin/app';
+import { initializeApp } from 'firebase-admin/app';
+// OIDC verification of Pub/Sub push tokens (cfDeployEvent — lane-3 lock, 2026-07-03).
+import { OAuth2Client } from 'google-auth-library';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import { Octokit } from '@octokit/rest';
@@ -59,11 +60,10 @@ import {
   computeCfMatrixState,
 } from './model';
 import { loadSuitesManifest, planSuites } from './suites';
-import { mutateCandidate, computePromotable } from './candidate';
-import { projectCandidate } from './projection';
+import { mutateCandidate } from './candidate';
 import { appendWebhookActivity, appendActivity } from './activity';
 
-const adminApp = initializeApp();
+initializeApp();
 const db = getFirestore();
 // Optional facet fields (e.g. a sign-off has no commit SHA → lastActivity.sha is
 // undefined) must not crash writes. Drop undefined values instead of throwing.
@@ -359,7 +359,7 @@ async function handlePush(deliveryId: string, payload: any): Promise<boolean> {
     if (payload.deleted === true) {
       await db.collection(PATHS.cfBranches).doc(candidateId(repo, branch)).delete().catch(() => undefined);
     } else {
-      await upsertCfBranchRecord(repo, branch);
+      await upsertCfBranchRecord(repo, branch, Array.isArray(payload.commits) ? payload.commits : undefined);
     }
   }
   return true;
@@ -665,7 +665,10 @@ function lastActivityFrom(entry: ActivityLogEntry): LastActivity {
 // stays the truth — records are recomputed FROM it; listCfBranches is the ↻ heal/backfill.
 // ---------------------------------------------------------------------------
 
-async function computeCfBranchRecord(repo: string, branch: string): Promise<CfBranchDoc> {
+async function computeCfBranchRecord(
+  repo: string,
+  branch: string,
+): Promise<{ rec: CfBranchDoc; manifestFns: { name: string; type?: string; file?: string }[] }> {
   const octokit = appOctokit();
   const [cmpProd, cmpDev, br] = await Promise.all([
     octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `production...${branch}` }),
@@ -702,7 +705,7 @@ async function computeCfBranchRecord(repo: string, branch: string): Promise<CfBr
   }
 
   const commit = br.data.commit;
-  return {
+  const rec: CfBranchDoc = {
     repo,
     branch,
     headSha: commit?.sha,
@@ -717,13 +720,58 @@ async function computeCfBranchRecord(repo: string, branch: string): Promise<CfBr
     mergedToDev: (cmpDev.data.ahead_by ?? 0) === 0,
     updatedAt: Date.now(),
   };
+  return { rec, manifestFns };
 }
 
-/** Best-effort mirror write — a GitHub hiccup must never fail the webhook. Preserves `pr` (merge). */
-async function upsertCfBranchRecord(repo: string, branch: string): Promise<void> {
+/** Raw commit shape from the GitHub push-webhook payload. */
+interface PushCommit {
+  id?: string;
+  message?: string;
+  timestamp?: string;
+  author?: { email?: string; name?: string };
+  added?: string[];
+  modified?: string[];
+  removed?: string[];
+}
+
+/**
+ * Best-effort mirror write — a GitHub hiccup must never fail the webhook. Preserves `pr` (merge).
+ * When the push payload's commits are supplied, appends them to the branch's COMMIT LOG with the
+ * CF names each commit touched (newest first, capped 20 — lane-3 scenario lock, 2026-07-03).
+ */
+async function upsertCfBranchRecord(repo: string, branch: string, pushCommits?: PushCommit[]): Promise<void> {
   try {
-    const rec = await computeCfBranchRecord(repo, branch);
-    await db.collection(PATHS.cfBranches).doc(candidateId(repo, branch)).set(rec, { merge: true });
+    const { rec, manifestFns } = await computeCfBranchRecord(repo, branch);
+    const ref = db.collection(PATHS.cfBranches).doc(candidateId(repo, branch));
+
+    if (pushCommits?.length) {
+      const namesForFiles = (files: string[]): string[] => {
+        const names = new Set<string>();
+        for (const f of files) {
+          if (!f.startsWith('functions/')) continue;
+          const rel = f.replace(/^functions\//, '');
+          const hits = manifestFns.filter((m) => m.file === rel || m.file === f);
+          if (hits.length) hits.forEach((h) => names.add(h.name));
+          else names.add(rel.split('/').pop() ?? rel);
+        }
+        return [...names];
+      };
+      const fresh = pushCommits
+        .filter((c) => c.id)
+        .map((c) => ({
+          sha: c.id!,
+          msg: (c.message ?? '').split('\n')[0],
+          author: c.author?.email ?? c.author?.name,
+          at: c.timestamp ? Date.parse(c.timestamp) : undefined,
+          changedFunctions: namesForFiles([...(c.added ?? []), ...(c.modified ?? []), ...(c.removed ?? [])]),
+        }))
+        .reverse(); // payload is oldest→newest; the log is newest first
+      const prev = ((await ref.get()).data() as CfBranchDoc | undefined)?.commits ?? [];
+      const seen = new Set(fresh.map((c) => c.sha));
+      rec.commits = [...fresh, ...prev.filter((c) => !seen.has(c.sha))].slice(0, 20);
+    }
+
+    await ref.set(rec, { merge: true });
   } catch (e) {
     logger.error(`cf-branches mirror failed for ${repo}/${branch} (non-fatal)`, e);
   }
@@ -1378,8 +1426,9 @@ export const recordSuitesManifest = onRequest(
 //
 // Fires on EVERY `firebase deploy` of the CF repo — manual laptop deploys included — which is
 // exactly what makes "deployed but not pushed" visible. Upserts one cf-functions/{name} doc per
-// function with the env column derived from the target project (L16). reconcilePoll's CF-API
-// check heals anything that skips this hook.
+// function with the env column derived from the target project (L16). The audit-log push
+// receiver (cfDeployEvent, below) confirms/flips the deployed flags for anything that skips
+// this hook — deletes included.
 
 interface CfDeployBody {
   repo?: string;
@@ -1476,6 +1525,81 @@ export const recordCfDeploy = onRequest(
     }
   },
 );
+
+// --- cfDeployEvent (HTTPS) — Admin-Activity audit-log push receiver (lane-3 lock, 2026-07-03) --
+//
+// ONE receiver for BOTH env projects. Each project routes its ALWAYS-ON Admin Activity audit log
+// (CreateFunction / UpdateFunction / DeleteFunction) through a log sink → Pub/Sub → OIDC-signed
+// PUSH to this endpoint. It updates ONLY the deployed flag (+ derived state/drift) — branch/sha/by
+// stay owned by the postdeploy hook (recordCfDeploy). This REPLACES reconcilePoll's CF-API heal
+// with real-time events and requires NO cross-project SA read grant: the env projects push OUT.
+// Duplicate deliveries are harmless (idempotent flag writes).
+
+const PUSH_AUDIENCE = 'cf-deploy-event';
+const oidcVerifier = new OAuth2Client();
+
+export const cfDeployEvent = onRequest({ region, cors: false }, async (req: Request, res: Response) => {
+  if (req.method !== 'POST') {
+    res.status(405).send('Method Not Allowed');
+    return;
+  }
+  // (1) Verify the Pub/Sub push OIDC token (Google-signed; audience pinned on the subscription).
+  try {
+    const idToken = (req.header('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    const ticket = await oidcVerifier.verifyIdToken({ idToken, audience: PUSH_AUDIENCE });
+    const email = ticket.getPayload()?.email ?? '';
+    if (!email.endsWith('.gserviceaccount.com')) throw new Error(`unexpected identity ${email}`);
+  } catch (e) {
+    logger.warn('cfDeployEvent: OIDC verification failed', e);
+    res.status(401).json({ ok: false });
+    return;
+  }
+
+  // (2) Decode the Pub/Sub envelope → the audit LogEntry.
+  let entry: { protoPayload?: { methodName?: string; resourceName?: string } } = {};
+  try {
+    const data = req.body?.message?.data;
+    if (typeof data === 'string') entry = JSON.parse(Buffer.from(data, 'base64').toString('utf8'));
+  } catch {
+    /* unparseable — ack below so Pub/Sub stops redelivering */
+  }
+  const method = entry.protoPayload?.methodName ?? '';
+  const resName = entry.protoPayload?.resourceName ?? '';
+  const match = /projects\/([^/]+)\/locations\/[^/]+\/functions\/([^/]+)/.exec(resName);
+  const envKey = match ? CF_ENV_BY_PROJECT[match[1]] : undefined;
+  if (!match || !envKey || !/(Create|Update|Delete)Function/i.test(method)) {
+    res.status(204).send(''); // irrelevant entry — ACK
+    return;
+  }
+  const name = match[2];
+  const deployed = !/DeleteFunction/i.test(method);
+
+  // (3) Flip ONLY the env flag; keep last-known branch/sha as history; re-derive state/drift.
+  try {
+    const ref = db.collection(PATHS.cfFunctions).doc(name);
+    const snap = await ref.get();
+    const existing = (snap.data() ?? {}) as Partial<CfFunctionDoc>;
+    const now = Date.now();
+    const cell = { ...(existing[envKey] ?? {}), deployed, at: now, via: 'audit-log' };
+    const dev = envKey === 'dev' ? cell : existing.dev;
+    const prod = envKey === 'prod' ? cell : existing.prod;
+    await ref.set(
+      {
+        repo: 'starlabs-cloud-function',
+        name,
+        [envKey]: cell,
+        ...computeCfMatrixState(dev, prod),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    logger.info(`cfDeployEvent: ${name} ${envKey}.deployed=${deployed} (${method.split('.').pop()})`);
+    res.status(200).json({ ok: true });
+  } catch (e) {
+    logger.error('cfDeployEvent failed', e);
+    res.status(500).json({ ok: false }); // non-2xx → Pub/Sub retries
+  }
+});
 
 // --- listCfBranches (callable) — the CF Board "Branches" tab (L17/L19) -------------------------
 //
@@ -1647,199 +1771,6 @@ export const onMembersWrite = onDocumentWritten(
 function memberCollection() {
   return db.collection(PATHS.usersCol);
 }
-
-// ===========================================================================
-// 8. reconcilePoll (scheduled) — STUB: backfill missed webhooks (D9 / risk #3)
-// ===========================================================================
-
-/**
- * Heal the log after dropped/out-of-order webhooks. Webhooks are at-least-once,
- * unordered and droppable; without a poll the derived state silently lies after
- * any hiccup. This is a documented STUB wired on a schedule — the real query
- * logic is a follow-up.
- *
- * TODO(reconcile): for each tracked repo:
- *   1. octokit.pulls.list({state:'open'}) → reconcile prDev/prProd facets +
- *      mergeability against what we have (detect missed `synchronize`).
- *   2. octokit.actions.listWorkflowRunsForRepo (preview.yml/deploy/e2e) since the
- *      last poll → backfill missed workflow_run events (preview state, testSummary).
- *   3. For any candidate whose facets imply a milestone with no matching
- *      confirmed activity entry → mark reconcile=ANOMALY for a human.
- *   4. Write a heartbeat doc so the UI can show "last reconciled at".
- * Each backfilled fact is appended with source:'reconcile', confirmed:true and a
- * synthetic delivery id (`reconcile:<repo>:<branch>:<sha>`) so dedupe still holds.
- */
-export const reconcilePoll = onSchedule(
-  { region, schedule: 'every 30 minutes', secrets: [GITHUB_APP_PRIVATE_KEY] },
-  async () => {
-    // RE-PROJECTION pass: recompute derivedStatus/reconcile for every candidate from its stored
-    // facets. This self-heals docs whose cached projection is stale after a projection-logic change
-    // (so an operator no longer has to push/sign-off to un-stick a branch), and is the foundation
-    // for the GitHub-backfill TODO below.
-    const snap = await db.collection(PATHS.releaseCandidates).get();
-    let updated = 0;
-    for (const doc of snap.docs) {
-      const c = doc.data() as ReleaseCandidate;
-      const { derivedStatus, reconcile } = projectCandidate(c);
-      const promotable = computePromotable(c);
-      if (
-        c.derivedStatus !== derivedStatus ||
-        c.reconcile !== reconcile ||
-        (c.promotable ?? false) !== promotable
-      ) {
-        await doc.ref.set({ derivedStatus, reconcile, promotable, updatedAt: Date.now() }, { merge: true });
-        updated++;
-      }
-    }
-    logger.info(`reconcilePoll: re-projected ${snap.size} candidates, ${updated} updated`);
-
-    // GITHUB BACKFILL: heal preview builds STUCK at BUILDING. buildState only flips to LIVE/FAILED
-    // via the preview.yml `workflow_run: completed` webhook; if that delivery is dropped/unmatched,
-    // the optimistic BUILDING (set on dispatch) never gets corrected. Poll GitHub Actions directly
-    // for the latest preview run per stuck candidate and reconcile the facet. (promotion-chain /
-    // reconcile backfill, 2026-06-25)
-    const all = snap.docs.map((d) => d.data() as ReleaseCandidate);
-    let octokit: Octokit | undefined;
-    try {
-      octokit = appOctokit();
-    } catch (e) {
-      logger.error('reconcilePoll: octokit init failed; skipping GitHub backfills', e);
-    }
-
-    // (a) Heal preview builds STUCK at BUILDING (dropped/unmatched workflow_run: completed).
-    const stuck = all.filter((c) => c.preview?.buildState === 'BUILDING' && !isProtected(c.branch));
-    let healed = 0;
-    for (const c of octokit ? stuck : []) {
-      try {
-        const runs = await octokit!.actions.listWorkflowRuns({
-          owner: GITHUB_ORG,
-          repo: c.repo,
-          workflow_id: PREVIEW_WORKFLOW,
-          branch: c.branch,
-          per_page: 1,
-        });
-        const latest = runs.data.workflow_runs?.[0];
-        if (latest && latest.status === 'completed') {
-          const buildState = latest.conclusion === 'success' ? 'LIVE' : 'FAILED';
-          await mutateCandidate(
-            c.repo,
-            c.branch,
-            { type: 'preview_build', sha: latest.head_sha ?? undefined, actor: 'reconcile', at: Date.now() },
-            (cc) => {
-              cc.preview.buildState = buildState;
-              cc.preview.builtAt = Date.now();
-              // preview.url is owned by CI (preview.yml) — do NOT reconstruct/overwrite it here.
-              cc.preview.sha = latest.head_sha ?? cc.preview.sha;
-            },
-          );
-          healed++;
-        }
-      } catch (e) {
-        logger.error(`reconcilePoll: preview backfill failed for ${c.repo}/${c.branch}`, e);
-      }
-    }
-
-    // (b) Recompute `hasUnreleased` on each development candidate from the real GitHub diff
-    // (production…development). This is the authoritative "is there anything to promote" signal —
-    // it self-heals after a release (ahead_by → 0 ⇒ no more "Create PR → prod") and after any
-    // missed merge event, so `promotable` can never go stale. (2026-06-26)
-    const devs = all.filter((c) => c.branch === 'development');
-    let synced = 0;
-    for (const c of octokit ? devs : []) {
-      try {
-        const cmp = await octokit!.repos.compareCommitsWithBasehead({
-          owner: GITHUB_ORG,
-          repo: c.repo,
-          basehead: 'production...development',
-        });
-        const ahead = (cmp.data.ahead_by ?? 0) > 0;
-        if ((c.hasUnreleased ?? false) !== ahead) {
-          await mutateCandidate(c.repo, 'development', c.lastActivity ?? { type: 'reconcile', at: Date.now() }, (cc) => {
-            cc.hasUnreleased = ahead;
-          });
-          synced++;
-        }
-      } catch (e) {
-        logger.error(`reconcilePoll: hasUnreleased backfill failed for ${c.repo}`, e);
-      }
-    }
-    logger.info(`reconcilePoll: backfilled ${healed}/${stuck.length} previews, synced ${synced} dev hasUnreleased`);
-
-    // (c) CF DEPLOY MATRIX HEAL (plan L15): list what is ACTUALLY deployed in each env project via
-    // the Cloud Functions API and reconcile cf-functions/{name}. Catches manual deploys that
-    // skipped the postdeploy hook AND functions deleted out-of-band. Needs cross-project read
-    // access for this service account (operator checklist §7.5) — skips gracefully on 403.
-    try {
-      const cred = adminApp.options.credential ?? applicationDefault();
-      const { access_token: gcpToken } = await cred.getAccessToken();
-      const matrixSnap = await db.collection(PATHS.cfFunctions).get();
-      const docs = new Map(matrixSnap.docs.map((d) => [d.id, d.data() as CfFunctionDoc]));
-      let cfHealed = 0;
-
-      for (const [project, envKey] of Object.entries(CF_ENV_BY_PROJECT)) {
-        let deployedNames: Set<string>;
-        try {
-          const resp = await fetch(
-            `https://cloudfunctions.googleapis.com/v2/projects/${project}/locations/-/functions?pageSize=500`,
-            { headers: { Authorization: `Bearer ${gcpToken}` } },
-          );
-          if (!resp.ok) {
-            logger.warn(`reconcilePoll cf-heal: list ${project} → HTTP ${resp.status} (missing cross-project read access?) — skipping`);
-            continue;
-          }
-          const listed = (await resp.json()) as { functions?: { name: string }[] };
-          deployedNames = new Set((listed.functions ?? []).map((f) => f.name.split('/').pop()!));
-        } catch (e) {
-          logger.error(`reconcilePoll cf-heal: list ${project} failed — skipping`, e);
-          continue;
-        }
-
-        const now = Date.now();
-        // Flip stale cells: doc says deployed but the platform disagrees (or vice versa).
-        // state/drift are re-derived on every write (Option A) and the in-memory map is kept
-        // current so the SECOND project's pass computes against fresh cells.
-        for (const [name, doc] of docs) {
-          const cell = doc[envKey as 'dev' | 'prod'];
-          const isListed = deployedNames.has(name);
-          if ((cell?.deployed ?? false) !== isListed) {
-            const newCell = { ...(cell ?? {}), deployed: isListed, healed: true, at: now };
-            const updated = { ...doc, [envKey]: newCell } as CfFunctionDoc;
-            const sd = computeCfMatrixState(updated.dev, updated.prod);
-            await db.collection(PATHS.cfFunctions).doc(name).set(
-              { [envKey]: newCell, ...sd, updatedAt: now },
-              { merge: true },
-            );
-            docs.set(name, { ...updated, ...sd, updatedAt: now });
-            cfHealed++;
-          }
-        }
-        // Deployed functions the matrix has never seen (hook skipped entirely).
-        for (const name of deployedNames) {
-          if (!docs.has(name)) {
-            const cell = { deployed: true, healed: true, at: now };
-            const dev = envKey === 'dev' ? cell : undefined;
-            const prod = envKey === 'prod' ? cell : undefined;
-            const sd = computeCfMatrixState(dev, prod);
-            const fresh: CfFunctionDoc = {
-              repo: 'starlabs-cloud-function',
-              name,
-              ...(dev ? { dev } : {}),
-              ...(prod ? { prod } : {}),
-              ...sd,
-              updatedAt: now,
-            };
-            await db.collection(PATHS.cfFunctions).doc(name).set(fresh, { merge: true });
-            docs.set(name, fresh);
-            cfHealed++;
-          }
-        }
-      }
-      if (cfHealed > 0) logger.info(`reconcilePoll cf-heal: reconciled ${cfHealed} matrix cells`);
-    } catch (e) {
-      logger.error('reconcilePoll cf-heal failed (non-fatal)', e);
-    }
-  },
-);
 
 // ===========================================================================
 // 9. recordPreviewUrl (HTTPS) — CI pushes the REAL preview-channel URL (Option A)

@@ -281,6 +281,9 @@ export interface CfBranchDoc {
   changedFunctions?: { name: string; type: string; change: string }[];
   mergedToDev?: boolean;
   pr?: { number: number; url: string } | null;
+  /** Commit LOG (newest first, capped 20): each push's commits + the CF names each touched
+   *  (lane-3 scenario lock, 2026-07-03). Built from push-webhook payloads. */
+  commits?: { sha: string; msg?: string; author?: string; at?: number; changedFunctions?: string[] }[];
   updatedAt: number;
 }
 
@@ -313,8 +316,10 @@ export interface CfEnvDeploy {
   branch?: string;
   at?: number;
   by?: string;
-  /** true when reconcilePoll (Cloud Functions API) healed this cell, not a postdeploy report. */
+  /** legacy healer marker (reconcilePoll era) — superseded by `via`. */
   healed?: boolean;
+  /** which writer last touched this cell: postdeploy hook (rich) or 'audit-log' (flag only). */
+  via?: string;
 }
 
 /** Where a function is deployed, collapsed (Option A, locked 2026-07-03). */

@@ -602,6 +602,10 @@ export const MOCK_CF_BRANCHES: CfBranchInfo[] = [
     ],
     mergedToDev: false,
     pr: null,
+    commits: [
+      { sha: 'kkk2222f00', msg: 'Hotfix: off-by-one in window', author: 'dev@soexcellence.com', at: Date.parse('2026-07-02T08:00:00Z'), changedFunctions: ['rateLimiter'] },
+      { sha: 'kkk1111e00', msg: 'Rate limiter + config + cleanup', author: 'dev@soexcellence.com', at: Date.parse('2026-07-01T15:00:00Z'), changedFunctions: ['rateLimiter', 'rateLimiterConfig', 'cleanupOldWindows'] },
+    ],
   },
   {
     name: 'feature/cf-triggers',

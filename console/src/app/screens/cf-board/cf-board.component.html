@@ -81,6 +81,20 @@
               </div>
             }
             <div class="fns-note">~ approximation: file-level diff vs production mapped via functions-manifest.json</div>
+
+            @if ((b.commits ?? []).length > 0) {
+              <div class="fns-head log-head"><span>COMMIT LOG (newest first)</span></div>
+              @for (c of b.commits ?? []; track c.sha) {
+                <div class="commit-row">
+                  <span class="mono csha">{{ c.sha.slice(0, 7) }}</span>
+                  <span class="cmsg">
+                    {{ c.msg }} · {{ c.author }}
+                    @if (c.at) { · {{ c.at | date: 'MMM d, HH:mm' }} }
+                  </span>
+                  <span class="cfns">{{ (c.changedFunctions ?? []).join(', ') || '—' }}</span>
+                </div>
+              }
+            }
           </div>
         }
       </div>

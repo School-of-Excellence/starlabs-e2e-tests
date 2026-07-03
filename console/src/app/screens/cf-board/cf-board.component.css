@@ -209,6 +209,27 @@ h2 {
   font-size: 11px;
   color: var(--muted);
 }
+.log-head {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.commit-row {
+  display: grid;
+  grid-template-columns: 70px 2fr 1.4fr;
+  gap: 10px;
+  font-size: 12px;
+  padding: 3px 0;
+}
+.csha {
+  color: var(--muted);
+}
+.cfns {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Functions matrix */
 .mtable {

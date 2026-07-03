@@ -63,5 +63,7 @@ export interface CfBranchInfo {
   changedFunctions?: CfChangedFunction[];
   mergedToDev?: boolean;
   pr?: { number: number; url: string } | null;
+  /** Commit LOG (newest first): each push's commits + CF names touched (lane-3, 2026-07-03). */
+  commits?: { sha: string; msg?: string; author?: string; at?: number; changedFunctions?: string[] }[];
   error?: string;
 }
