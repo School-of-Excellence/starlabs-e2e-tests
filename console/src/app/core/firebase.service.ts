@@ -340,7 +340,12 @@ export class FirebaseService {
   cfBranches(): Observable<CfBranchInfo[]> {
     if (this.useMock) return this.mockCfBranches$;
     const col = collection(this.fs, 'cf-branches');
-    return collectionData(query(col, orderBy('updatedAt', 'desc'))) as Observable<CfBranchInfo[]>;
+    // The stored doc keys the branch name as `branch` (CfBranchDoc); the frontend model + template
+    // read `name`. Without this remap every row has name===undefined → track collisions, a blank
+    // branch label, and `expanded().has(undefined)` true for ALL rows (expand-one-expands-all).
+    return (collectionData(query(col, orderBy('updatedAt', 'desc'))) as Observable<any[]>).pipe(
+      map((docs) => docs.map((d) => ({ ...d, name: d.name ?? d.branch })) as CfBranchInfo[]),
+    );
   }
 
   /** Ask the backend which suites MUST run for this branch (+ why) and which are optional. */

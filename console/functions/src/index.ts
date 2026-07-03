@@ -696,13 +696,15 @@ async function computeCfBranchRecord(
     const rel = f.filename.replace(/^functions\//, '');
     const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
     const hits = manifestFns.filter((m) => m.file === rel || m.file === f.filename);
-    if (hits.length === 0) {
+    // A file-level diff can only pin a function when the file hosts exactly ONE (1:1). When a file
+    // hosts many functions we can't tell which line changed, so show the FILE, not all N of them
+    // (operator lock 2026-07-03 — kills the "one line → 20 functions" explosion).
+    if (hits.length === 1) {
+      const m = hits[0];
+      if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
+    } else {
       const label = rel.split('/').pop() ?? rel;
       if (!seen.has(label)) { seen.add(label); changedFunctions.push({ name: label, type: 'file', change }); }
-    } else {
-      for (const m of hits) {
-        if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
-      }
     }
   }
 
@@ -753,7 +755,8 @@ async function upsertCfBranchRecord(repo: string, branch: string, pushCommits?: 
           if (!f.startsWith('functions/')) continue;
           const rel = f.replace(/^functions\//, '');
           const hits = manifestFns.filter((m) => m.file === rel || m.file === f);
-          if (hits.length) hits.forEach((h) => names.add(h.name));
+          // 1:1-else-file (same rule as changedFunctions): only pin a function when the file hosts one.
+          if (hits.length === 1) names.add(hits[0].name);
           else names.add(rel.split('/').pop() ?? rel);
         }
         return [...names];
@@ -1662,13 +1665,14 @@ export const listCfBranches = onCall<ListCfBranchesData>(
           const rel = f.filename.replace(/^functions\//, '');
           const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
           const hits = manifestFns.filter((m) => m.file === rel || m.file === f.filename);
-          if (hits.length === 0) {
+          // 1:1-else-file (operator lock 2026-07-03): only pin a function when the file hosts one;
+          // a many-function file can't tell which line changed → show the FILE, not all N.
+          if (hits.length === 1) {
+            const m = hits[0];
+            if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
+          } else {
             const label = rel.split('/').pop() ?? rel;
             if (!seen.has(label)) { seen.add(label); changedFunctions.push({ name: label, type: 'file', change }); }
-          } else {
-            for (const m of hits) {
-              if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
-            }
           }
         }
 
