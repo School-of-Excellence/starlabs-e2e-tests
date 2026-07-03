@@ -94,8 +94,8 @@ until grep -q "All emulators ready" "$LOG" 2>/dev/null && port_up 8080 && port_u
 done
 sleep 3   # grace: let trigger discovery finish before seeding
 
-echo "   ✓ emulator ready — running the loop guard"
-CF_DIR="$CF_DIR" EMU_LOG="$LOG" \
+echo "   ✓ emulator ready — running the loop guard${GUARD_ONLY:+ (scoped: $GUARD_ONLY)}"
+CF_DIR="$CF_DIR" EMU_LOG="$LOG" GUARD_ONLY="${GUARD_ONLY:-}" \
   FIRESTORE_EMULATOR_HOST=localhost:8080 FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 \
   FIREBASE_PROJECT="$FIREBASE_PROJECT" \
   npx playwright test --config=playwright.cf-guards.config.ts

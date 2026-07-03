@@ -594,7 +594,7 @@ export const MOCK_CF_BRANCHES: CfBranchInfo[] = [
   {
     name: 'feature/rate-limiter',
     lastCommit: { sha: 'kkk2222', msg: 'Hotfix: off-by-one in window', author: 'dev@soexcellence.com', at: Date.parse('2026-07-02T08:00:00Z') },
-    aheadOfProd: 5,
+    aheadOfDev: 5,
     changedFunctions: [
       { name: 'rateLimiter', type: 'onDocumentWritten', change: 'UPDATED' },
       { name: 'rateLimiterConfig', type: 'onCall', change: 'NEW' },
@@ -610,7 +610,7 @@ export const MOCK_CF_BRANCHES: CfBranchInfo[] = [
   {
     name: 'feature/cf-triggers',
     lastCommit: { sha: 'fff6666', msg: 'Add Firestore triggers', author: 'dev@soexcellence.com', at: Date.parse('2026-07-01T09:00:00Z') },
-    aheadOfProd: 3,
+    aheadOfDev: 3,
     changedFunctions: [
       { name: 'SupportDeskToSlack', type: 'onDocumentCreated', change: 'UPDATED' },
       { name: 'queueAtcGeneration', type: 'onDocumentWritten', change: 'UPDATED' },
@@ -621,7 +621,7 @@ export const MOCK_CF_BRANCHES: CfBranchInfo[] = [
   {
     name: 'feature/webhooks',
     lastCommit: { sha: 'abc1234', msg: 'Retry logic for webhooks', author: 'dev@soexcellence.com', at: Date.parse('2026-06-29T14:00:00Z') },
-    aheadOfProd: 1,
+    aheadOfDev: 1,
     changedFunctions: [{ name: 'watsonUpdates', type: 'onRequest', change: 'UPDATED' }],
     mergedToDev: true,
     pr: null,

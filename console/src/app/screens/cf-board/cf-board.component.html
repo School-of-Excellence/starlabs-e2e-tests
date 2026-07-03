@@ -54,7 +54,7 @@
               {{ expanded().has(b.name) ? '▴' : '▾' }}
             </button>
           } @else {
-            <span class="delta none">no function changes vs production</span>
+            <span class="delta none">no function changes vs development</span>
           }
 
           <div class="merge">
@@ -80,7 +80,7 @@
                 <span class="fchange" [attr.data-change]="f.change">{{ f.change }}</span>
               </div>
             }
-            <div class="fns-note">~ approximation: file-level diff vs production mapped via functions-manifest.json</div>
+            <div class="fns-note">~ approximation: file-level diff vs development mapped via functions-manifest.json</div>
 
             @if ((b.commits ?? []).length > 0) {
               <div class="fns-head log-head"><span>COMMIT LOG (newest first)</span></div>

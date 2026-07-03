@@ -670,8 +670,10 @@ async function computeCfBranchRecord(
   branch: string,
 ): Promise<{ rec: CfBranchDoc; manifestFns: { name: string; type?: string; file?: string }[] }> {
   const octokit = appOctokit();
-  const [cmpProd, cmpDev, br] = await Promise.all([
-    octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `production...${branch}` }),
+  // BASELINE = development (operator, 2026-07-03): the CF repo has NO production branch by design —
+  // branches merge into development; "what's in production" is the Functions matrix's job (the
+  // deployed flags), not a git compare. One compare serves both Δfunctions and merged state.
+  const [cmpDev, br] = await Promise.all([
     octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `development...${branch}` }),
     octokit.repos.getBranch({ owner: GITHUB_ORG, repo, branch }),
   ]);
@@ -689,7 +691,7 @@ async function computeCfBranchRecord(
 
   const changedFunctions: { name: string; type: string; change: string }[] = [];
   const seen = new Set<string>();
-  for (const f of cmpProd.data.files ?? []) {
+  for (const f of cmpDev.data.files ?? []) {
     if (!f.filename.startsWith('functions/')) continue;
     const rel = f.filename.replace(/^functions\//, '');
     const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
@@ -715,7 +717,7 @@ async function computeCfBranchRecord(
       author: commit?.commit?.author?.email ?? commit?.commit?.author?.name ?? undefined,
       at: commit?.commit?.author?.date ? Date.parse(commit.commit.author.date) : undefined,
     },
-    aheadOfProd: cmpProd.data.ahead_by ?? 0,
+    aheadOfDev: cmpDev.data.ahead_by ?? 0,
     changedFunctions,
     mergedToDev: (cmpDev.data.ahead_by ?? 0) === 0,
     updatedAt: Date.now(),
@@ -1604,7 +1606,7 @@ export const cfDeployEvent = onRequest({ region, cors: false }, async (req: Requ
 // --- listCfBranches (callable) — the CF Board "Branches" tab (L17/L19) -------------------------
 //
 // GitHub-derived, on-demand (↻ Refresh in the UI) — NOT a Firestore stream. Per branch:
-// last commit, ~changed functions vs production (file diff mapped through the branch's
+// last commit, ~changed functions vs development (file diff mapped through the branch's
 // functions-manifest.json — approximation, L19), merged-to-development state, open PR.
 
 interface ListCfBranchesData {
@@ -1636,8 +1638,8 @@ export const listCfBranches = onCall<ListCfBranchesData>(
     const out: Record<string, unknown>[] = [];
     for (const b of branchesResp.data.filter((x) => !skip.has(x.name))) {
       try {
-        const [cmpProd, cmpDev, commitResp] = await Promise.all([
-          octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `production...${b.name}` }),
+        // BASELINE = development (operator, 2026-07-03) — the CF repo has no production branch.
+        const [cmpDev, commitResp] = await Promise.all([
           octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `development...${b.name}` }),
           octokit.repos.getCommit({ owner: GITHUB_ORG, repo, ref: b.commit.sha }),
         ]);
@@ -1655,7 +1657,7 @@ export const listCfBranches = onCall<ListCfBranchesData>(
 
         const changedFunctions: { name: string; type: string; change: string }[] = [];
         const seen = new Set<string>();
-        for (const f of cmpProd.data.files ?? []) {
+        for (const f of cmpDev.data.files ?? []) {
           if (!f.filename.startsWith('functions/')) continue;
           const rel = f.filename.replace(/^functions\//, '');
           const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
@@ -1679,7 +1681,7 @@ export const listCfBranches = onCall<ListCfBranchesData>(
             author: commit?.author?.email ?? commit?.author?.name,
             at: commit?.author?.date ? Date.parse(commit.author.date) : undefined,
           },
-          aheadOfProd: cmpProd.data.ahead_by ?? 0,
+          aheadOfDev: cmpDev.data.ahead_by ?? 0,
           changedFunctions,
           mergedToDev: (cmpDev.data.ahead_by ?? 0) === 0,
           pr: openPrByHead.get(b.name) ?? null,
@@ -1707,7 +1709,7 @@ export const listCfBranches = onCall<ListCfBranchesData>(
             branch: b['name'],
             headSha: (b['lastCommit'] as { sha?: string } | undefined)?.sha,
             lastCommit: b['lastCommit'],
-            aheadOfProd: b['aheadOfProd'],
+            aheadOfDev: b['aheadOfDev'],
             changedFunctions: b['changedFunctions'],
             mergedToDev: b['mergedToDev'],
             pr: b['pr'] ?? null,

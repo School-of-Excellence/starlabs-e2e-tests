@@ -57,9 +57,9 @@ export interface CfChangedFunction {
 export interface CfBranchInfo {
   name: string;
   lastCommit?: { sha?: string; msg?: string; author?: string; at?: number };
-  /** Commits ahead of production — the "yet to deploy in production" signal. */
-  aheadOfProd?: number;
-  /** ~changed functions vs production (file-diff approximation, plan L19). */
+  /** Commits ahead of DEVELOPMENT (baseline — the CF repo has no production branch, 2026-07-03). */
+  aheadOfDev?: number;
+  /** ~changed functions vs development (file-diff approximation, plan L19). */
   changedFunctions?: CfChangedFunction[];
   mergedToDev?: boolean;
   pr?: { number: number; url: string } | null;

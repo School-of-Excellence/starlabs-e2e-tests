@@ -87,9 +87,21 @@ test('no Cloud Function retriggers itself into a loop (predeploy gate)', async (
   expect(EMU_LOG, 'EMU_LOG must point at the functions-emulator log').toBeTruthy();
   expect(process.env.FIRESTORE_EMULATOR_HOST, 'must run against the local emulator').toBeTruthy();
 
+  // GUARD_ONLY (operator lock 2026-07-03): a scoped `firebase deploy --only functions:…` guards
+  // ONLY the deploying functions; empty = full deploy = guard everything.
+  const ONLY = (process.env.GUARD_ONLY ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const fns = loadManifest().filter(
-    (f) => FIRESTORE_TRIGGER_TYPES.has(f.type) && !!f.triggerPath,
+    (f) =>
+      FIRESTORE_TRIGGER_TYPES.has(f.type) &&
+      !!f.triggerPath &&
+      (ONLY.length === 0 || ONLY.includes(f.name)),
   );
+  if (ONLY.length > 0) {
+    console.log(`[cf-guard] scoped to deploying functions: ${ONLY.join(', ')}`);
+  }
   test.info().annotations.push({
     type: 'coverage',
     description: `${fns.length} Firestore-trigger function(s) under guard`,

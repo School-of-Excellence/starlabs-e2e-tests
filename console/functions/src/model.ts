@@ -277,7 +277,8 @@ export interface CfBranchDoc {
   branch: string;
   headSha?: string;
   lastCommit?: { sha?: string; msg?: string; author?: string; at?: number };
-  aheadOfProd?: number;
+  /** Commits ahead of DEVELOPMENT (baseline — the CF repo has no production branch, 2026-07-03). */
+  aheadOfDev?: number;
   changedFunctions?: { name: string; type: string; change: string }[];
   mergedToDev?: boolean;
   pr?: { number: number; url: string } | null;
