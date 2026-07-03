@@ -12,6 +12,8 @@ import {
   prHasUnreviewed,
   toMillis,
   isProtectedBranch,
+  isMuted,
+  shippingBadge,
 } from '../../core/release-candidate.model';
 import { STATUS_META } from '../../core/status-meta';
 import {
@@ -30,6 +32,9 @@ import {
   applyFilter,
 } from '../../shared/filter-bar/filter-bar.component';
 import { ToastService } from '../../shared/toast.service';
+import { ConfirmService } from '../../shared/confirm.service';
+import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
+import { RouterLink } from '@angular/router';
 
 /** Which lane a candidate belongs to (promotion-chain architecture, 2026-06-24). */
 type BranchKind = 'feature' | 'development' | 'production';
@@ -49,7 +54,7 @@ type BranchKind = 'feature' | 'development' | 'production';
 @Component({
   selector: 'rc-working-branches',
   standalone: true,
-  imports: [DatePipe, StatusChipComponent, FilterBarComponent, ActivityDrawerComponent],
+  imports: [DatePipe, StatusChipComponent, FilterBarComponent, ActivityDrawerComponent, RouterLink],
   templateUrl: './working-branches.component.html',
   styleUrl: './working-branches.component.css',
 })
@@ -57,6 +62,8 @@ export class WorkingBranchesComponent {
   private readonly fb = inject(FirebaseService);
   private readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly confirm = inject(ConfirmService);
+  private readonly testDialog = inject(TestRunDialogService);
 
   readonly rcs = toSignal(this.fb.releaseCandidates(), { initialValue: [] as ReleaseCandidate[] });
   readonly filter = signal<RcFilter>(EMPTY_FILTER);
@@ -64,16 +71,45 @@ export class WorkingBranchesComponent {
   /** Branch whose activity drawer is open, or null. */
   readonly selected = signal<{ id: string; label: string } | null>(null);
 
+  /** Per-developer pinned branch ids (private prefs). */
+  private readonly prefs = toSignal(this.fb.userPrefs(), {
+    initialValue: { pinnedBranchIds: [] as string[] },
+  });
+  readonly pinnedIds = computed(() => new Set(this.prefs().pinnedBranchIds));
+  /** Which card's kebab menu is open (id), or null. */
+  readonly openMenu = signal<string | null>(null);
+  /** Which card's Deploy ▾ split menu is open (id), or null (plan L5). */
+  readonly deployMenu = signal<string | null>(null);
+  /** Whether the muted-branches panel is expanded. */
+  readonly showMuted = signal(false);
+
   // Re-export pure helpers to the template.
   readonly previewStale = previewStale;
   readonly signoffStale = signoffStale;
   readonly prHasUnreviewed = prHasUnreviewed;
 
-  /** Feature cards: every non-protected branch (the per-feature dev lane). */
-  readonly features = computed(() =>
-    applyFilter(this.rcs(), this.filter(), this.auth.user()?.email ?? null)
-      .filter((rc) => !isProtectedBranch(rc.branch))
-      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt)),
+  /**
+   * Feature cards: every non-protected branch (the per-feature dev lane), EXCLUDING globally
+   * muted branches. Sorted PINNED-FIRST (per-developer), then by updatedAt desc
+   * (usability plan 2026-07-02).
+   */
+  readonly features = computed(() => {
+    const pinned = this.pinnedIds();
+    return applyFilter(this.rcs(), this.filter(), this.auth.user()?.email ?? null)
+      .filter((rc) => !isProtectedBranch(rc.branch) && !isMuted(rc))
+      .sort((a, b) => {
+        const pa = pinned.has(a.id) ? 1 : 0;
+        const pb = pinned.has(b.id) ? 1 : 0;
+        if (pa !== pb) return pb - pa;
+        return toMillis(b.updatedAt) - toMillis(a.updatedAt);
+      });
+  });
+
+  /** Globally muted feature branches (for the count chip + muted panel). */
+  readonly muted = computed(() =>
+    this.rcs()
+      .filter((rc) => !isProtectedBranch(rc.branch) && isMuted(rc))
+      .sort((a, b) => a.repo.localeCompare(b.repo) || a.branch.localeCompare(b.branch)),
   );
 
   /** Development entries (one per repo) — the promotion hub. */
@@ -106,6 +142,45 @@ export class WorkingBranchesComponent {
   /** Developers/admins may act. */
   canAct(): boolean {
     return this.auth.isDeveloper() || this.auth.isAdmin();
+  }
+
+  // --- Pin (per-developer) & mute (global) — usability plan 2026-07-02 ------------------------
+
+  isPinned(rc: ReleaseCandidate): boolean {
+    return this.pinnedIds().has(rc.id);
+  }
+  /** Toggle the kebab menu for a card (stop propagation so the backdrop doesn't immediately close it). */
+  toggleMenu(id: string, ev: Event): void {
+    ev.stopPropagation();
+    this.openMenu.update((cur) => (cur === id ? null : id));
+  }
+  /** Pin / unpin — no confirmation (private, instantly reversible). */
+  async togglePin(rc: ReleaseCandidate): Promise<void> {
+    this.openMenu.set(null);
+    await this.fb.setPin(rc.id, !this.isPinned(rc));
+  }
+  /** Mute — confirmed (global effect, hides it for everyone until the next push). */
+  async askMute(rc: ReleaseCandidate): Promise<void> {
+    this.openMenu.set(null);
+    const ok = await this.confirm.ask({
+      title: 'Mute this branch?',
+      message: `${rc.branch} (${rc.repo}) will be hidden from Working Branches for everyone until its next push.`,
+      confirmLabel: 'Mute',
+    });
+    if (ok) await this.fb.setMute(rc, true);
+  }
+  /** Unmute — no confirmation (restores immediately). */
+  async unmute(rc: ReleaseCandidate): Promise<void> {
+    await this.fb.setMute(rc, false);
+  }
+
+  /** The development entry for a feature's repo — the source for its derived shipping badge. */
+  private devEntryFor(repo: string): ReleaseCandidate | undefined {
+    return this.rcs().find((rc) => rc.repo === repo && rc.branch === 'development');
+  }
+  /** The per-feature PROD-lane badge (OK for prod / PR → prod / Prod merged), or null. */
+  shipping(rc: ReleaseCandidate): RcStatus | null {
+    return shippingBadge(rc, this.devEntryFor(rc.repo));
   }
 
   /**
@@ -304,7 +379,16 @@ export class WorkingBranchesComponent {
     return s === 'PASSED' ? 'ok' : s === 'FAILED' ? 'bad' : 'active';
   }
 
+  /** The unreleased promotion batch for a repo — the branches a Create PR → prod would ship. */
+  private batchBranches(repo: string): string[] {
+    return this.rcs()
+      .filter((rc) => rc.repo === repo && !isProtectedBranch(rc.branch) && rc.unreleased)
+      .map((rc) => rc.branch)
+      .sort();
+  }
+
   async run(rc: ReleaseCandidate, action: RcAction): Promise<void> {
+    if (!(await this.confirmAction(rc, action))) return;
     this.busy.set(rc.id);
     try {
       const res =
@@ -317,5 +401,103 @@ export class WorkingBranchesComponent {
     } finally {
       this.busy.set(null);
     }
+  }
+
+  // --- Deploy ▾ split + Run tests (master plan 2026-07-02, L5/L6) -------------------------------
+
+  toggleDeployMenu(id: string, ev: Event): void {
+    ev.stopPropagation();
+    this.deployMenu.update((cur) => (cur === id ? null : id));
+  }
+
+  /**
+   * "Deploy without tests" → confirm → preview build only (tester will see "No test done on this
+   * build"). "Deploy with tests…" → the Test Run dialog IS the confirmation (locked suites +
+   * reasons + CF source); Confirm & deploy fires preview.yml + the gate matrix.
+   */
+  async runDeploy(rc: ReleaseCandidate, withTests: boolean): Promise<void> {
+    this.deployMenu.set(null);
+    if (!withTests) {
+      const ok = await this.confirm.ask({
+        title: 'Deploy without tests?',
+        message: `Preview build only for ${rc.branch} (${rc.repo}) — NO test suites will run. Testers will see "No test done on this build".`,
+        confirmLabel: 'Deploy without tests',
+      });
+      if (!ok) return;
+      this.busy.set(rc.id);
+      try {
+        const res = await this.fb.deployPreview(rc, { runTests: false });
+        this.toast.show(res.ok, res.message);
+      } finally {
+        this.busy.set(null);
+      }
+      return;
+    }
+    const choice = await this.testDialog.open({ repo: rc.repo, branch: rc.branch, mode: 'deploy' });
+    if (!choice) return;
+    this.busy.set(rc.id);
+    try {
+      const res = await this.fb.deployPreview(rc, { runTests: true, ...choice });
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  /** [Run tests…] — test-only dispatch on the card's branch (Angular ref fixed, L4/L6). */
+  async runTestsFor(rc: ReleaseCandidate): Promise<void> {
+    const choice = await this.testDialog.open({ repo: rc.repo, branch: rc.branch, mode: 'test-only' });
+    if (!choice) return;
+    this.busy.set(rc.id);
+    try {
+      const res = await this.fb.runTests(rc, choice);
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  /** Internal /report/… route vs external GitHub href (service contract). */
+  reportIsRoute(url: string): boolean {
+    return url.startsWith('/');
+  }
+
+  /** Preview is LIVE but the gate never ran for THIS build → the honesty warning (plan S1). */
+  noTestOnBuild(rc: ReleaseCandidate): boolean {
+    if (rc.preview.buildState !== 'LIVE') return false;
+    const g = rc.gateRun;
+    if (!g || g.status === 'NONE') return true;
+    return !!g.sha && !!rc.preview.sha && g.sha !== rc.preview.sha;
+  }
+
+  /** Per-action confirmation (usability plan 2026-07-02). Create PR → prod is a rich, prod-tier
+   *  confirm that spells out the batch being shipped. */
+  private confirmAction(rc: ReleaseCandidate, action: RcAction): Promise<boolean> {
+    if (action === 'deployPreview') {
+      return this.confirm.ask({
+        title: 'Deploy preview?',
+        message: `This fires a preview build for ${rc.branch} (${rc.repo}).`,
+        confirmLabel: 'Deploy',
+      });
+    }
+    if (action === 'createPrToDev') {
+      return this.confirm.ask({
+        title: 'Create PR → development?',
+        message: `This opens a pull request from ${rc.branch} into development on GitHub.`,
+        confirmLabel: 'Create PR',
+      });
+    }
+    // createPrToProd (development entry) — the promotion.
+    const branches = this.batchBranches(rc.repo);
+    return this.confirm.ask({
+      title: 'Promote to production?',
+      message: `This opens a development → production pull request for ${rc.repo} on GitHub.`,
+      confirmLabel: 'Create PR → prod',
+      tone: 'prod',
+      detailsHeading: branches.length
+        ? `Promoting ${branches.length} branch${branches.length === 1 ? '' : 'es'}:`
+        : undefined,
+      details: branches.length ? branches : undefined,
+    });
   }
 }

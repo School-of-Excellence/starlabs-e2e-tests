@@ -24,4 +24,10 @@
       @if (dirty()) {
         <button class="link" (click)="reset()">Clear</button>
       }
+
+      @if (pending() > 0) {
+        <span class="pending-chip" [title]="pending() + ' ' + pendingLabel()">
+          {{ pending() }} {{ pendingLabel() }}
+        </span>
+      }
     </div>

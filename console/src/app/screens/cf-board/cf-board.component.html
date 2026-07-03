@@ -1,0 +1,142 @@
+<div class="page">
+  <div class="head">
+    <h2>CF Board</h2>
+    <select class="repo" (change)="repo.set($any($event.target).value); refreshBranches()">
+      @for (r of repoOptions; track r) {
+        <option [value]="r" [selected]="r === repo()">{{ r }}</option>
+      }
+    </select>
+    <div class="tabs">
+      <button class="tab" [class.active]="tab() === 'branches'" (click)="tab.set('branches')">Branches</button>
+      <button class="tab" [class.active]="tab() === 'functions'" (click)="tab.set('functions')">Functions</button>
+    </div>
+  </div>
+
+  @if (tab() === 'branches') {
+    <div class="bar">
+      <div class="filters">
+        <button [class.on]="branchFilter() === 'all'" (click)="branchFilter.set('all')">All</button>
+        <button [class.on]="branchFilter() === 'unmerged'" (click)="branchFilter.set('unmerged')">Unmerged</button>
+        <button [class.on]="branchFilter() === 'merged'" (click)="branchFilter.set('merged')">Merged</button>
+      </div>
+      <button class="refresh" [disabled]="branchesLoading()" (click)="refreshBranches()">
+        {{ branchesLoading() ? 'Refreshing…' : '↻ Refresh' }}
+      </button>
+    </div>
+
+    @if (branchesError(); as err) {
+      <div class="state error">{{ err }}</div>
+    } @else if (branchesLoading() && branches().length === 0) {
+      <div class="state">Loading branches from GitHub…</div>
+    } @else if (visibleBranches().length === 0) {
+      <div class="state">No branches match.</div>
+    }
+
+    @for (b of visibleBranches(); track b.name) {
+      <div class="row">
+        <div class="row-main">
+          <div class="binfo">
+            <span class="bname mono">{{ b.name }}</span>
+            @if (b.lastCommit; as c) {
+              <span class="bcommit">
+                “{{ c.msg }}” · <span class="mono">{{ c.sha?.slice(0, 7) }}</span> · {{ c.author }}
+                @if (c.at) { · {{ c.at | date: 'MMM d, HH:mm' }} }
+              </span>
+            }
+            @if (b.error) {
+              <span class="berr">⚠ {{ b.error }}</span>
+            }
+          </div>
+
+          @if ((b.changedFunctions ?? []).length > 0) {
+            <button class="delta" (click)="toggleExpand(b.name)">
+              ~{{ b.changedFunctions!.length }} function{{ b.changedFunctions!.length === 1 ? '' : 's' }} changed
+              {{ expanded().has(b.name) ? '▴' : '▾' }}
+            </button>
+          } @else {
+            <span class="delta none">no function changes vs production</span>
+          }
+
+          <div class="merge">
+            @if (b.mergedToDev) {
+              <span class="merged">✔ Merged</span>
+            } @else if (b.pr) {
+              <a class="propen" [href]="b.pr.url" target="_blank" rel="noopener">PR #{{ b.pr.number }} OPEN ↗</a>
+            } @else {
+              <button class="mkpr" [disabled]="prBusy() === b.name" (click)="createPr(b)">
+                {{ prBusy() === b.name ? 'Opening…' : 'Create PR → Dev' }}
+              </button>
+            }
+          </div>
+        </div>
+
+        @if (expanded().has(b.name)) {
+          <div class="fns">
+            <div class="fns-head"><span>NAME</span><span>TYPE</span><span>CHANGE</span></div>
+            @for (f of b.changedFunctions ?? []; track f.name) {
+              <div class="fns-row">
+                <span class="mono">{{ f.name }}</span>
+                <span class="ftype">{{ f.type }}</span>
+                <span class="fchange" [attr.data-change]="f.change">{{ f.change }}</span>
+              </div>
+            }
+            <div class="fns-note">~ approximation: file-level diff vs production mapped via functions-manifest.json</div>
+          </div>
+        }
+      </div>
+    }
+  } @else {
+    <!-- FUNCTIONS: the Dev/Prod deploy matrix -->
+    <div class="bar">
+      <div class="chips">
+        <span class="chip">● {{ counts().both }} in both</span>
+        <span class="chip">● {{ counts().devOnly }} dev-only</span>
+        <span class="chip">● {{ counts().prodOnly }} prod-only</span>
+        <span class="chip warn" [class.zero]="counts().drift === 0">● {{ counts().drift }} drift</span>
+        <span class="chip warn" [class.zero]="counts().orphaned === 0">● {{ counts().orphaned }} orphaned</span>
+      </div>
+      <div class="filters">
+        <button [class.on]="matrixFilter() === 'all'" (click)="matrixFilter.set('all')">All</button>
+        <button [class.on]="matrixFilter() === 'dev-only'" (click)="matrixFilter.set('dev-only')">Dev-only</button>
+        <button [class.on]="matrixFilter() === 'prod-only'" (click)="matrixFilter.set('prod-only')">Prod-only</button>
+        <button [class.on]="matrixFilter() === 'drift'" (click)="matrixFilter.set('drift')">Drift</button>
+        <button [class.on]="matrixFilter() === 'orphaned'" (click)="matrixFilter.set('orphaned')">Orphaned</button>
+      </div>
+    </div>
+
+    <div class="mtable">
+      <div class="mhead">
+        <span>FUNCTION</span><span>TYPE</span><span>DEV (starlabs-test)</span><span>PROD (fir-sample)</span>
+      </div>
+      @for (f of matrix(); track f.name) {
+        <div class="mrow" [class.orphan]="f.orphaned">
+          <span class="mono fname">
+            {{ f.name }}
+            @if (f.orphaned) { <span class="obadge">ORPHANED</span> }
+          </span>
+          <span class="ftype">{{ f.type ?? '—' }}</span>
+          @for (env of [f.dev, f.prod]; track $index) {
+            <span class="cell" [class.up]="env?.deployed" [class.down]="!env?.deployed">
+              @if (env?.deployed) {
+                ✓
+                @if (env?.branch) { <span class="cbr mono">{{ env?.branch }}</span> }
+                @if (env?.sha) { <span class="csha mono">&#64;{{ env?.sha?.slice(0, 7) }}</span> }
+                @if (env?.healed) { <span class="healed" title="reconciled from the Cloud Functions API">·h</span> }
+                <span class="ctip">
+                  {{ env?.by ?? 'unknown' }} @if (env?.at) { · {{ env?.at | date: 'MMM d, HH:mm' }} }
+                </span>
+              } @else {
+                ✗ <span class="cnot">not deployed</span>
+              }
+            </span>
+          }
+          @if (drift(f)) {
+            <span class="drift-note">⚠ DRIFT — dev and prod run different shas</span>
+          }
+        </div>
+      } @empty {
+        <div class="state">No functions match. Deploy from the CF repo to populate the matrix.</div>
+      }
+    </div>
+  }
+</div>

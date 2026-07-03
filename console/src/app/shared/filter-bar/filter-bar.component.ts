@@ -50,6 +50,9 @@ export class FilterBarComponent {
   readonly candidates = input<ReleaseCandidate[]>([]);
   /** An initial filter value (e.g. deep-linked from a stat card). */
   readonly initial = input<RcFilter>(EMPTY_FILTER);
+  /** Optional attention counter shown as a chip (e.g. pending "OK for dev"). Hidden when 0. */
+  readonly pending = input<number>(0);
+  readonly pendingLabel = input<string>('');
 
   readonly changed = output<RcFilter>();
 

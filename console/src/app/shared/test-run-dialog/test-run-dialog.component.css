@@ -1,0 +1,166 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+  animation: fade 0.12s ease-out;
+}
+.dialog {
+  width: 100%;
+  max-width: 560px;
+  max-height: 86vh;
+  overflow-y: auto;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  animation: pop 0.14s ease-out;
+}
+.title {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+.msg {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.fixed-hint {
+  margin-left: 6px;
+  font-size: 11.5px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+.loading,
+.none {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 10px 0;
+}
+.error {
+  margin-top: 12px;
+  color: var(--danger);
+  font-size: 13px;
+}
+.cc-note {
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn, #e0a83a);
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.section {
+  margin-top: 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.shead {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.suite {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+.suite.locked {
+  cursor: default;
+}
+.sname {
+  font-weight: 600;
+}
+.sreason,
+.sdesc {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cf-row {
+  display: flex;
+  gap: 12px;
+}
+.cf-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+  flex: 1;
+}
+.cf-row select,
+.cf-row input {
+  background: var(--panel-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+.cf-hint {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.btns {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.count {
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.btns button {
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+.ghost {
+  background: transparent;
+  color: var(--fg);
+}
+.ghost:hover {
+  background: var(--chip);
+}
+.go {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+.go[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+}

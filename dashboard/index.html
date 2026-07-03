@@ -51,7 +51,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, collection, query, orderBy, limit, getDocs }
+import { getFirestore, collection, query, orderBy, where, limit, getDocs }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getStorage, ref, getDownloadURL }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
@@ -76,6 +76,22 @@ const resultClass = r => r==="pass"?"pass":r==="fail"?"fail":"unknown";
 
 let RUNS = [], selected = new Set();
 
+// Deep-link support (plan 2026-06-23-pr-gate-report follow-up): the release console's
+// "View report ↗" links here as `?githubRunId=<id>` (see FirebaseService.reportUrlFor).
+// `?runId=<id>` is also honored. When present we locate that exact run, auto-select it,
+// open its detail (which resolves the archived Playwright report), and scroll it into view.
+const DEEPLINK = (() => {
+  const p = new URLSearchParams(location.search);
+  const githubRunId = (p.get("githubRunId") || "").trim();
+  const runId = (p.get("runId") || "").trim();
+  return (githubRunId || runId) ? { githubRunId, runId } : null;
+})();
+const matchDeepLink = r =>
+  !!DEEPLINK && (
+    (DEEPLINK.githubRunId && String(r.githubRunId ?? "") === DEEPLINK.githubRunId) ||
+    (DEEPLINK.runId && String(r.runId ?? r.id) === DEEPLINK.runId)
+  );
+
 onAuthStateChanged(auth, u => u ? boot() : login());
 
 function login(){
@@ -89,6 +105,7 @@ async function boot(){
   app.innerHTML = `
     <header>
       <h1>CI/CD History</h1><span class="pill">cicd-audit · ${esc(cfg.projectId)}</span>
+      <span id="deeplink" class="muted" style="margin-left:4px"></span>
       <div class="sp"></div>
       <button id="cmp">Compare selected (0)</button>
       <button id="refresh">Refresh</button>
@@ -117,7 +134,37 @@ async function boot(){
 async function load(){
   const snap = await getDocs(query(collection(db,"cicd-audit"), orderBy("createdAt","desc"), limit(200)));
   RUNS = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+  if (DEEPLINK) await ensureDeepLinkLoaded();
   selected.clear(); render();
+  if (DEEPLINK) focusDeepLink();
+}
+
+// The deep-linked run may be older than the latest 200. If it's not already loaded, fetch it
+// directly by githubRunId and prepend it, so a console link always resolves.
+async function ensureDeepLinkLoaded(){
+  if (RUNS.some(matchDeepLink)) return;
+  if (!DEEPLINK.githubRunId) return;
+  try {
+    const s = await getDocs(query(collection(db,"cicd-audit"),
+      where("githubRunId","==",DEEPLINK.githubRunId), limit(5)));
+    const seen = new Set(RUNS.map(r=>r.id));
+    RUNS = [...s.docs.map(d=>({id:d.id,...d.data()})).filter(r=>!seen.has(r.id)), ...RUNS];
+  } catch(e){ /* a missing composite index just means the banner reports "not found" */ }
+}
+
+// Select + open the deep-linked run and drop a banner. Runs after render() so the row exists.
+function focusDeepLink(){
+  const banner = document.getElementById("deeplink");
+  const hit = RUNS.find(matchDeepLink);
+  if (!hit){
+    if (banner) banner.innerHTML =
+      `<span class="fail">no run for ${esc(DEEPLINK.githubRunId||DEEPLINK.runId)}</span>`;
+    return;
+  }
+  if (banner) banner.innerHTML = `↳ linked run <code>${esc(hit.runId||hit.id)}</code>`;
+  showDetail(hit.id);
+  const tr = document.querySelector(`tr.run[data-id="${esc(hit.id)}"]`);
+  if (tr) tr.scrollIntoView({ block:"center" });
 }
 
 function passFilters(r){
@@ -156,12 +203,23 @@ function render(){
   });
 }
 
+// A getStorage() instance is bound to one bucket. Reports are uploaded to
+// starlabs-cicd.firebasestorage.app, which may differ from the config's default
+// storageBucket — so resolve each report against the bucket named in its gs:// URL,
+// not the default, or getDownloadURL() 404s in the wrong bucket.
+const _bucketStores = {};
+const bucketStore = bucket => bucket
+  ? (_bucketStores[bucket] ??= getStorage(fb, `gs://${bucket}`))
+  : storage;
+
 async function reportUrl(r){
   // Find the report index.html among storage.report gs:// urls, return a download URL.
   const idx = (r.storage?.report||[]).find(u => /index\.html$/.test(u));
   if (!idx) return null;
-  const path = idx.replace(/^gs:\/\/[^/]+\//, "");
-  try { return await getDownloadURL(ref(storage, path)); } catch { return null; }
+  const m = idx.match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (!m) return null;
+  const [, bucket, path] = m;
+  try { return await getDownloadURL(ref(bucketStore(bucket), path)); } catch { return null; }
 }
 
 async function showDetail(id){

@@ -22,7 +22,9 @@
  */
 'use strict';
 
-const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
+// initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
+// FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.AUTH_RUNID || 'auth';
 
@@ -157,7 +159,7 @@ async function seedLoginEdgeProfiles(db, tag) {
 }
 
 async function seedAuthRoles() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const tag = TAG(TESTRUNID);
@@ -205,7 +207,7 @@ async function seedAuthRoles() {
 const SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard'];
 
 async function teardownAuthRoles() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const { FieldValue } = require('firebase-admin/firestore');
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);

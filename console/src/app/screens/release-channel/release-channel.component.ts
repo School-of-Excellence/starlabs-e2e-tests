@@ -4,6 +4,9 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { FirebaseService } from '../../core/firebase.service';
 import { AuthService } from '../../core/auth.service';
 import { ToastService } from '../../shared/toast.service';
+import { ConfirmService } from '../../shared/confirm.service';
+import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
+import { RouterLink } from '@angular/router';
 import { ReleaseCandidate, isProtectedBranch, toMillis } from '../../core/release-candidate.model';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent } from '../../shared/activity-drawer/activity-drawer.component';
@@ -19,7 +22,7 @@ import { environment } from '../../../environments/environment';
 @Component({
   selector: 'rc-release-channel',
   standalone: true,
-  imports: [DatePipe, StatusChipComponent, ActivityDrawerComponent],
+  imports: [DatePipe, StatusChipComponent, ActivityDrawerComponent, RouterLink],
   templateUrl: './release-channel.component.html',
   styleUrl: './release-channel.component.css',
 })
@@ -27,6 +30,8 @@ export class ReleaseChannelComponent {
   private readonly fb = inject(FirebaseService);
   private readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly confirm = inject(ConfirmService);
+  private readonly testDialog = inject(TestRunDialogService);
 
   readonly rcs = toSignal(this.fb.releaseCandidates(), { initialValue: [] as ReleaseCandidate[] });
   readonly busy = signal<string | null>(null);
@@ -108,6 +113,26 @@ export class ReleaseChannelComponent {
   reportUrl(rc: ReleaseCandidate): string | null {
     return this.fb.reportUrlFor(rc);
   }
+  /** Internal /report/… route vs external GitHub href (service contract). */
+  reportIsRoute(url: string): boolean {
+    return url.startsWith('/');
+  }
+
+  /**
+   * [Run tests…] — admin SYSTEM TEST on an environment entry (plan L6/S5): the Angular ref is
+   * fixed to the entry's branch (development / production); the admin picks the CF source.
+   */
+  async runTestsFor(rc: ReleaseCandidate): Promise<void> {
+    const choice = await this.testDialog.open({ repo: rc.repo, branch: rc.branch, mode: 'test-only' });
+    if (!choice) return;
+    this.busy.set(rc.id);
+    try {
+      const res = await this.fb.runTests(rc, choice);
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
 
   /** Disabled reason for Create PR → prod, or null when the admin may promote. */
   promoteReason(devRc: ReleaseCandidate): string | null {
@@ -125,6 +150,18 @@ export class ReleaseChannelComponent {
   }
 
   async promote(devRc: ReleaseCandidate): Promise<void> {
+    const branches = this.batch(devRc).map((b) => b.branch);
+    const confirmed = await this.confirm.ask({
+      title: 'Promote to production?',
+      message: `This opens a development → production pull request for ${devRc.repo} on GitHub.`,
+      confirmLabel: 'Create PR → prod',
+      tone: 'prod',
+      detailsHeading: branches.length
+        ? `Promoting ${branches.length} branch${branches.length === 1 ? '' : 'es'}:`
+        : undefined,
+      details: branches.length ? branches : undefined,
+    });
+    if (!confirmed) return;
     this.busy.set(devRc.id);
     try {
       const res = await this.fb.createPrToProd(devRc);

@@ -1,0 +1,81 @@
+@if (dialog.pending(); as p) {
+  <div class="overlay" (click)="cancel()">
+    <div class="dialog" (click)="$event.stopPropagation()" role="dialog" aria-modal="true">
+      <h3 class="title">{{ p.mode === 'deploy' ? 'Deploy with tests' : 'Run tests' }}</h3>
+      <p class="msg">
+        Testing: <strong>{{ p.repo }} &#64; {{ p.branch }}</strong>
+        <span class="fixed-hint">(fixed — the card’s branch)</span>
+      </p>
+
+      @if (loading()) {
+        <div class="loading">Computing which suites your changes require…</div>
+      } @else if (error() !== null) {
+        <div class="error">{{ error() }}</div>
+      } @else {
+        @if (plan(); as pl) {
+        @if (pl.crossCutting) {
+          <div class="cc-note">⚠ Cross-cutting change detected — the FULL CI suite catalogue is locked in.</div>
+        }
+
+        <div class="section">
+          <div class="shead">Suites that WILL run (locked — from your branch changes)</div>
+          @if (pl.mandatory.length === 0) {
+            <div class="none">No suite is forced by this diff — pick at least one below.</div>
+          }
+          @for (m of pl.mandatory; track m.suite) {
+            <label class="suite locked">
+              <input type="checkbox" checked disabled />
+              <span class="sname">{{ m.title }}</span>
+              <span class="sreason">{{ m.reason }}</span>
+            </label>
+          }
+        </div>
+
+        @if (pl.optional.length > 0) {
+          <div class="section">
+            <div class="shead">Add more suites (optional)</div>
+            @for (o of pl.optional; track o.suite) {
+              <label class="suite">
+                <input
+                  type="checkbox"
+                  [checked]="selected().has(o.suite)"
+                  (change)="toggle(o.suite)"
+                />
+                <span class="sname">{{ o.title }}</span>
+                <span class="sdesc">{{ o.description }}</span>
+              </label>
+            }
+          </div>
+        }
+
+        <div class="section cf">
+          <div class="shead">Cloud Functions source (the emulator runs THIS code)</div>
+          <div class="cf-row">
+            <label>
+              repo
+              <select [(ngModel)]="cfRepo">
+                @for (r of cfRepoOptions; track r) {
+                  <option [value]="r">{{ r }}</option>
+                }
+              </select>
+            </label>
+            <label>
+              branch
+              <input type="text" [(ngModel)]="cfBranch" placeholder="development" />
+            </label>
+          </div>
+          <div class="cf-hint">Default: development. Type a CF feature branch to test a paired change.</div>
+        </div>
+
+        <div class="btns">
+          <span class="count">{{ suiteCount() }} suite{{ suiteCount() === 1 ? '' : 's' }} will run</span>
+          <button class="ghost" (click)="cancel()">Cancel</button>
+          <button class="go" [disabled]="suiteCount() === 0" (click)="confirm()">
+            {{ p.mode === 'deploy' ? 'Confirm & deploy' : 'Confirm & run' }}
+          </button>
+        </div>
+        }
+      }
+    </div>
+  </div>
+}

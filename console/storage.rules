@@ -1,0 +1,30 @@
+rules_version = '2';
+
+// Storage security rules for the archived Playwright reports on starlabs-cicd.
+// Reports are written server-side by scripts/history/record-run.cjs (Admin SDK, which
+// bypasses these rules) to:  cicd-reports-development/<repo>/<runId>/report|attach/...
+//
+// Read is fenced to signed-in @soexcellence.com callers (the same org gate the console's
+// Firestore rules use at the emailDomainOk() tier). Everything else is denied. All writes
+// are server-only. If report-viewing is later folded into the console (option b), the same
+// @angular/fire Storage client read is already covered here.
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function orgEmail() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower().matches('^[a-z0-9._%+-]+@soexcellence[.]com$');
+    }
+
+    match /cicd-reports-development/{allPaths=**} {
+      allow read: if orgEmail();
+      allow write: if false;   // server-only (record-run.cjs Admin SDK)
+    }
+
+    // Default deny for every other object in the bucket.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

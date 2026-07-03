@@ -29,7 +29,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import type { Response } from 'express';
 import { defineSecret } from 'firebase-functions/params';
 import * as logger from 'firebase-functions/logger';
-import { initializeApp } from 'firebase-admin/app';
+import { initializeApp, applicationDefault } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as crypto from 'crypto';
 import { Octokit } from '@octokit/rest';
@@ -52,12 +52,16 @@ import {
   candidateId,
   hasCapability,
   isAllowedDomain,
+  repoTypeOf,
+  CF_ENV_BY_PROJECT,
+  CfFunctionDoc,
 } from './model';
+import { loadSuitesManifest, planSuites } from './suites';
 import { mutateCandidate, computePromotable } from './candidate';
 import { projectCandidate } from './projection';
 import { appendWebhookActivity, appendActivity } from './activity';
 
-initializeApp();
+const adminApp = initializeApp();
 const db = getFirestore();
 // Optional facet fields (e.g. a sign-off has no commit SHA → lastActivity.sha is
 // undefined) must not crash writes. Drop undefined values instead of throwing.
@@ -633,13 +637,22 @@ function lastActivityFrom(entry: ActivityLogEntry): LastActivity {
 interface DeployPreviewData {
   repo: string;
   branch: string;
+  /**
+   * Test orchestration (plan L5, 2026-07-02). runTests=false → "Deploy without tests" (preview only).
+   * runTests=true (or omitted — backward compatible) → also dispatch the gate; `suites` (validated
+   * against the manifest by the DIALOG's planTestRun call) + the CF source ride along as inputs.
+   */
+  runTests?: boolean;
+  suites?: string[];
+  cfRepo?: string;
+  cfBranch?: string;
 }
 
 export const deployPreview = onCall<DeployPreviewData>(
   { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
   async (req: CallableRequest<DeployPreviewData>) => {
     const caller = requireAuth(req);
-    const { repo, branch } = req.data ?? ({} as DeployPreviewData);
+    const { repo, branch, runTests, suites, cfRepo, cfBranch } = req.data ?? ({} as DeployPreviewData);
     if (!repo || !branch) throw new HttpsError('invalid-argument', 'repo and branch are required.');
 
     await requireCapability(caller, 'DEPLOY_PREVIEW');
@@ -660,19 +673,44 @@ export const deployPreview = onCall<DeployPreviewData>(
       throw new HttpsError('internal', `Preview dispatch failed: ${err?.message ?? err}`);
     }
 
-    // Fire the preview-time TEST GATE alongside the build: one deploy ⇒ two runs (preview.yml +
-    // preview-e2e.yml). The gate path-routes the full branch diff (base: development) and runs the
-    // respective suites. Best-effort — a gate-dispatch hiccup must NOT fail the preview build.
-    // preview-e2e.yml's inputs (only/evidence) are optional → no inputs needed for the routed run.
-    try {
-      await octokit.actions.createWorkflowDispatch({
-        owner: GITHUB_ORG,
-        repo,
-        workflow_id: PREVIEW_E2E_WORKFLOW,
-        ref: branch,
-      });
-    } catch (err: any) {
-      logger.error('workflow_dispatch (preview-e2e gate) failed — preview build continues', err);
+    // Fire the preview-time TEST GATE alongside the build — UNLESS the developer chose
+    // "Deploy without tests" (plan L5). One deploy ⇒ two runs (preview.yml + preview-e2e.yml).
+    // When the dialog supplied an explicit suite list + CF source, they ride along as dispatch
+    // inputs (JSON array, plan L2) and the gate runs a matrix over them; with no inputs the gate
+    // falls back to its own manifest path-routing. Best-effort — a gate-dispatch hiccup must NOT
+    // fail the preview build.
+    if (runTests !== false) {
+      const gateInputs: Record<string, string> = {};
+      if (Array.isArray(suites) && suites.length > 0) gateInputs.suites = JSON.stringify(suites);
+      if (cfRepo) gateInputs.cf_repo = cfRepo;
+      if (cfBranch) gateInputs.cf_branch = cfBranch;
+      try {
+        await octokit.actions.createWorkflowDispatch({
+          owner: GITHUB_ORG,
+          repo,
+          workflow_id: PREVIEW_E2E_WORKFLOW,
+          ref: branch,
+          ...(Object.keys(gateInputs).length ? { inputs: gateInputs } : {}),
+        });
+      } catch (err: any) {
+        // An OLD preview-e2e.yml on this ref may not declare the new inputs (422). Retry bare so
+        // the fallback path-routing still runs rather than silently skipping the gate.
+        if (Object.keys(gateInputs).length && /unexpected inputs/i.test(String(err?.message ?? ''))) {
+          logger.warn('preview-e2e on this ref predates the suites inputs — retrying dispatch without inputs');
+          try {
+            await octokit.actions.createWorkflowDispatch({
+              owner: GITHUB_ORG,
+              repo,
+              workflow_id: PREVIEW_E2E_WORKFLOW,
+              ref: branch,
+            });
+          } catch (err2: any) {
+            logger.error('workflow_dispatch (preview-e2e gate, bare retry) failed — preview build continues', err2);
+          }
+        } else {
+          logger.error('workflow_dispatch (preview-e2e gate) failed — preview build continues', err);
+        }
+      }
     }
 
     // Optimistic intent (confirmed:false until the workflow_run webhook confirms).
@@ -684,6 +722,12 @@ export const deployPreview = onCall<DeployPreviewData>(
       confirmed: false,
       eventTime: Date.now(),
       actor: callerLabel(caller),
+      detail: {
+        runTests: runTests !== false,
+        ...(Array.isArray(suites) && suites.length ? { suites } : {}),
+        ...(cfRepo ? { cfRepo } : {}),
+        ...(cfBranch ? { cfBranch } : {}),
+      },
     });
     await appendActivity(entry);
     await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
@@ -785,38 +829,47 @@ export const createPullRequest = onCall<CreatePullRequestData>(
 
     // SERVER-SIDE STATE CHECK (plan §7): the UI gates too, but the server is the
     // real fence. Load the candidate and enforce the lifecycle precondition.
-    const snap = await db
-      .collection(PATHS.releaseCandidates)
-      .doc(candidateId(repo, head))
-      .get();
-    if (!snap.exists) {
-      throw new HttpsError('failed-precondition', `No candidate for ${repo}/${head}.`);
-    }
-    const cand = snap.data() as ReleaseCandidate;
+    //
+    // CF-TYPE REPOS ARE EXEMPT (plan L18, locked 2026-07-02): the CF flow has no tester-gate
+    // stage — its quality gate is the LOCAL predeploy loop-guard, which already ran before the
+    // code reached starlabs-test. Precondition for CF = "branch pushed + not merged", which
+    // GitHub itself enforces (unknown head / no-commits errors below). CF Board branches also
+    // have no release-candidate doc, so the candidate load must not 404 them.
+    let cand: ReleaseCandidate | undefined;
+    if (repoTypeOf(repo) !== 'cloud-function') {
+      const snap = await db
+        .collection(PATHS.releaseCandidates)
+        .doc(candidateId(repo, head))
+        .get();
+      if (!snap.exists) {
+        throw new HttpsError('failed-precondition', `No candidate for ${repo}/${head}.`);
+      }
+      cand = snap.data() as ReleaseCandidate;
 
-    if (base === 'development') {
-      if (cand.derivedStatus !== ReleaseStatus.OK_FOR_DEV) {
-        throw new HttpsError(
-          'failed-precondition',
-          `Dev PR requires status OK_FOR_DEV (got ${cand.derivedStatus}).`,
-        );
-      }
-      // Freshness: the dev sign-off must cover the current head.
-      if (cand.devGate.sha && cand.headSha && cand.devGate.sha !== cand.headSha) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Dev sign-off is stale (new commits since sign-off). Re-request QA.',
-        );
-      }
-    } else {
-      // Promotion (development → production): head is the `development` branch, so `cand` is the
-      // development candidate. It is promotable only after a feature merged in (hasUnreleased) AND
-      // its dev deploy succeeded — promotion-chain plan 2026-06-24 ("deploy then promote").
-      if (!cand.promotable) {
-        throw new HttpsError(
-          'failed-precondition',
-          'Development is not ready to promote — it needs unreleased changes with a successful dev deploy.',
-        );
+      if (base === 'development') {
+        if (cand.derivedStatus !== ReleaseStatus.OK_FOR_DEV) {
+          throw new HttpsError(
+            'failed-precondition',
+            `Dev PR requires status OK_FOR_DEV (got ${cand.derivedStatus}).`,
+          );
+        }
+        // Freshness: the dev sign-off must cover the current head.
+        if (cand.devGate.sha && cand.headSha && cand.devGate.sha !== cand.headSha) {
+          throw new HttpsError(
+            'failed-precondition',
+            'Dev sign-off is stale (new commits since sign-off). Re-request QA.',
+          );
+        }
+      } else {
+        // Promotion (development → production): head is the `development` branch, so `cand` is the
+        // development candidate. It is promotable only after a feature merged in (hasUnreleased) AND
+        // its dev deploy succeeded — promotion-chain plan 2026-06-24 ("deploy then promote").
+        if (!cand.promotable) {
+          throw new HttpsError(
+            'failed-precondition',
+            'Development is not ready to promote — it needs unreleased changes with a successful dev deploy.',
+          );
+        }
       }
     }
 
@@ -855,7 +908,7 @@ export const createPullRequest = onCall<CreatePullRequestData>(
       source: 'console',
       confirmed: false, // the pull_request webhook will confirm
       eventTime: Date.now(),
-      sha: cand.headSha,
+      sha: cand?.headSha ?? pr.head?.sha,
       actor: callerLabel(caller),
       detail: { base, number: pr.number },
     });
@@ -865,7 +918,7 @@ export const createPullRequest = onCall<CreatePullRequestData>(
       facet.number = pr.number;
       facet.url = pr.html_url;
       facet.state = 'OPEN';
-      facet.headSha = cand.headSha;
+      facet.headSha = cand?.headSha ?? pr.head?.sha;
     });
 
     logger.info(`PR created ${repo} ${head}→${base} #${pr.number} by ${callerLabel(caller)}`);
@@ -1008,6 +1061,374 @@ export const reconcileDecision = onCall<ReconcileDecisionData>(
 
     logger.info(`reconcileDecision ${decision} on ${repo}/${branch} by ${label}`);
     return { ok: true, derivedStatus: written.derivedStatus, reconcile: written.reconcile };
+  },
+);
+
+// ===========================================================================
+// 6b. Test orchestration + CF rollout (master plan 2026-07-02)
+// ===========================================================================
+
+// --- planTestRun (callable) — compute the Test Run dialog's suite plan (L5) --------------------
+//
+// Diffs the branch against `development` (GitHub compare) and matches the changed files against
+// the mirrored suites manifest: matched suites are MANDATORY (with the matching glob as the
+// human-readable reason); the rest of the CI-ready catalogue is optional. Protected branches
+// (development/production — the Release Channel "system test") have no diff basis: nothing is
+// mandatory, the full catalogue is offered.
+
+interface PlanTestRunData {
+  repo: string;
+  branch: string;
+}
+
+export const planTestRun = onCall<PlanTestRunData>(
+  { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
+  async (req: CallableRequest<PlanTestRunData>) => {
+    const caller = requireAuth(req);
+    await loadMemberCanonical(caller); // any ACTIVE member may plan (read-only)
+    const { repo, branch } = req.data ?? ({} as PlanTestRunData);
+    if (!repo || !branch) throw new HttpsError('invalid-argument', 'repo and branch are required.');
+
+    const manifest = await loadSuitesManifest();
+    if (!manifest) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Suites manifest mirror is empty — merge suites-manifest.json to hub main (mirror-suites workflow) first.',
+      );
+    }
+
+    let changed: string[] = [];
+    if (!isProtected(branch)) {
+      try {
+        const cmp = await appOctokit().repos.compareCommitsWithBasehead({
+          owner: GITHUB_ORG,
+          repo,
+          basehead: `development...${branch}`,
+        });
+        changed = (cmp.data.files ?? []).map((f) => f.filename);
+      } catch (err: any) {
+        logger.error(`planTestRun compare failed for ${repo}/${branch}`, err);
+        throw new HttpsError('internal', `Could not diff ${branch} against development: ${err?.message ?? err}`);
+      }
+    }
+
+    const plan = planSuites(manifest, changed, repoTypeOf(repo));
+    logger.info(
+      `planTestRun ${repo}/${branch}: ${plan.mandatory.length} mandatory, ${plan.optional.length} optional` +
+        `${plan.crossCutting ? ' (cross-cutting)' : ''} from ${plan.changedFileCount} changed files`,
+    );
+    return { ok: true, ...plan };
+  },
+);
+
+// --- runTests (callable) — test-only gate dispatch, any card, any time (L6) --------------------
+
+interface RunTestsData {
+  repo: string;
+  branch: string;
+  suites: string[];
+  cfRepo?: string;
+  cfBranch?: string;
+}
+
+export const runTests = onCall<RunTestsData>(
+  { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
+  async (req: CallableRequest<RunTestsData>) => {
+    const caller = requireAuth(req);
+    // Any ACTIVE member may run tests (developer on Working Branches, tester on Preview
+    // Channels, admin on the Release Channel) — the run is read-only w.r.t. workflow state.
+    await loadMemberCanonical(caller);
+    const { repo, branch, suites, cfRepo, cfBranch } = req.data ?? ({} as RunTestsData);
+    if (!repo || !branch) throw new HttpsError('invalid-argument', 'repo and branch are required.');
+    if (!Array.isArray(suites) || suites.length === 0 || suites.some((s) => typeof s !== 'string')) {
+      throw new HttpsError('invalid-argument', 'suites must be a non-empty string array.');
+    }
+
+    const manifest = await loadSuitesManifest();
+    if (manifest) {
+      for (const s of suites) {
+        const def = manifest.suites[s];
+        if (!def) throw new HttpsError('invalid-argument', `Unknown suite: ${s}`);
+        if (!def.ciReady) throw new HttpsError('invalid-argument', `Suite ${s} is not CI-ready (local-only).`);
+      }
+    }
+
+    const octokit = appOctokit();
+    try {
+      await octokit.actions.createWorkflowDispatch({
+        owner: GITHUB_ORG,
+        repo,
+        workflow_id: PREVIEW_E2E_WORKFLOW,
+        ref: branch,
+        inputs: {
+          suites: JSON.stringify(suites),
+          cf_repo: cfRepo ?? 'starlabs-cloud-function',
+          cf_branch: cfBranch ?? 'development',
+        },
+      });
+    } catch (err: any) {
+      logger.error(`runTests dispatch failed for ${repo}/${branch}`, err);
+      throw new HttpsError('internal', `Test dispatch failed: ${err?.message ?? err}`);
+    }
+
+    const entry = activityEntry({
+      repo,
+      branch,
+      type: 'test_dispatch',
+      source: 'console',
+      confirmed: false, // the workflow_run webhook confirms
+      eventTime: Date.now(),
+      actor: callerLabel(caller),
+      detail: { suites, cfRepo: cfRepo ?? 'starlabs-cloud-function', cfBranch: cfBranch ?? 'development', mode: 'test-only' },
+    });
+    await appendActivity(entry);
+    await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
+      c.gateRun = {
+        ...(c.gateRun ?? {}),
+        status: 'QUEUED',
+        at: Date.now(),
+        sha: c.headSha ?? c.gateRun?.sha,
+      };
+    });
+
+    logger.info(`runTests ${repo}/${branch} suites=[${suites.join(',')}] by ${callerLabel(caller)}`);
+    return { ok: true };
+  },
+);
+
+// --- recordSuitesManifest (HTTPS) — the ONE-WAY manifest mirror target (L1) --------------------
+//
+// hub@main's mirror-suites.yml POSTs suites-manifest.json here on every merge that touches it.
+// git is the truth; this endpoint OVERWRITES console-config/suites (the read-only copy the
+// console dialog reads). Bearer = CONSOLE_INGEST_TOKEN (same low-privilege pattern as
+// recordPreviewUrl). Clients can never write this doc (rules: write false).
+
+export const recordSuitesManifest = onRequest(
+  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  async (req: Request, res: Response) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+    if (!bearerOk(req.header('authorization'), CONSOLE_INGEST_TOKEN.value())) {
+      res.status(401).json({ ok: false, error: 'unauthorized' });
+      return;
+    }
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const suites = body.suites as Record<string, unknown> | undefined;
+    if (typeof body.version !== 'number' || !suites || typeof suites !== 'object' || Object.keys(suites).length === 0) {
+      res.status(400).json({ ok: false, error: 'not a suites manifest (need version + suites{})' });
+      return;
+    }
+    try {
+      const now = Date.now();
+      await db
+        .collection(PATHS.consoleConfig)
+        .doc(PATHS.suitesDoc)
+        .set({ manifest: body, mirroredAt: now, source: 'hub@main' });
+      await appendActivity({
+        branchId: 'console-config',
+        type: 'suites_mirror',
+        source: 'webhook',
+        confirmed: true,
+        eventTime: now,
+        receivedTime: now,
+        actor: 'hub-ci',
+        detail: { version: body.version, suiteCount: Object.keys(suites).length },
+      });
+      logger.info(`recordSuitesManifest: mirrored ${Object.keys(suites).length} suites (v${body.version})`);
+      res.status(200).json({ ok: true, suites: Object.keys(suites).length });
+    } catch (err) {
+      logger.error('recordSuitesManifest failed', err);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  },
+);
+
+// --- recordCfDeploy (HTTPS) — the CF postdeploy hook's target (L15) ----------------------------
+//
+// Fires on EVERY `firebase deploy` of the CF repo — manual laptop deploys included — which is
+// exactly what makes "deployed but not pushed" visible. Upserts one cf-functions/{name} doc per
+// function with the env column derived from the target project (L16). reconcilePoll's CF-API
+// check heals anything that skips this hook.
+
+interface CfDeployBody {
+  repo?: string;
+  project?: string;
+  branch?: string;
+  sha?: string;
+  by?: string;
+  functions?: { name?: string; type?: string; file?: string; codebase?: string }[];
+}
+
+export const recordCfDeploy = onRequest(
+  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  async (req: Request, res: Response) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+    if (!bearerOk(req.header('authorization'), CONSOLE_INGEST_TOKEN.value())) {
+      res.status(401).json({ ok: false, error: 'unauthorized' });
+      return;
+    }
+    const body = (req.body ?? {}) as CfDeployBody;
+    const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const project = typeof body.project === 'string' ? body.project.trim() : '';
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    const sha = typeof body.sha === 'string' && /^[0-9a-f]{7,40}$/i.test(body.sha) ? body.sha : undefined;
+    const by = typeof body.by === 'string' ? body.by.trim().slice(0, 200) : undefined;
+    const fns = Array.isArray(body.functions) ? body.functions : [];
+
+    if (!INGEST_REPO_ALLOWLIST.has(repo) || repoTypeOf(repo) !== 'cloud-function') {
+      res.status(400).json({ ok: false, error: 'repo not allowed' });
+      return;
+    }
+    const envKey = CF_ENV_BY_PROJECT[project];
+    if (!envKey) {
+      res.status(400).json({ ok: false, error: `unknown project (expected one of: ${Object.keys(CF_ENV_BY_PROJECT).join(', ')})` });
+      return;
+    }
+    if (!branch || branch.length > 200) {
+      res.status(400).json({ ok: false, error: 'invalid branch' });
+      return;
+    }
+    const valid = fns.filter((f) => typeof f?.name === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(f.name!));
+    if (valid.length === 0 || valid.length > 500) {
+      res.status(400).json({ ok: false, error: 'functions[] must contain 1..500 valid entries' });
+      return;
+    }
+
+    try {
+      const now = Date.now();
+      // Chunked batches (Firestore batch cap 500 writes).
+      for (let i = 0; i < valid.length; i += 400) {
+        const batch = db.batch();
+        for (const f of valid.slice(i, i + 400)) {
+          const doc: Partial<CfFunctionDoc> & Record<string, unknown> = {
+            repo,
+            name: f.name!,
+            ...(f.type ? { type: f.type } : {}),
+            ...(f.file ? { file: f.file } : {}),
+            ...(f.codebase ? { codebase: f.codebase } : {}),
+            [envKey]: { deployed: true, ...(sha ? { sha } : {}), branch, at: now, ...(by ? { by } : {}) },
+            orphaned: false,
+            updatedAt: now,
+          };
+          batch.set(db.collection(PATHS.cfFunctions).doc(f.name!), doc, { merge: true });
+        }
+        await batch.commit();
+      }
+      await appendActivity({
+        branchId: candidateId(repo, branch),
+        type: 'cf_deploy',
+        source: 'webhook',
+        confirmed: true,
+        eventTime: now,
+        receivedTime: now,
+        sha,
+        actor: by ?? 'cf-postdeploy',
+        detail: { project, env: envKey, count: valid.length },
+      });
+      logger.info(`recordCfDeploy ${repo}@${branch} → ${project} (${envKey}): ${valid.length} functions`);
+      res.status(200).json({ ok: true, env: envKey, functions: valid.length });
+    } catch (err) {
+      logger.error('recordCfDeploy failed', err);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  },
+);
+
+// --- listCfBranches (callable) — the CF Board "Branches" tab (L17/L19) -------------------------
+//
+// GitHub-derived, on-demand (↻ Refresh in the UI) — NOT a Firestore stream. Per branch:
+// last commit, ~changed functions vs production (file diff mapped through the branch's
+// functions-manifest.json — approximation, L19), merged-to-development state, open PR.
+
+interface ListCfBranchesData {
+  repo?: string;
+}
+
+export const listCfBranches = onCall<ListCfBranchesData>(
+  { region, secrets: [GITHUB_APP_PRIVATE_KEY], timeoutSeconds: 120 },
+  async (req: CallableRequest<ListCfBranchesData>) => {
+    const caller = requireAuth(req);
+    const member = await loadMemberCanonical(caller);
+    const roles = (member.roles ?? []) as Role[];
+    if (!member.active || !(roles.includes('developer') || roles.includes('admin'))) {
+      throw new HttpsError('permission-denied', 'CF Board is for developers and admins.');
+    }
+    const repo = req.data?.repo ?? 'starlabs-cloud-function';
+    if (repoTypeOf(repo) !== 'cloud-function') {
+      throw new HttpsError('invalid-argument', `${repo} is not a cloud-function repo.`);
+    }
+
+    const octokit = appOctokit();
+    const [branchesResp, prsResp] = await Promise.all([
+      octokit.repos.listBranches({ owner: GITHUB_ORG, repo, per_page: 30 }),
+      octokit.pulls.list({ owner: GITHUB_ORG, repo, state: 'open', base: 'development', per_page: 50 }),
+    ]);
+    const openPrByHead = new Map(prsResp.data.map((p) => [p.head.ref, { number: p.number, url: p.html_url }]));
+
+    const skip = new Set(['development', 'production', 'main', 'master']);
+    const out: Record<string, unknown>[] = [];
+    for (const b of branchesResp.data.filter((x) => !skip.has(x.name))) {
+      try {
+        const [cmpProd, cmpDev, commitResp] = await Promise.all([
+          octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `production...${b.name}` }),
+          octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `development...${b.name}` }),
+          octokit.repos.getCommit({ owner: GITHUB_ORG, repo, ref: b.commit.sha }),
+        ]);
+
+        // Branch functions manifest (may be absent on old branches) → name/type mapping.
+        let manifestFns: { name: string; type?: string; file?: string }[] = [];
+        try {
+          const content = await octokit.repos.getContent({ owner: GITHUB_ORG, repo, path: 'functions-manifest.json', ref: b.name });
+          if (!Array.isArray(content.data) && content.data.type === 'file' && 'content' in content.data) {
+            manifestFns = JSON.parse(Buffer.from(content.data.content, 'base64').toString('utf8'))?.functions ?? [];
+          }
+        } catch {
+          /* no manifest on this branch — file-level fallback below */
+        }
+
+        const changedFunctions: { name: string; type: string; change: string }[] = [];
+        const seen = new Set<string>();
+        for (const f of cmpProd.data.files ?? []) {
+          if (!f.filename.startsWith('functions/')) continue;
+          const rel = f.filename.replace(/^functions\//, '');
+          const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
+          const hits = manifestFns.filter((m) => m.file === rel || m.file === f.filename);
+          if (hits.length === 0) {
+            const label = rel.split('/').pop() ?? rel;
+            if (!seen.has(label)) { seen.add(label); changedFunctions.push({ name: label, type: 'file', change }); }
+          } else {
+            for (const m of hits) {
+              if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
+            }
+          }
+        }
+
+        const commit = commitResp.data.commit;
+        out.push({
+          name: b.name,
+          lastCommit: {
+            sha: b.commit.sha,
+            msg: commit?.message?.split('\n')[0],
+            author: commit?.author?.email ?? commit?.author?.name,
+            at: commit?.author?.date ? Date.parse(commit.author.date) : undefined,
+          },
+          aheadOfProd: cmpProd.data.ahead_by ?? 0,
+          changedFunctions,
+          mergedToDev: (cmpDev.data.ahead_by ?? 0) === 0,
+          pr: openPrByHead.get(b.name) ?? null,
+        });
+      } catch (err: any) {
+        logger.error(`listCfBranches: ${b.name} failed`, err);
+        out.push({ name: b.name, error: String(err?.message ?? err).slice(0, 200) });
+      }
+    }
+
+    return { ok: true, repo, branches: out };
   },
 );
 
@@ -1171,6 +1592,70 @@ export const reconcilePoll = onSchedule(
       }
     }
     logger.info(`reconcilePoll: backfilled ${healed}/${stuck.length} previews, synced ${synced} dev hasUnreleased`);
+
+    // (c) CF DEPLOY MATRIX HEAL (plan L15): list what is ACTUALLY deployed in each env project via
+    // the Cloud Functions API and reconcile cf-functions/{name}. Catches manual deploys that
+    // skipped the postdeploy hook AND functions deleted out-of-band. Needs cross-project read
+    // access for this service account (operator checklist §7.5) — skips gracefully on 403.
+    try {
+      const cred = adminApp.options.credential ?? applicationDefault();
+      const { access_token: gcpToken } = await cred.getAccessToken();
+      const matrixSnap = await db.collection(PATHS.cfFunctions).get();
+      const docs = new Map(matrixSnap.docs.map((d) => [d.id, d.data() as CfFunctionDoc]));
+      let cfHealed = 0;
+
+      for (const [project, envKey] of Object.entries(CF_ENV_BY_PROJECT)) {
+        let deployedNames: Set<string>;
+        try {
+          const resp = await fetch(
+            `https://cloudfunctions.googleapis.com/v2/projects/${project}/locations/-/functions?pageSize=500`,
+            { headers: { Authorization: `Bearer ${gcpToken}` } },
+          );
+          if (!resp.ok) {
+            logger.warn(`reconcilePoll cf-heal: list ${project} → HTTP ${resp.status} (missing cross-project read access?) — skipping`);
+            continue;
+          }
+          const listed = (await resp.json()) as { functions?: { name: string }[] };
+          deployedNames = new Set((listed.functions ?? []).map((f) => f.name.split('/').pop()!));
+        } catch (e) {
+          logger.error(`reconcilePoll cf-heal: list ${project} failed — skipping`, e);
+          continue;
+        }
+
+        const now = Date.now();
+        // Flip stale cells: doc says deployed but the platform disagrees (or vice versa).
+        for (const [name, doc] of docs) {
+          const cell = doc[envKey as 'dev' | 'prod'];
+          const isListed = deployedNames.has(name);
+          if ((cell?.deployed ?? false) !== isListed) {
+            await db.collection(PATHS.cfFunctions).doc(name).set(
+              { [envKey]: { ...(cell ?? {}), deployed: isListed, healed: true, at: now }, updatedAt: now },
+              { merge: true },
+            );
+            cfHealed++;
+          }
+        }
+        // Deployed functions the matrix has never seen (hook skipped entirely).
+        for (const name of deployedNames) {
+          if (!docs.has(name)) {
+            await db.collection(PATHS.cfFunctions).doc(name).set(
+              {
+                repo: 'starlabs-cloud-function',
+                name,
+                [envKey]: { deployed: true, healed: true, at: now },
+                updatedAt: now,
+              },
+              { merge: true },
+            );
+            docs.set(name, { repo: 'starlabs-cloud-function', name, updatedAt: now } as CfFunctionDoc);
+            cfHealed++;
+          }
+        }
+      }
+      if (cfHealed > 0) logger.info(`reconcilePoll cf-heal: reconciled ${cfHealed} matrix cells`);
+    } catch (e) {
+      logger.error('reconcilePoll cf-heal failed (non-fatal)', e);
+    }
   },
 );
 

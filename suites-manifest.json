@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "_readme": "SINGLE SOURCE OF TRUTH for test-suite routing (master plan 2026-07-02, L1). Lives in hub git @ main; mirrored ONE-WAY to Firestore console-config/suites by .github/workflows/mirror-suites.yml. The console reads the mirror (read-only); CI reads this file from its checkout. Edit HERE via PR — never in Firestore. Regenerate SUITES.md with: node scripts/gen-suites-doc.mjs",
+  "_fields": {
+    "title/description": "shown in the console Test Run dialog",
+    "config": "the Playwright config the CI gate runs for this suite (already capture-appropriate)",
+    "capture": "failure-only = screenshots/video only for failed tests (default) | all = every test (queue/journey owners' choice, L11)",
+    "specDir": "spec root in this repo (run-isolated.sh SUITE_DIR)",
+    "appPaths": "starlabs-angular globs — a branch diff matching any makes this suite MANDATORY",
+    "cfPaths": "starlabs-cloud-function globs — same, for CF-side changes",
+    "areas": "optional sub-routing within a suite: area name -> explicit spec list (run-isolated ONLY subset)",
+    "alwaysRun": "true = baseline suite included in every routed run (none in v1; queue embeds its selftest baseline in each area list)",
+    "ciReady": "false = local-only (no emulator config yet) — hidden from the console dialog",
+    "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
+  },
+  "crossCutting": {
+    "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
+    "appPaths": [
+      "src/app/**/*.guard.ts",
+      "src/app/shared/**",
+      "src/app/app.routes.ts",
+      "src/app/app.config.ts",
+      "angular.json",
+      "package.json"
+    ],
+    "cfPaths": [
+      "functions/index.js",
+      "functions/package.json"
+    ]
+  },
+  "suites": {
+    "queue": {
+      "title": "Queue lifecycle",
+      "description": "ATC queue system end-to-end: studio, operator, big planner + invariant/loop-bound/oracle self-tests.",
+      "config": "playwright.queue.emulator.evidence.config.ts",
+      "capture": "all",
+      "specDir": "queue",
+      "ciReady": true,
+      "appPaths": ["src/app/queue system/**"],
+      "cfPaths": [
+        "functions/components/queuesystem.js",
+        "functions/components/queue_atc_generation.js",
+        "functions/components/big-assignment.js",
+        "functions/components/big-level-aggregate.js",
+        "functions/components/ATC.js",
+        "functions/components/atc_alerts.js",
+        "functions/components/atc_helpers.js"
+      ],
+      "areas": {
+        "_source": "migrated verbatim from starlabs-angular preview-e2e.yml (2026-06-29); each list embeds the selftest baseline",
+        "studio": {
+          "appPaths": [
+            "src/app/queue system/dynamic-studio/**",
+            "src/app/queue system/dynamic-studio-v2/**",
+            "src/app/queue system/assign-procedure-studio/**",
+            "src/app/queue system/assign-queue-studio/**",
+            "src/app/queue system/preassign-studio/**",
+            "src/app/queue system/studio-preassign-dialog/**",
+            "src/app/queue system/accept-other-studio/**",
+            "src/app/queue system/invite-other-studio/**",
+            "src/app/queue system/arenastudioactivity/**"
+          ],
+          "only": "queue/studio-core.spec.ts queue/studio-session.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
+        },
+        "operator": {
+          "appPaths": [
+            "src/app/queue system/dynamic-queue-manager/**",
+            "src/app/queue system/dynamic-queue-manager-clone/**",
+            "src/app/queue system/queue-list/**",
+            "src/app/queue system/queue-planning/**",
+            "src/app/queue system/queue-planning-clone/**",
+            "src/app/queue system/queue-planning-review/**",
+            "src/app/queue system/draft-queue-planning-dialog/**",
+            "src/app/queue system/queue-creation-v3/**",
+            "src/app/queue system/arena-board/**",
+            "src/app/queue system/queue-flow-visualizer/**"
+          ],
+          "only": "queue/operator.spec.ts queue/selfmovable-gate.spec.ts queue/watch-videos.spec.ts queue/actors-health.spec.ts queue/authoring.spec.ts queue/cf-sideeffects.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
+        },
+        "big": {
+          "appPaths": [
+            "src/app/queue system/big-planner/**",
+            "src/app/queue system/event-opportunity-dashboard/**",
+            "src/app/queue system/initiate-event-product/**"
+          ],
+          "only": "queue/big-analytics.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
+        }
+      }
+    },
+    "journey": {
+      "title": "Journey onboarding",
+      "description": "Participant journey onboarding flows: product delivery, sequence editing, cohorts.",
+      "config": "playwright.journey.emulator.evidence.config.ts",
+      "capture": "all",
+      "specDir": "journey",
+      "ciReady": true,
+      "appPaths": ["src/app/Journey Onboarding/**", "src/app/journey-onboarding-detail/**"],
+      "cfPaths": ["functions/components/participantmetadata.js"],
+      "reviewNote": "cfPaths guess — review"
+    },
+    "business": {
+      "title": "Business dashboard",
+      "description": "Business dashboard reporting and analytics views.",
+      "config": "playwright.business.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "business",
+      "ciReady": true,
+      "appPaths": ["src/app/Business Dashboard/**", "src/app/main-dashboard/**"],
+      "cfPaths": ["functions/components/interimreport.js", "functions/components/salescrm-updates.js"],
+      "reviewNote": "globs draft — review"
+    },
+    "comms": {
+      "title": "Communications",
+      "description": "Communication center, channel comms and message templates.",
+      "config": "playwright.comms.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "comms",
+      "ciReady": true,
+      "appPaths": [
+        "src/app/Communication Center/**",
+        "src/app/Channel Communication/**",
+        "src/app/in-app-message-input/**"
+      ],
+      "cfPaths": ["functions/components/communication.js"]
+    },
+    "content": {
+      "title": "Content",
+      "description": "Content authoring, upload and delivery.",
+      "config": "playwright.content.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "content",
+      "ciReady": true,
+      "appPaths": ["src/app/content/**", "src/app/content-upload-version2/**", "src/app/video-player/**"],
+      "cfPaths": ["functions/components/content.js"]
+    },
+    "evomap": {
+      "title": "Evolution mapping",
+      "description": "Evolution mapping and achievements progression.",
+      "config": "playwright.evomap.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "evomap",
+      "ciReady": true,
+      "appPaths": ["src/app/EvolutionMapping/**"],
+      "cfPaths": ["functions/components/achievements.js"],
+      "reviewNote": "cfPaths guess — review"
+    },
+    "modes": {
+      "title": "Participant modes",
+      "description": "Participant mode switching and gating.",
+      "config": "playwright.modes.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "modes",
+      "ciReady": true,
+      "appPaths": ["src/app/participant-touchpoint/**", "src/app/Participants Profile Management/**"],
+      "cfPaths": ["functions/components/participantmode.js"],
+      "reviewNote": "appPaths guess — review"
+    },
+    "authroles": {
+      "title": "Auth & roles",
+      "description": "Sign-in, guards, role-based access and exceptional routing.",
+      "config": "playwright.authroles.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "authroles",
+      "ciReady": true,
+      "appPaths": ["src/app/login/**", "src/app/exceptionalrouting/**", "src/app/route-configuration/**"],
+      "cfPaths": ["functions/components/user_registration.js"]
+    },
+    "workshops": {
+      "title": "Workshops",
+      "description": "Workshop creation, scheduling and participation.",
+      "config": "playwright.workshops.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "workshops",
+      "ciReady": true,
+      "appPaths": ["src/app/Workshop/**", "src/app/New-Workshop/**", "src/app/Scheduling/**"],
+      "cfPaths": ["functions/components/workshop.js"]
+    },
+    "appointments": {
+      "title": "Appointments",
+      "description": "Appointment dashboard flows (local-only — no emulator config yet).",
+      "config": "playwright.appointments.config.ts",
+      "capture": "failure-only",
+      "specDir": "appointments",
+      "ciReady": false,
+      "appPaths": ["src/app/appointment-dashboard/**"],
+      "cfPaths": ["functions/components/appointment.js", "functions/components/appointmentZoomIntegraion.js"]
+    },
+    "events": {
+      "title": "Events",
+      "description": "Events flows (local-only — no emulator config yet).",
+      "config": "playwright.events.config.ts",
+      "capture": "failure-only",
+      "specDir": "events",
+      "ciReady": false,
+      "appPaths": ["src/app/Events/**"],
+      "cfPaths": []
+    },
+    "profiles": {
+      "title": "Profiles",
+      "description": "Participant profile management (local-only — no emulator config yet).",
+      "config": "playwright.profiles.config.ts",
+      "capture": "failure-only",
+      "specDir": "profiles",
+      "ciReady": false,
+      "appPaths": ["src/app/Participants Profile Management/**", "src/app/ProfilePicture/**"],
+      "cfPaths": ["functions/components/participantmetadata.js"]
+    }
+  },
+  "cfPredeploy": {
+    "description": "Specs the CF predeploy hook runs LOCALLY (emulator) before every firebase deploy — the ONLY CF quality gate (L13/L14). Fail = deploy blocked by the Firebase CLI.",
+    "config": "playwright.cf-guards.config.ts",
+    "specs": ["cf-guards/no-retrigger-loop.spec.ts"]
+  }
+}

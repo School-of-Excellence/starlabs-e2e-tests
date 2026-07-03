@@ -1,0 +1,48 @@
+# mirror-suites — ONE-WAY mirror of suites-manifest.json → Firestore console-config/suites (plan L1).
+#
+# git (this file's repo, @main) is the TRUTH; Firestore is a read-only copy the console reads natively.
+# On every push to main that touches the manifest, POST it to the recordSuitesManifest ingest function
+# (bearer CONSOLE_INGEST_TOKEN — the same low-privilege token pattern as recordPreviewUrl). The console
+# NEVER writes this collection; rules block all client writes.
+#
+# SECRETS / VARS required on this repo:
+#   secrets.CONSOLE_INGEST_TOKEN   — the shared ingest bearer token
+#   vars.CONSOLE_FUNCTIONS_BASE    — optional override of the functions base URL
+#                                    (default https://us-central1-starlabs-cicd.cloudfunctions.net)
+name: mirror-suites (manifest → Firestore)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'suites-manifest.json'
+      - '.github/workflows/mirror-suites.yml'
+  workflow_dispatch: {}   # manual re-mirror (e.g. after first functions deploy)
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate manifest is parseable JSON
+        run: node -e "JSON.parse(require('fs').readFileSync('suites-manifest.json','utf8')); console.log('manifest OK')"
+
+      - name: POST manifest → recordSuitesManifest
+        env:
+          TOKEN: ${{ secrets.CONSOLE_INGEST_TOKEN }}
+          BASE: ${{ vars.CONSOLE_FUNCTIONS_BASE || 'https://us-central1-starlabs-cicd.cloudfunctions.net' }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::CONSOLE_INGEST_TOKEN secret is not set — cannot mirror."; exit 1
+          fi
+          code=$(curl -sS -o /tmp/resp.json -w '%{http_code}' -X POST "$BASE/recordSuitesManifest" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @suites-manifest.json)
+          cat /tmp/resp.json; echo
+          if [ "$code" != "200" ]; then
+            echo "::error::mirror POST failed with HTTP $code"; exit 1
+          fi
+          echo "✓ suites-manifest mirrored to console-config/suites"

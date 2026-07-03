@@ -5,20 +5,63 @@
 
     <rc-filter-bar [candidates]="rcs()" (changed)="filter.set($event)" />
 
+    <!-- Global mute: count chip + expandable panel to unmute (usability plan 2026-07-02) -->
+    @if (muted().length) {
+      <div class="muted-bar">
+        <button class="muted-toggle" (click)="showMuted.set(!showMuted())">
+          🔇 {{ muted().length }} muted {{ muted().length === 1 ? 'branch' : 'branches' }}
+          <span class="caret">{{ showMuted() ? '▲' : '▼' }}</span>
+        </button>
+      </div>
+      @if (showMuted()) {
+        <div class="muted-panel">
+          @for (rc of muted(); track rc.id) {
+            <div class="muted-row">
+              <div class="mr-ident">
+                <span class="branch">{{ rc.branch }}</span>
+                <span class="sub muted">{{ rc.repo }} · muted by {{ rc.mutedBy || '—' }}</span>
+              </div>
+              <button class="link" (click)="unmute(rc)">Unmute</button>
+            </div>
+          }
+        </div>
+      }
+    }
+
     <!-- ============================ FEATURE BRANCHES ============================ -->
     <h3 class="section">Feature branches</h3>
     <div class="list">
       @for (rc of features(); track rc.id) {
-        <article class="card" [class.drift]="rc.reconcile !== 'IN_SYNC'">
+        <article class="card" [class.drift]="rc.reconcile !== 'IN_SYNC'" [class.pinned]="isPinned(rc)">
           <div class="top">
             <div class="ident">
-              <div class="branch">{{ rc.branch }}</div>
+              <div class="branch">
+                @if (isPinned(rc)) { <span class="pin-mark" title="Pinned">📌</span> }
+                {{ rc.branch }}
+              </div>
               <div class="sub muted">
                 {{ rc.repo }} · <code>{{ short(rc.headSha) }}</code>
                 @if (rc.headCommit?.msg) { · {{ rc.headCommit?.msg }} }
               </div>
             </div>
-            <rc-status-chip [status]="rc.derivedStatus" />
+            <div class="top-right">
+              <rc-status-chip [status]="rc.derivedStatus" />
+              @if (shipping(rc); as sb) {
+                <span class="shipbadge" title="Production lane (derived from the development entry)">
+                  <span class="ship-lbl">prod</span>
+                  <rc-status-chip [status]="sb" />
+                </span>
+              }
+              <div class="menu-wrap">
+                <button class="kebab" title="Branch menu" (click)="toggleMenu(rc.id, $event)">⋮</button>
+                @if (openMenu() === rc.id) {
+                  <div class="menu">
+                    <button (click)="togglePin(rc)">{{ isPinned(rc) ? 'Unpin' : 'Pin to top' }}</button>
+                    <button (click)="askMute(rc)">Mute branch</button>
+                  </div>
+                }
+              </div>
+            </div>
           </div>
 
           <!-- Status progression: the last 3 lifecycle stages ending at the current one -->
@@ -75,21 +118,61 @@
               }
               @if (rc.gateRun.status === 'PASSED') { <span class="verdict ok">safe to merge</span> }
               @if (rc.gateRun.status === 'FAILED') { <span class="verdict bad">do not merge</span> }
+              @if (noTestOnBuild(rc)) { <em class="stale">report is for an older build</em> }
               @if (reportUrl(rc); as url) {
-                <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
+                @if (reportIsRoute(url)) {
+                  <a class="ghlink sm" [routerLink]="url">▶ View report</a>
+                } @else {
+                  <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
+                }
               }
+            </div>
+          } @else if (noTestOnBuild(rc)) {
+            <div class="gate" data-tone="none">
+              <span class="gdot"></span>
+              <strong>Test suite</strong>
+              <span>⚠ No test done on this build</span>
             </div>
           }
 
           <div class="actions">
             @for (a of actionsFor(rc); track a.action) {
+              @if (a.action === 'deployPreview') {
+                <!-- Deploy ▾ split (plan L5): without tests = preview only; with tests… = dialog -->
+                <div class="menu-wrap">
+                  <button
+                    [disabled]="!a.enabled || busy() === rc.id"
+                    [title]="a.reason || a.label"
+                    (click)="toggleDeployMenu(rc.id, $event)"
+                  >
+                    {{ a.label }} ▾
+                  </button>
+                  @if (deployMenu() === rc.id) {
+                    <div class="menu">
+                      <button (click)="runDeploy(rc, false)">Deploy without tests</button>
+                      <button (click)="runDeploy(rc, true)">Deploy with tests…</button>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <button
+                  [class.primary]="a.enabled"
+                  [disabled]="!a.enabled || busy() === rc.id"
+                  [title]="a.reason || a.label"
+                  (click)="run(rc, a.action)"
+                >
+                  {{ a.label }}
+                </button>
+              }
+            }
+            @if (kind(rc) === 'feature' && canAct()) {
               <button
-                [class.primary]="a.enabled && a.action !== 'deployPreview'"
-                [disabled]="!a.enabled || busy() === rc.id"
-                [title]="a.reason || a.label"
-                (click)="run(rc, a.action)"
+                class="runtests"
+                [disabled]="busy() === rc.id"
+                title="Run test suites on this branch without redeploying (plan L6)"
+                (click)="runTestsFor(rc)"
               >
-                {{ a.label }}
+                Run tests…
               </button>
             }
             @if (openPrUrl(rc); as url) {
@@ -102,6 +185,11 @@
         <div class="empty muted">No feature branches match the current filter.</div>
       }
     </div>
+
+    <!-- Closes any open kebab / deploy menu on an outside click. -->
+    @if (openMenu() || deployMenu()) {
+      <div class="menu-backdrop" (click)="openMenu.set(null); deployMenu.set(null)"></div>
+    }
 
     @if (selected(); as s) {
       <rc-activity-drawer [branchId]="s.id" [label]="s.label" (closed)="selected.set(null)" />

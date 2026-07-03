@@ -40,10 +40,17 @@ service cloud.firestore {
       return isActiveMember() && (role in get(memberPath()).data.roles);
     }
 
-    // Workflow state — read for any active member; writes only via Admin SDK (server).
+    // Workflow state — read for any active member. Writes are server-only (Admin SDK), with ONE
+    // narrow exception: the GLOBAL mute (usability plan 2026-07-02). An active developer/admin may
+    // patch ONLY the three mute fields; every other field stays server-written. affectedKeys()
+    // .hasOnly(...) is what fences this to mute — a client cannot smuggle a workflow-state change.
     match /release-candidates/{id} {
       allow read: if isActiveMember();
-      allow write: if false;
+      allow update: if isActiveMember()
+        && (hasRole('developer') || hasRole('admin'))
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['mutedSha', 'mutedBy', 'mutedAt']);
+      allow create, delete: if false;
     }
 
     match /activity-log/{id} {
@@ -61,6 +68,37 @@ service cloud.firestore {
 
     // Legacy/derived allowlist doc — readable by active members; server-written only.
     match /console-config/allowlists {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
+    // Suites manifest MIRROR (master plan 2026-07-02, L1) — ONE-WAY: hub git → mirror-suites.yml
+    // → recordSuitesManifest (Admin SDK). The console only READS it (Test Run dialog catalogue);
+    // no client may ever write it — edits happen via PR in the hub repo.
+    match /console-config/suites {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
+    // CF deploy matrix (plan L15/L17) — one doc per Cloud Function, Dev/Prod columns. Written only
+    // by recordCfDeploy (postdeploy hook) + reconcilePoll's CF-API heal (Admin SDK). CF Board is a
+    // developer/admin screen; scope reads accordingly.
+    match /cf-functions/{name} {
+      allow read: if hasRole('developer') || hasRole('admin');
+      allow write: if false;
+    }
+
+    // Per-developer console prefs (pinned branches) — PRIVATE. A user reads/writes only their OWN
+    // doc (id = lowercased email). Client-written directly (usability plan 2026-07-02).
+    match /user-prefs/{email} {
+      allow read, write: if emailDomainOk() && callerEmail() == email;
+    }
+
+    // Append-only CI/CD run history — written server-side by scripts/history/record-run.cjs
+    // (Admin SDK, bypasses rules). Read for active members so the console / history view can
+    // resolve a gate run's archived Playwright report by githubRunId. Scoped to the same
+    // member fence as release-candidates (tighter than the dashboard README's `auth != null`).
+    match /cicd-audit/{runId} {
       allow read: if isActiveMember();
       allow write: if false;
     }

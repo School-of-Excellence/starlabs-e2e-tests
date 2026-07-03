@@ -232,7 +232,7 @@ run_file() {
 }
 
 # ──────────────── main loop ────────────────
-SPECS="${ONLY:-$(find queue -name '*.spec.ts' | sort)}"
+SPECS="${ONLY:-$(find "${SUITE_DIR:-queue}" -name '*.spec.ts' | sort)}"
 total_pass=0; total_fail=0; total_skip=0; bad_files=0; report=""
 
 # Ensure a healthy emulator before the first file (boots one if the box is cold; no-op on cloud).
@@ -273,6 +273,16 @@ if [ "$EVIDENCE" = "1" ]; then
   echo ""
   echo "  merging ${shards} blob report(s) → playwright-report (a screenshot + trace for EVERY test) ..."
   npx playwright merge-reports --reporter=html "$BLOBS_DIR" 2>&1 | tail -2
+  # MACHINE-READABLE report.json (in-console report plan, 2026-07-02): a second merge over the SAME
+  # blobs emits per-test JSON (every test, pass AND fail, with status/duration) — the data the console
+  # Report screen renders. Written INSIDE playwright-report/ so record-run.cjs uploads it with the
+  # report dir automatically. Best-effort: a json-merge hiccup must not change the gate exit code.
+  if npx playwright merge-reports --reporter=json "$BLOBS_DIR" > playwright-report/report.json 2>/dev/null; then
+    echo "  🧾 machine-readable report → e2e/playwright-report/report.json"
+  else
+    echo "  ⚠ report.json merge failed (non-fatal — HTML report still complete)"
+    rm -f playwright-report/report.json
+  fi
   echo "  📸 evidence report → e2e/playwright-report/index.html   (open: npx playwright show-report)"
 fi
 exit "$bad_files"

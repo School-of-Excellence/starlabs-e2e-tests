@@ -173,7 +173,11 @@ export type ActivityType =
   | 'deploy_status'
   | 'gate_run'
   | 'reconcile_decision'
-  | 'member_change';
+  | 'member_change'
+  // CF rollout + test orchestration (master plan 2026-07-02):
+  | 'cf_deploy'        // a firebase deploy reported by the CF repo's postdeploy hook
+  | 'test_dispatch'    // a console-triggered test run (Run tests… / Deploy with tests)
+  | 'suites_mirror';   // the suites manifest mirror was refreshed from hub@main
 
 export type ActivitySource = 'webhook' | 'console' | 'reconcile';
 
@@ -255,7 +259,59 @@ export const PATHS = {
   /** Top-level members collection — one doc per member, id = lowercased email. */
   usersCol: 'CICD-Users',
   allowlistDoc: 'allowlists',
+  /** console-config/suites — the READ-ONLY mirror of hub suites-manifest.json (plan L1). */
+  suitesDoc: 'suites',
+  /** cf-functions/{name} — the per-function Dev/Prod deploy matrix (plan L15/L17). */
+  cfFunctions: 'cf-functions',
 } as const;
+
+// --- Repo registry (plan L20 — room for future repos) -----------------------------
+
+export type RepoType = 'web' | 'cloud-function' | 'flutter';
+
+/** Org repos the console orchestrates. Frontend mirror: core/repos.ts. */
+export const REPO_TYPES: Record<string, RepoType> = {
+  'starlabs-angular': 'web',
+  'starlabs-cloud-function': 'cloud-function',
+  'breakthroughs-flutter': 'flutter',
+};
+
+export function repoTypeOf(repo: string): RepoType {
+  return REPO_TYPES[repo] ?? 'web';
+}
+
+// --- CF deploy matrix (plan L15/L16/L17) -------------------------------------------
+
+/** Firebase project → matrix column (plan L16). */
+export const CF_ENV_BY_PROJECT: Record<string, 'dev' | 'prod'> = {
+  'starlabs-test': 'dev',
+  'fir-sample-aae4a': 'prod',
+};
+
+export interface CfEnvDeploy {
+  deployed: boolean;
+  sha?: string;
+  branch?: string;
+  at?: number;
+  by?: string;
+  /** true when reconcilePoll (Cloud Functions API) healed this cell, not a postdeploy report. */
+  healed?: boolean;
+}
+
+/** Firestore `cf-functions/{name}` — one row per Cloud Function in the CF Board matrix. */
+export interface CfFunctionDoc {
+  repo: string;
+  name: string;
+  /** Trigger type from functions-manifest.json (Firestore trigger / onCall / onRequest / …). */
+  type?: string;
+  file?: string;
+  codebase?: string;
+  dev?: CfEnvDeploy;
+  prod?: CfEnvDeploy;
+  /** Deployed somewhere but no longer present in the repo's development-branch manifest. */
+  orphaned?: boolean;
+  updatedAt: number;
+}
 
 /**
  * Deterministic `release-candidates` doc id (also the activity-log `branchId`).

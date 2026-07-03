@@ -10,6 +10,24 @@ const adminGuard = () => {
   return auth.isAdmin() ? true : router.createUrlTree(['']);
 };
 
+/**
+ * Role guards mirroring the nav visibility (usability plan 2026-07-02) — nav hiding alone
+ * doesn't stop a deep-link, so these enforce the same fence at the route.
+ *  - Working Branches → developer/admin
+ *  - Preview Channels → tester/admin
+ * Unauthorized users are redirected to Overview (visible to everyone).
+ */
+const devOrAdminGuard = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.isDeveloper() || auth.isAdmin() ? true : router.createUrlTree(['']);
+};
+const testerOrAdminGuard = () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return auth.isTester() || auth.isAdmin() ? true : router.createUrlTree(['']);
+};
+
 export const routes: Routes = [
   {
     path: '',
@@ -19,12 +37,14 @@ export const routes: Routes = [
   },
   {
     path: 'branches',
+    canActivate: [devOrAdminGuard],
     loadComponent: () =>
       import('./screens/working-branches/working-branches.component').then((m) => m.WorkingBranchesComponent),
     title: 'Working Branches · Release Console',
   },
   {
     path: 'previews',
+    canActivate: [testerOrAdminGuard],
     loadComponent: () =>
       import('./screens/preview-channels/preview-channels.component').then((m) => m.PreviewChannelsComponent),
     title: 'Preview Channels · Release Console',
@@ -35,6 +55,23 @@ export const routes: Routes = [
     loadComponent: () =>
       import('./screens/release-channel/release-channel.component').then((m) => m.ReleaseChannelComponent),
     title: 'Release Channel · Release Console',
+  },
+  {
+    // CF Board (master plan 2026-07-02, L17) — CF branches + the Dev/Prod function matrix.
+    // Developer/admin only, same fence as Working Branches.
+    path: 'cf-board',
+    canActivate: [devOrAdminGuard],
+    loadComponent: () =>
+      import('./screens/cf-board/cf-board.component').then((m) => m.CfBoardComponent),
+    title: 'CF Board · Release Console',
+  },
+  {
+    // In-console Test Report (report plan LOCKED 2026-07-02; suite tabs = D1). Any active member
+    // may read reports (the shell's member gate is the fence — same visibility as Overview).
+    path: 'report/:githubRunId',
+    loadComponent: () =>
+      import('./screens/report/report.component').then((m) => m.ReportComponent),
+    title: 'Test Report · Release Console',
   },
   {
     path: 'settings',

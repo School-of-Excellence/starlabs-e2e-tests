@@ -24,7 +24,9 @@
  */
 'use strict';
 
-const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
+// initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
+// FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.BIZ_RUNID || 'biz';
 
@@ -89,7 +91,7 @@ const QUIZ_RESPONSES = 4;
 const TOUCHPOINTS = 5;
 
 async function seedBusiness() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const T = admin.firestore.Timestamp;
@@ -271,6 +273,9 @@ async function seedBusiness() {
   // of our unique-type rows has consecutive gaps of EXACTLY one day → the component's computed
   // timeDelayAvg is deterministically "1d 0h 0m 0s" (BM-TP-DELAY reconciles that app-computed string).
   const TP_TYPE = `BIZ Touch ${TESTRUNID}`;
+  // The cloud baseline stock types the filter multi-select carries (recon business-misc.md:227); seeded
+  // into classify/touchpoint below so the emulator filter mirrors cloud. (Run-INdependent: shared baseline.)
+  const STOCK_TOUCHPOINTS = ['Queue Token Created', 'Queue Stage Moved', 'Form Submitted', 'Product Mode Update'];
   for (let i = 0; i < TOUCHPOINTS; i++) {
     await db.collection('participant touchpoint').doc(ID.TP(i)).set({
       docid: ID.TP(i), profileid: PF.p0, touchpoint: TP_TYPE,
@@ -281,8 +286,14 @@ async function seedBusiness() {
   // Make the unique type a selectable option in the touchpoint filter multi-select. arrayUnion is
   // idempotent and additive (never drops the stock types other suites/agents rely on). NOT testrunid-
   // tagged on this shared config doc — teardown removes our type explicitly (see teardownBusiness).
+  //
+  // EMULATOR baseline: on the cloud test project classify/touchpoint.touchpointlist already carries the
+  // four STOCK types (recon-allcomp/business-misc.md:227) — the spec was written to de-select those and
+  // keep ours. The hermetic emulator starts with NO classify/touchpoint doc, so without this the filter
+  // is a degenerate single-option select (BM-15/BM-TP-DATE can't exercise "deselect the others"). Seed the
+  // documented stock baseline so the multi-select mirrors cloud. arrayUnion → idempotent across reseeds.
   await db.collection('classify').doc('touchpoint').set(
-    { touchpointlist: admin.firestore.FieldValue.arrayUnion(TP_TYPE) }, { merge: true },
+    { touchpointlist: admin.firestore.FieldValue.arrayUnion(...STOCK_TOUCHPOINTS, TP_TYPE) }, { merge: true },
   );
 
   return {
@@ -314,7 +325,7 @@ const SEEDED = [
 ];
 
 async function teardownBusiness() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   // Best-effort: delete the adsinvestment logs subcollection docs we seeded before sweeping parents.
   for (const adsId of [ID.ADS_PAST, ID.ADS_EDIT]) {

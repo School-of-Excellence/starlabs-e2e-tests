@@ -4,8 +4,25 @@
     {
       "name": "console",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start", "--prefix", "console"],
+      "runtimeArgs": [
+        "start",
+        "--prefix",
+        "console"
+      ],
       "port": 4200
+    },
+    {
+      "name": "console-verify",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "start",
+        "--prefix",
+        "console",
+        "--",
+        "--port",
+        "4310"
+      ],
+      "port": 4310
     }
   ]
 }

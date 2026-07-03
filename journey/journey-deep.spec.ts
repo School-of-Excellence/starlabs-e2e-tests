@@ -241,10 +241,17 @@ test.describe('Journey DEEP — mark onboarded + onboarding email archive (real 
     // its custom search dropdown (not a mat-select): focus the input, then click the dropdown item.
     const tmplInput = dialog.locator('input.custom-search-input');
     await expect(tmplInput, 'JP-09: the template search input renders').toBeVisible({ timeout: 20_000 });
-    await tmplInput.click();
-    await tmplInput.fill(journeyNames.emailTemplate);
+    // Re-trigger the search until the item appears. The dialog loads `email templates` asynchronously
+    // (loadAllTemplates -> getDocs); on a COLD emulator that can resolve AFTER the first fill, leaving the
+    // custom dropdown closed (its open-state is recomputed only on an input event). Re-typing re-runs the
+    // filter once allTemplates is populated. Robust on cloud too; nothing asserted changes.
     const tmplItem = dialog.locator('.custom-dropdown-item').filter({ hasText: journeyNames.emailTemplate });
-    await expect(tmplItem, 'JP-09: the seeded template appears in the dropdown').toBeVisible({ timeout: 15_000 });
+    await expect(async () => {
+      await tmplInput.click();
+      await tmplInput.fill('');
+      await tmplInput.fill(journeyNames.emailTemplate);
+      await expect(tmplItem, 'JP-09: the seeded template appears in the dropdown').toBeVisible({ timeout: 3_000 });
+    }).toPass({ timeout: 20_000 });
     await tmplItem.click();
     // The composer renders once a template is selected (proves selectedTemplate is set).
     await expect(dialog.getByText('New Message'), 'JP-09: the email composer renders for the selected template')

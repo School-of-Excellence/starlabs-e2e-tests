@@ -162,6 +162,27 @@ export interface ReleaseCandidate {
   reconcile: Reconcile;
 
   updatedAt?: string | number; // epoch millis (live) or ISO string (mock)
+
+  // --- Mute (GLOBAL, Working Branches; usability plan 2026-07-02) -----------------
+  // Muting hides a branch from the Working Branches list for EVERYONE until the next push.
+  // The unmute logic is intentionally pure/frontend: a branch counts as muted only while
+  // `mutedSha === headSha`; a new commit advances headSha, breaks the match, and the branch
+  // reappears with no server action. `mutedAt` is a Firestore Timestamp on live writes.
+  /** The headSha captured when the branch was muted (the match key for isMuted). */
+  mutedSha?: string;
+  /** Who muted it (email) — mute is global, so this records the actor for the muted panel. */
+  mutedBy?: string;
+  /** When it was muted. Firestore Timestamp (live) / epoch millis | ISO string (mock). */
+  mutedAt?: string | number;
+}
+
+/**
+ * Per-developer console preferences (`console-config/user-prefs/{email}`, usability plan
+ * 2026-07-02). PRIVATE per user (unlike the global mute). Currently just pinned branches.
+ */
+export interface UserPrefs {
+  /** Release-candidate ids (`${repo}__${branch}`) the developer pinned to the top. */
+  pinnedBranchIds: string[];
 }
 
 // --- Activity log (single flat collection, plan D7) -----------------------------
@@ -239,4 +260,38 @@ export function signoffStale(gate: GateFacet, headSha?: string): boolean {
 /** An open PR whose tip moved past the tester sign-off (ships unreviewed code). */
 export function prHasUnreviewed(pr: PrFacet, gate: GateFacet): boolean {
   return pr?.state === 'OPEN' && !!pr.headSha && !!gate?.sha && pr.headSha !== gate.sha;
+}
+
+/**
+ * A branch counts as muted only while the muted SHA still matches HEAD (usability plan
+ * 2026-07-02). Pure/frontend: a push advances headSha, the match breaks, and the branch
+ * un-mutes on its own — no server action, and all other activity is ignored.
+ */
+export function isMuted(rc: ReleaseCandidate): boolean {
+  return !!rc.mutedSha && rc.mutedSha === rc.headSha;
+}
+
+/**
+ * The per-feature PROD-lane badge (status-gap fix, usability plan 2026-07-02).
+ *
+ * In the promotion-chain design a feature's own lifecycle is terminal at DEV_MERGED; the prod
+ * lane lives on the aggregate `development` entry. This DERIVES a feature's shipping state from
+ * that development entry + the feature's `unreleased` flag, so a feature card can show
+ * OK for prod / PR → prod / Prod merged instead of being frozen at "Dev merged". Returns an
+ * RcStatus (reusing STATUS_META for label/color), or null when there is nothing extra to show.
+ */
+export function shippingBadge(
+  feature: ReleaseCandidate,
+  devEntry?: ReleaseCandidate,
+): RcStatus | null {
+  if (feature.derivedStatus !== 'DEV_MERGED') return null;
+  // Explicitly shipped: merged to dev and no longer in the unreleased batch → rode a prod release.
+  // (Only `=== false` — an undefined flag is legacy/unknown and gets no badge.)
+  if (feature.unreleased === false) return 'PROD_MERGED';
+  // Still in the batch: mirror where the development promotion lane currently is.
+  if (feature.unreleased) {
+    if (devEntry?.prProd?.state === 'OPEN') return 'PR_TO_PROD';
+    if (devEntry?.promotable) return 'OK_FOR_PROD';
+  }
+  return null;
 }

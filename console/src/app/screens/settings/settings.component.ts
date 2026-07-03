@@ -4,6 +4,7 @@ import { FirebaseService } from '../../core/firebase.service';
 import { AuthService } from '../../core/auth.service';
 import { Member, Role, ALLOWED_DOMAIN } from '../../core/roles';
 import { ToastService } from '../../shared/toast.service';
+import { ConfirmService } from '../../shared/confirm.service';
 
 const ALL_ROLES: Role[] = ['developer', 'tester', 'admin'];
 
@@ -32,6 +33,7 @@ export class SettingsComponent {
   private readonly fb = inject(FirebaseService);
   readonly auth = inject(AuthService);
   private readonly toast = inject(ToastService);
+  private readonly confirm = inject(ConfirmService);
 
   readonly domain = ALLOWED_DOMAIN;
   readonly roles = ALL_ROLES;
@@ -113,6 +115,17 @@ export class SettingsComponent {
       addedBy: this.auth.user()?.email,
       addedAt: Date.now(),
     };
+    // Access changes are the most security-sensitive action — confirm with a restatement.
+    const rolesStr = payload.roles.length ? payload.roles.join(', ') : 'no roles';
+    const confirmed = await this.confirm.ask({
+      title: m.isNew ? 'Add console member?' : 'Update member access?',
+      message: `${payload.email} will have the following console access:`,
+      confirmLabel: m.isNew ? 'Add member' : 'Save changes',
+      tone: 'danger',
+      detailsHeading: 'Access:',
+      details: [`Roles: ${rolesStr}`, `Status: ${payload.active ? 'active' : 'inactive'}`],
+    });
+    if (!confirmed) return;
     this.busy.set(m.email);
     try {
       const res = await this.fb.setMember(payload);

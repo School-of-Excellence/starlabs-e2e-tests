@@ -31,35 +31,44 @@ A small web app on `starlabs-cicd` Firebase Hosting where the team:
 
 No one touches `gh` CLI or GitHub UI. GitHub is the source of truth; the console mirrors it.
 
-### Where the code lives
+### Where the code lives (refreshed 2026-07-03 — the old `board/` layout is GONE)
 ```
 console/                         ← Angular 19 SPA (standalone components)
   src/app/
-    core/
-      release-candidate.model.ts   ← frontend model (⚠ seam — fix first)
-      firebase.service.ts          ← service layer (⚠ seam — fix first)
-      auth.service.ts              ← Google sign-in stub (wire up)
-      mock-data.ts                 ← offline fixtures (touch only to add repo field)
-    board/
-      board.component.ts           ← board + filter + toast (mostly done)
-      release-card.component.ts    ← one card per candidate (may need repo display)
-      status.ts                    ← status chip colors + action gating
-    app.component.ts               ← header + auth gate
-    app.config.ts                  ← Firebase providers (TODO blocks to uncomment)
-  environments/
-    environment.ts                 ← useMock flag (flip to false for live)
-    firebase.config.example.ts     ← copy → firebase.config.ts and fill in keys
+    core/                          ← services + models (not foldered)
+      release-candidate.model.ts   ← facet model (mirror of functions/src/model.ts)
+      firebase.service.ts          ← the ONE typed gateway (reads + callables + mock mode)
+      auth.service.ts              ← Google sign-in + member/role gate
+      repos.ts                     ← repo registry (web / cloud-function / flutter)
+      cf-board.model.ts            ← CF matrix + branch models
+      cicd-audit.model.ts          ← report ledger + parsed report.json models
+      mock-data.ts / roles.ts / status-meta.ts / action-gating.ts
+    screens/                       ← one folder per routed screen (role-guarded routes)
+      overview/ · working-branches/ · preview-channels/ · release-channel/
+      cf-board/                    ← CF branches + Dev/Prod function matrix (dev+admin)
+      report/                      ← in-console Test Report (/report/:githubRunId)
+      settings/
+    shared/                        ← toast-host · confirm-host(+service) · filter-bar ·
+                                     status-chip · activity-drawer · test-run-dialog(+service)
+    app.component.*                ← shell (nav + auth gate); app.routes.ts (guards)
+  src/environments/environment.ts  ← useMock flag; firebase.config.ts is gitignored
 
-console/functions/src/
-  model.ts                         ← backend model (CORRECT — do not change)
-  index.ts                         ← all 4 Cloud Functions (CORRECT — do not change)
+console/functions/src/             ← backend: webhookReceiver, deployPreview, signoff,
+  model.ts · index.ts · suites.ts    createPullRequest, planTestRun, runTests, listCfBranches,
+  candidate.ts · projection.ts       recordPreviewUrl/recordCfDeploy/recordSuitesManifest,
+  activity.ts                        reconcilePoll (+ CF-matrix heal)
 ```
+Master plan for the test-orchestration + CF rollout:
+`specs/plans/2026-07-02-test-orchestration-cf-rollout-architecture.md`
+Suites catalogue: `suites-manifest.json` (hub root, git = truth) → mirrored to Firestore
+`console-config/suites` (read-only). Regenerate docs: `node scripts/gen-suites-doc.mjs`.
 
 ---
 
-## Fix these 2 seams FIRST (before any other wiring)
+## ~~Fix these 2 seams FIRST~~ — HISTORICAL (fixed 2026-06; kept for context only)
 
-The scaffold was written in two passes; the backend and frontend drifted. Fix the frontend — the backend is authoritative.
+> Both seams below were resolved long ago (console v2, 2026-06-23). Do NOT re-apply.
+> The scaffold was written in two passes; the backend and frontend drifted. Fix the frontend — the backend is authoritative.
 
 ### Seam 1 — callable name mismatch
 

@@ -1,6 +1,6 @@
 import { Injectable, signal, computed, inject } from '@angular/core';
 import { toObservable } from '@angular/core/rxjs-interop';
-import { Observable, of } from 'rxjs';
+import { Observable, of, map } from 'rxjs';
 import {
   Firestore,
   collection,
@@ -8,28 +8,84 @@ import {
   orderBy,
   where,
   collectionData,
+  doc,
+  docData,
+  setDoc,
+  updateDoc,
+  arrayUnion,
+  arrayRemove,
+  serverTimestamp,
+  deleteField,
 } from '@angular/fire/firestore';
 import { Functions, httpsCallable } from '@angular/fire/functions';
+import { Storage, ref, getDownloadURL } from '@angular/fire/storage';
+import { getDocs } from '@angular/fire/firestore';
 import {
   ReleaseCandidate,
   RcStatus,
   ActivityLogEntry,
   GateVerdict,
+  UserPrefs,
   toMillis,
   isProtectedBranch,
 } from './release-candidate.model';
 import { Member } from './roles';
+import { AuthService } from './auth.service';
+import { CfFunctionDoc, CfBranchInfo } from './cf-board.model';
+import { CicdAuditRun, ReportJson } from './cicd-audit.model';
+import { DEFAULT_CF_REPO, DEFAULT_CF_BRANCH } from './repos';
 import {
   MOCK_RELEASE_CANDIDATES,
   MOCK_ACTIVITY,
   MOCK_MEMBERS,
+  MOCK_USER_PREFS,
+  MOCK_SUITES_MANIFEST,
+  MOCK_CF_FUNCTIONS,
+  MOCK_CF_BRANCHES,
+  MOCK_AUDIT_RUNS,
+  MOCK_REPORT_JSONS,
 } from './mock-data';
 import { environment } from '../../environments/environment';
+
+/** Empty prefs — the default when a user has no `user-prefs/{email}` doc yet. */
+const EMPTY_PREFS: UserPrefs = { pinnedBranchIds: [] };
 
 /** Result of an action call (Cloud Function callable response, normalized). */
 export interface ActionResult {
   ok: boolean;
   message: string;
+}
+
+/** One suite entry in the Test Run dialog (planTestRun response; master plan L5). */
+export interface PlannedSuite {
+  suite: string;
+  title: string;
+  description: string;
+  /** Mandatory entries only: WHY it's locked — the matched file + glob. */
+  reason?: string;
+}
+
+/** The Test Run dialog's plan: locked suites (with reasons) + the optional catalogue. */
+export interface TestPlan {
+  mandatory: PlannedSuite[];
+  optional: PlannedSuite[];
+  crossCutting: boolean;
+  changedFileCount: number;
+}
+
+/** What the Test Run dialog resolves with on Confirm (plan L4/L5). */
+export interface TestRunChoice {
+  suites: string[];
+  cfRepo: string;
+  cfBranch: string;
+}
+
+/** Options for deployPreview — "with tests" carries the dialog's choice (plan L5). */
+export interface DeployOptions {
+  runTests: boolean;
+  suites?: string[];
+  cfRepo?: string;
+  cfBranch?: string;
 }
 
 /**
@@ -49,6 +105,8 @@ export class FirebaseService {
 
   private readonly fs = inject(Firestore);
   private readonly fns = inject(Functions);
+  private readonly auth = inject(AuthService);
+  private readonly store = inject(Storage);
 
   /** Local facet store used by mock mode so optimistic mutations are visible. */
   private readonly mockStore = signal<ReleaseCandidate[]>(
@@ -59,6 +117,13 @@ export class FirebaseService {
     structuredClone(MOCK_ACTIVITY),
   );
   private readonly mockMembers = signal<Member[]>(structuredClone(MOCK_MEMBERS));
+  /** Per-user prefs (pins) for mock mode — hydrated from localStorage so pins persist a reload. */
+  private readonly mockPrefs = signal<UserPrefs>(this.loadMockPrefs());
+  private readonly mockPrefs$ = toObservable(this.mockPrefs);
+  /** CF Board fixtures (mock mode) — matrix stream + branch list, mutable for optimistic PRs. */
+  private readonly mockCfFns = signal<CfFunctionDoc[]>(structuredClone(MOCK_CF_FUNCTIONS));
+  private readonly mockCfFunctions$ = toObservable(this.mockCfFns);
+  private readonly mockCfBranches = signal<CfBranchInfo[]>(structuredClone(MOCK_CF_BRANCHES));
 
   /** Reactive sorted stream for mock mode — re-emits on every applyMock() call. */
   private readonly mockCandidates$ = toObservable(
@@ -112,6 +177,93 @@ export class FirebaseService {
     return collectionData(col) as Observable<Member[]>;
   }
 
+  // --- Pin (per-user prefs) & Mute (global) — usability plan 2026-07-02 -----------------------
+
+  private prefsKey(): string {
+    return `rc-user-prefs:${(this.auth.user()?.email ?? 'mock').toLowerCase()}`;
+  }
+  /** Hydrate mock pins from localStorage, falling back to the seeded fixture. */
+  private loadMockPrefs(): UserPrefs {
+    try {
+      const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(this.prefsKey()) : null;
+      if (raw) return { ...EMPTY_PREFS, ...(JSON.parse(raw) as UserPrefs) };
+    } catch {
+      /* ignore malformed cache */
+    }
+    return structuredClone(MOCK_USER_PREFS);
+  }
+
+  /**
+   * Stream of the signed-in user's prefs (pins). MOCK: signal-backed (re-emits on toggle).
+   * LIVE: docData(user-prefs/{email}); emits EMPTY_PREFS until the doc exists.
+   */
+  userPrefs(): Observable<UserPrefs> {
+    if (this.useMock) return this.mockPrefs$;
+    const email = this.auth.user()?.email?.toLowerCase();
+    if (!email) return of(EMPTY_PREFS);
+    const ref = doc(this.fs, 'user-prefs', email);
+    return docData(ref).pipe(map((p) => ({ ...EMPTY_PREFS, ...(p as UserPrefs) })));
+  }
+
+  /**
+   * Pin / unpin a branch for the signed-in developer (private prefs). MOCK: signal + localStorage.
+   * LIVE: setDoc(user-prefs/{email}, arrayUnion|arrayRemove, merge). No confirmation (frictionless).
+   */
+  async setPin(branchId: string, pinned: boolean): Promise<void> {
+    if (this.useMock) {
+      this.mockPrefs.update((p) => {
+        const set = new Set(p.pinnedBranchIds);
+        if (pinned) set.add(branchId);
+        else set.delete(branchId);
+        const next = { ...p, pinnedBranchIds: [...set] };
+        try {
+          localStorage.setItem(this.prefsKey(), JSON.stringify(next));
+        } catch {
+          /* ignore quota / private-mode */
+        }
+        return next;
+      });
+      return;
+    }
+    const email = this.auth.user()?.email?.toLowerCase();
+    if (!email) return;
+    const ref = doc(this.fs, 'user-prefs', email);
+    await setDoc(
+      ref,
+      { pinnedBranchIds: pinned ? arrayUnion(branchId) : arrayRemove(branchId) },
+      { merge: true },
+    );
+  }
+
+  /**
+   * Mute / unmute a branch GLOBALLY (Working Branches). MOCK: mutate the store. LIVE: patch ONLY
+   * the three mute fields on the release-candidate doc (`mutedAt` as a Firestore Timestamp via
+   * serverTimestamp — never an ISO string). The narrow field-level rule in firestore.rules is what
+   * permits this client write while all other RC writes stay server-only.
+   */
+  async setMute(rc: ReleaseCandidate, muted: boolean): Promise<void> {
+    const email = this.auth.user()?.email ?? '(unknown)';
+    if (this.useMock) {
+      this.mockStore.update((list) =>
+        list.map((x) =>
+          x.id === rc.id
+            ? muted
+              ? { ...x, mutedSha: x.headSha, mutedBy: email, mutedAt: new Date().toISOString() }
+              : { ...x, mutedSha: undefined, mutedBy: undefined, mutedAt: undefined }
+            : x,
+        ),
+      );
+      return;
+    }
+    const ref = doc(this.fs, 'release-candidates', rc.id);
+    await updateDoc(
+      ref,
+      muted
+        ? { mutedSha: rc.headSha, mutedBy: email, mutedAt: serverTimestamp() }
+        : { mutedSha: deleteField(), mutedBy: deleteField(), mutedAt: deleteField() },
+    );
+  }
+
   /**
    * Deterministic preview-channel URL for a branch (plan D10).
    * slug = branch lowercased, `/`→`-`, strip non `[a-z0-9-]`, cap 40 chars.
@@ -126,30 +278,175 @@ export class FirebaseService {
   }
 
   /**
-   * "View report" link for the e2e gate run shown on a PR card. Deep-links the
-   * cicd-audit history dashboard by githubRunId when configured; otherwise falls
-   * back to the GitHub Actions run page (always available).
+   * "View report" target for a gate run (in-console report plan, LOCKED 2026-07-02): the
+   * IN-APP route `/report/:githubRunId` when a report run id exists — the Report screen
+   * resolves the per-suite `cicd-audit` docs from there. Falls back to the GitHub Actions
+   * run page (external) only when no run id was ever recorded. The standalone dashboard
+   * (`historyDashboardUrl`) is superseded and no longer used.
+   * Convention: a return value starting with '/' is an internal route (use routerLink);
+   * anything else is an external href.
    */
   reportUrlFor(rc: ReleaseCandidate): string | null {
     const g = rc.gateRun;
     if (!g) return null;
-    if (environment.historyDashboardUrl && g.reportRunId) {
-      return `${environment.historyDashboardUrl}?githubRunId=${encodeURIComponent(g.reportRunId)}`;
-    }
+    if (g.reportRunId) return `/report/${encodeURIComponent(g.reportRunId)}`;
     return g.runUrl ?? null;
+  }
+
+  // --- Test orchestration (master plan 2026-07-02, L2/L4/L5/L6) -------------------------------
+
+  /** The suites catalogue — the READ-ONLY Firestore mirror of hub suites-manifest.json (L1). */
+  suitesManifest(): Observable<Record<string, unknown> | null> {
+    if (this.useMock) return of(MOCK_SUITES_MANIFEST as unknown as Record<string, unknown>);
+    const refDoc = doc(this.fs, 'console-config', 'suites');
+    return docData(refDoc).pipe(map((d) => ((d as { manifest?: Record<string, unknown> })?.manifest ?? null)));
+  }
+
+  /** Ask the backend which suites MUST run for this branch (+ why) and which are optional. */
+  async planTestRun(repo: string, branch: string): Promise<TestPlan> {
+    if (this.useMock) {
+      const suites = (MOCK_SUITES_MANIFEST.suites ?? {}) as Record<
+        string,
+        { title?: string; description?: string; ciReady?: boolean }
+      >;
+      const entries = Object.entries(suites).filter(([, s]) => s.ciReady);
+      return {
+        mandatory: entries
+          .filter(([k]) => k === 'queue' || k === 'journey')
+          .map(([k, s]) => ({
+            suite: k,
+            title: s.title ?? k,
+            description: s.description ?? '',
+            reason: `src/app/${k === 'queue' ? 'queue system' : 'Journey Onboarding'}/… matched (mock)`,
+          })),
+        optional: entries
+          .filter(([k]) => k !== 'queue' && k !== 'journey')
+          .map(([k, s]) => ({ suite: k, title: s.title ?? k, description: s.description ?? '' })),
+        crossCutting: false,
+        changedFileCount: 7,
+      };
+    }
+    const callable = httpsCallable<{ repo: string; branch: string }, TestPlan & { ok: boolean }>(
+      this.fns,
+      'planTestRun',
+    );
+    const res = await callable({ repo, branch });
+    return res.data;
+  }
+
+  /** Test-only gate dispatch — the [Run tests…] button on any card (L6). */
+  runTests(
+    rc: ReleaseCandidate,
+    choice: TestRunChoice,
+  ): Promise<ActionResult> {
+    return this.invoke(
+      'runTests',
+      { repo: rc.repo, branch: rc.branch, suites: choice.suites, cfRepo: choice.cfRepo, cfBranch: choice.cfBranch },
+      () => this.applyGateQueued(rc.id),
+      `run tests [${choice.suites.join(', ')}] on ${rc.branch}`,
+    );
+  }
+
+  // --- CF Board (master plan L15–L19) ----------------------------------------------------------
+
+  /** Live stream of the per-function Dev/Prod deploy matrix (Functions tab). */
+  cfFunctions(): Observable<CfFunctionDoc[]> {
+    if (this.useMock) return this.mockCfFunctions$;
+    const col = collection(this.fs, 'cf-functions');
+    return collectionData(query(col, orderBy('name'))) as Observable<CfFunctionDoc[]>;
+  }
+
+  /** GitHub-derived branch list for the Branches tab (on-demand — refresh button). */
+  async listCfBranches(repo = DEFAULT_CF_REPO): Promise<CfBranchInfo[]> {
+    if (this.useMock) return structuredClone(this.mockCfBranches());
+    const callable = httpsCallable<{ repo: string }, { ok: boolean; branches: CfBranchInfo[] }>(
+      this.fns,
+      'listCfBranches',
+    );
+    const res = await callable({ repo });
+    return res.data.branches ?? [];
+  }
+
+  /** Create PR → development for a CF branch (precondition = pushed + not merged, plan L18). */
+  createCfPr(repo: string, branch: string): Promise<ActionResult> {
+    return this.invoke(
+      'createPullRequest',
+      { repo, head: branch, base: 'development' },
+      () => this.applyMockCfPr(branch),
+      `open PR → dev for ${repo}/${branch}`,
+    );
+  }
+
+  // --- Report screen data (in-console report plan 2026-07-02 + D1/D2) --------------------------
+
+  /** All per-suite audit docs of one workflow run (matrix: one doc per suite). */
+  async auditRunsFor(githubRunId: string): Promise<CicdAuditRun[]> {
+    if (this.useMock) {
+      return MOCK_AUDIT_RUNS.filter((r) => r.githubRunId === githubRunId);
+    }
+    const col = collection(this.fs, 'cicd-audit');
+    const snap = await getDocs(query(col, where('githubRunId', '==', githubRunId)));
+    return snap.docs
+      .map((d) => d.data() as CicdAuditRun)
+      .sort((a, b) => (a.suite ?? '').localeCompare(b.suite ?? ''));
+  }
+
+  /** Fetch + parse the machine-readable per-test report for one suite run. */
+  async reportJson(run: CicdAuditRun): Promise<ReportJson | null> {
+    const ptr = run.storage?.reportJson;
+    if (!ptr) return null;
+    if (this.useMock) return MOCK_REPORT_JSONS[ptr] ?? null;
+    try {
+      const url = await getDownloadURL(ref(this.store, ptr));
+      const resp = await fetch(url);
+      if (!resp.ok) return null;
+      return (await resp.json()) as ReportJson;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Resolve a gs:// artifact (failure screenshot / video) to a tokened download URL. */
+  async artifactUrl(gsPath: string): Promise<string | null> {
+    if (this.useMock) return null;
+    try {
+      return await getDownloadURL(ref(this.store, gsPath));
+    } catch {
+      return null;
+    }
   }
 
   // --- Actions (each → a callable Cloud Function on starlabs-cicd) ---------------------------
   // The server re-checks capability + workflow state (plan §7). These methods marshal the
   // call; action-gating.ts + AuthService gate the buttons client-side for UX.
 
-  /** Fire the manual preview build → `workflow_dispatch` on preview.yml (D5). → `deployPreview`. */
-  deployPreview(rc: ReleaseCandidate): Promise<ActionResult> {
+  /**
+   * Fire the manual preview build → `workflow_dispatch` on preview.yml (D5). → `deployPreview`.
+   * With `opts` (plan L5): runTests=false → preview only ("Deploy without tests");
+   * runTests=true + suites/CF source → the gate matrix runs alongside the build.
+   * No opts (legacy callers) → old behavior: build + fallback-routed gate.
+   */
+  deployPreview(rc: ReleaseCandidate, opts?: DeployOptions): Promise<ActionResult> {
+    const payload: Record<string, unknown> = { repo: rc.repo, branch: rc.branch };
+    if (opts) {
+      payload['runTests'] = opts.runTests;
+      if (opts.runTests) {
+        if (opts.suites?.length) payload['suites'] = opts.suites;
+        payload['cfRepo'] = opts.cfRepo ?? DEFAULT_CF_REPO;
+        payload['cfBranch'] = opts.cfBranch ?? DEFAULT_CF_BRANCH;
+      }
+    }
+    const label =
+      opts?.runTests === false
+        ? `deploy preview (no tests) for ${rc.branch}`
+        : opts?.suites?.length
+          ? `deploy preview + tests [${opts.suites.join(', ')}] for ${rc.branch}`
+          : `deploy preview for ${rc.branch}`;
     return this.invoke(
       'deployPreview',
-      { repo: rc.repo, branch: rc.branch },
+      payload,
       () => this.applyPreviewBuilding(rc.id),
-      `deploy preview for ${rc.branch}`,
+      label,
     );
   }
 
@@ -421,6 +718,49 @@ export class FirebaseService {
 
   private applyReconcile(id: string): void {
     this.patch(id, (rc) => ({ ...rc, reconcile: 'IN_SYNC' }));
+  }
+
+  /** MOCK: a dispatched test run — gateRun QUEUED → RUNNING → PASSED with a demo report id. */
+  private applyGateQueued(id: string): void {
+    const at = new Date().toISOString();
+    this.patch(id, (rc) => ({
+      ...rc,
+      gateRun: { ...(rc.gateRun ?? {}), status: 'QUEUED', at, sha: rc.headSha },
+      lastActivity: { type: 'gate_run', sha: rc.headSha, at, actor: '(me)' },
+    }));
+    setTimeout(() => this.patch(id, (rc) =>
+      rc.gateRun?.status === 'QUEUED'
+        ? { ...rc, gateRun: { ...rc.gateRun, status: 'RUNNING' } }
+        : rc,
+    ), 1000);
+    setTimeout(() => this.patch(id, (rc) =>
+      rc.gateRun?.status === 'RUNNING'
+        ? {
+            ...rc,
+            gateRun: {
+              ...rc.gateRun,
+              status: 'PASSED',
+              runId: '7050',
+              reportRunId: '7050',
+              runUrl: `https://github.com/School-of-Excellence/${rc.repo}/actions/runs/7050`,
+              at: new Date().toISOString(),
+            },
+            testSummary: { conclusion: 'success', at: new Date().toISOString() },
+          }
+        : rc,
+    ), 3500);
+  }
+
+  /** MOCK: reflect a just-created CF PR on the Branches tab fixture. */
+  private applyMockCfPr(branch: string): void {
+    const number = Math.floor(1000 + Math.random() * 9000);
+    this.mockCfBranches.update((list) =>
+      list.map((b) =>
+        b.name === branch
+          ? { ...b, pr: { number, url: `https://github.com/School-of-Excellence/starlabs-cloud-function/pull/${number}` } }
+          : b,
+      ),
+    );
   }
 
   private applyMember(m: Member): void {

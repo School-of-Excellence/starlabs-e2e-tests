@@ -9,8 +9,11 @@
 import {
   ReleaseCandidate,
   ActivityLogEntry,
+  UserPrefs,
 } from './release-candidate.model';
 import { Member } from './roles';
+import { CfFunctionDoc, CfBranchInfo } from './cf-board.model';
+import { CicdAuditRun, ReportJson } from './cicd-audit.model';
 
 const ORG = 'School-of-Excellence';
 
@@ -104,6 +107,11 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     prodGate: { verdict: 'NONE' },
     prProd: { state: 'NONE' },
     testSummary: { conclusion: 'failure', passed: 30, failed: 4, total: 34, at: '2026-06-21T12:16:00Z' },
+    // Muted (global) — a noisy failed branch dismissed from the Working Branches list. Still muted
+    // because mutedSha === headSha; a new push (advancing headSha) would auto-unmute it.
+    mutedSha: 'ddd4444',
+    mutedBy: 'dev@soexcellence.com',
+    mutedAt: '2026-06-21T13:00:00Z',
     derivedStatus: 'PREVIEW_FAILED',
     lastActivity: { type: 'preview_build', sha: 'ddd4444', actor: 'github-actions', at: '2026-06-21T12:15:00Z' },
     reconcile: 'IN_SYNC',
@@ -281,7 +289,9 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     prodGate: { verdict: 'NONE' },
     prProd: { state: 'NONE' },
     testSummary: { conclusion: 'success', passed: 62, failed: 0, total: 62, at: '2026-06-10T09:25:00Z' },
-    unreleased: true,
+    // Shipped to production in a prior promotion (unreleased cleared) → shows the "Prod merged"
+    // shipping badge derived from the development entry (status-gap fix, usability plan 2026-07-02).
+    unreleased: false,
     derivedStatus: 'DEV_MERGED',
     lastActivity: { type: 'dev_merged', sha: 'jjj0000', actor: 'dev@soexcellence.com', at: '2026-06-10T12:00:00Z' },
     reconcile: 'IN_SYNC',
@@ -455,6 +465,12 @@ export const MOCK_ACTIVITY: ActivityLogEntry[] = [
   },
 ];
 
+/** Mock per-developer prefs (pins) for offline mode — seeds one pinned branch so the
+ *  pinned-first sort is visible immediately. */
+export const MOCK_USER_PREFS: UserPrefs = {
+  pinnedBranchIds: ['starlabs-angular__feature/profile-cohorts'],
+};
+
 /** Member roster for Settings. Covers each role + an inactive example. */
 export const MOCK_MEMBERS: Member[] = [
   {
@@ -490,3 +506,211 @@ export const MOCK_MEMBERS: Member[] = [
     addedAt: Date.parse('2026-05-01T00:00:00Z'),
   },
 ];
+
+// --- Test orchestration + CF rollout fixtures (master plan 2026-07-02) ---------------------------
+
+/** Mirror of hub suites-manifest.json (subset) so the Test Run dialog demos offline. */
+export const MOCK_SUITES_MANIFEST = {
+  version: 1,
+  crossCutting: {
+    appPaths: ['src/app/**/*.guard.ts', 'src/app/shared/**', 'angular.json', 'package.json'],
+    cfPaths: ['functions/index.js', 'functions/package.json'],
+  },
+  suites: {
+    queue: {
+      title: 'Queue lifecycle', description: 'ATC queue system end-to-end: studio, operator, big planner + self-tests.',
+      capture: 'all', ciReady: true, appPaths: ['src/app/queue system/**'],
+    },
+    journey: {
+      title: 'Journey onboarding', description: 'Product delivery, sequence editing, cohorts.',
+      capture: 'all', ciReady: true, appPaths: ['src/app/Journey Onboarding/**'],
+    },
+    business: {
+      title: 'Business dashboard', description: 'Reporting and analytics views.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/Business Dashboard/**'],
+    },
+    comms: {
+      title: 'Communications', description: 'Communication center, channels, templates.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/Communication Center/**'],
+    },
+    content: {
+      title: 'Content', description: 'Content authoring, upload and delivery.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/content/**'],
+    },
+    evomap: {
+      title: 'Evolution mapping', description: 'Evolution mapping and achievements.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/EvolutionMapping/**'],
+    },
+    modes: {
+      title: 'Participant modes', description: 'Mode switching and gating.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/participant-touchpoint/**'],
+    },
+    authroles: {
+      title: 'Auth & roles', description: 'Sign-in, guards, role-based access.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/login/**'],
+    },
+    workshops: {
+      title: 'Workshops', description: 'Workshop creation, scheduling, participation.',
+      capture: 'failure-only', ciReady: true, appPaths: ['src/app/Workshop/**'],
+    },
+    appointments: {
+      title: 'Appointments', description: 'Appointment flows (local-only).',
+      capture: 'failure-only', ciReady: false, appPaths: ['src/app/appointment-dashboard/**'],
+    },
+  },
+};
+
+/** CF Dev/Prod matrix — mixed states: both, dev-only, DRIFT, orphaned. */
+export const MOCK_CF_FUNCTIONS: CfFunctionDoc[] = [
+  {
+    repo: 'starlabs-cloud-function', name: 'slackCustomerSupport', type: 'onDocumentWritten', file: 'components/clientissue.js',
+    dev: { deployed: true, sha: 'a1b2c3d', branch: 'development', at: Date.parse('2026-06-30T10:00:00Z'), by: 'dev@soexcellence.com' },
+    prod: { deployed: true, sha: 'a1b2c3d', branch: 'production', at: Date.parse('2026-06-30T18:00:00Z'), by: 'dev@soexcellence.com' },
+    updatedAt: Date.parse('2026-06-30T18:00:00Z'),
+  },
+  {
+    repo: 'starlabs-cloud-function', name: 'SupportDeskToSlack', type: 'onDocumentCreated', file: 'components/communication.js',
+    dev: { deployed: true, sha: 'fff6666', branch: 'feature/cf-triggers', at: Date.parse('2026-07-01T09:00:00Z'), by: 'dev@soexcellence.com' },
+    prod: { deployed: false },
+    updatedAt: Date.parse('2026-07-01T09:00:00Z'),
+  },
+  {
+    repo: 'starlabs-cloud-function', name: 'rateLimiter', type: 'onDocumentWritten', file: 'components/queuesystem.js',
+    dev: { deployed: true, sha: 'kkk2222', branch: 'feature/rate-limiter', at: Date.parse('2026-07-02T08:00:00Z'), by: 'dev@soexcellence.com' },
+    prod: { deployed: true, sha: 'e9f0a11', branch: 'production', at: Date.parse('2026-06-20T12:00:00Z'), by: 'admin@soexcellence.com' },
+    updatedAt: Date.parse('2026-07-02T08:00:00Z'),
+  },
+  {
+    repo: 'starlabs-cloud-function', name: 'oldCleanupJob', type: 'onSchedule', file: 'components/depreciated.js',
+    dev: { deployed: true, sha: '0ld0000', branch: 'development', at: Date.parse('2026-05-01T00:00:00Z'), healed: true },
+    prod: { deployed: false },
+    orphaned: true,
+    updatedAt: Date.parse('2026-07-01T00:00:00Z'),
+  },
+];
+
+/** CF Board Branches tab — one unmerged (Create PR), one with an open PR, one merged. */
+export const MOCK_CF_BRANCHES: CfBranchInfo[] = [
+  {
+    name: 'feature/rate-limiter',
+    lastCommit: { sha: 'kkk2222', msg: 'Hotfix: off-by-one in window', author: 'dev@soexcellence.com', at: Date.parse('2026-07-02T08:00:00Z') },
+    aheadOfProd: 5,
+    changedFunctions: [
+      { name: 'rateLimiter', type: 'onDocumentWritten', change: 'UPDATED' },
+      { name: 'rateLimiterConfig', type: 'onCall', change: 'NEW' },
+      { name: 'cleanupOldWindows', type: 'onSchedule', change: 'NEW' },
+    ],
+    mergedToDev: false,
+    pr: null,
+  },
+  {
+    name: 'feature/cf-triggers',
+    lastCommit: { sha: 'fff6666', msg: 'Add Firestore triggers', author: 'dev@soexcellence.com', at: Date.parse('2026-07-01T09:00:00Z') },
+    aheadOfProd: 3,
+    changedFunctions: [
+      { name: 'SupportDeskToSlack', type: 'onDocumentCreated', change: 'UPDATED' },
+      { name: 'queueAtcGeneration', type: 'onDocumentWritten', change: 'UPDATED' },
+    ],
+    mergedToDev: false,
+    pr: { number: 142, url: `https://github.com/${ORG}/starlabs-cloud-function/pull/142` },
+  },
+  {
+    name: 'feature/webhooks',
+    lastCommit: { sha: 'abc1234', msg: 'Retry logic for webhooks', author: 'dev@soexcellence.com', at: Date.parse('2026-06-29T14:00:00Z') },
+    aheadOfProd: 1,
+    changedFunctions: [{ name: 'watsonUpdates', type: 'onRequest', change: 'UPDATED' }],
+    mergedToDev: true,
+    pr: null,
+  },
+];
+
+/** Audit ledger — a 3-suite matrix run (githubRunId 7050) matching candidate #3's gateRun. */
+export const MOCK_AUDIT_RUNS: CicdAuditRun[] = [
+  {
+    runId: 'starlabs-angular-feature-booking-redesign-queue-ccc3333-1',
+    repo: 'starlabs-angular', suite: 'queue', stage: 'preview-gate', branch: 'feature/booking-redesign',
+    sha: 'ccc3333', author: 'dev@soexcellence.com', source: 'ci', result: 'pass', githubRunId: '7050',
+    cfRepo: 'starlabs-cloud-function', cfBranch: 'development',
+    runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7050`,
+    createdAt: '2026-06-21T17:24:00Z',
+    storage: { base: 'gs://mock/queue', report: [], reportJson: 'mock://report/queue', attachments: [] },
+  },
+  {
+    runId: 'starlabs-angular-feature-booking-redesign-journey-ccc3333-2',
+    repo: 'starlabs-angular', suite: 'journey', stage: 'preview-gate', branch: 'feature/booking-redesign',
+    sha: 'ccc3333', author: 'dev@soexcellence.com', source: 'ci', result: 'fail', githubRunId: '7050',
+    cfRepo: 'starlabs-cloud-function', cfBranch: 'development',
+    runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7050`,
+    createdAt: '2026-06-21T17:26:00Z',
+    storage: { base: 'gs://mock/journey', report: [], reportJson: 'mock://report/journey', attachments: [] },
+  },
+  {
+    runId: 'starlabs-angular-feature-booking-redesign-business-ccc3333-3',
+    repo: 'starlabs-angular', suite: 'business', stage: 'preview-gate', branch: 'feature/booking-redesign',
+    sha: 'ccc3333', author: 'dev@soexcellence.com', source: 'ci', result: 'pass', githubRunId: '7050',
+    cfRepo: 'starlabs-cloud-function', cfBranch: 'development',
+    runUrl: `https://github.com/${ORG}/starlabs-angular/actions/runs/7050`,
+    createdAt: '2026-06-21T17:27:00Z',
+    storage: { base: 'gs://mock/business', report: [], reportJson: 'mock://report/business', attachments: [] },
+  },
+];
+
+/** Machine-readable per-test reports keyed by the mock reportJson pointer. */
+export const MOCK_REPORT_JSONS: Record<string, ReportJson> = {
+  'mock://report/queue': {
+    stats: { expected: 4, unexpected: 0, skipped: 0, duration: 201000 },
+    suites: [
+      {
+        title: 'queue/operator.spec.ts', file: 'queue/operator.spec.ts',
+        specs: [
+          { title: 'operator serves the queue in order', ok: true, tests: [{ results: [{ status: 'passed', duration: 42000 }] }] },
+          { title: 'operator can pause a lane', ok: true, tests: [{ results: [{ status: 'passed', duration: 38000 }] }] },
+        ],
+      },
+      {
+        title: 'queue/studio-core.spec.ts', file: 'queue/studio-core.spec.ts',
+        specs: [
+          { title: 'studio accepts a preassigned participant', ok: true, tests: [{ results: [{ status: 'passed', duration: 61000 }] }] },
+          { title: 'studio rejects a double booking', ok: true, tests: [{ results: [{ status: 'passed', duration: 60000 }] }] },
+        ],
+      },
+    ],
+  },
+  'mock://report/journey': {
+    stats: { expected: 14, unexpected: 2, skipped: 0, duration: 258000 },
+    suites: [
+      {
+        title: 'journey/product-delivery.spec.ts', file: 'journey/product-delivery.spec.ts',
+        specs: [
+          {
+            title: 'JP-PD product delivery completes', ok: false,
+            tests: [{ results: [{ status: 'failed', duration: 4900, error: { message: `expect(locator).toBeVisible — 'Delivered' … timeout 5000ms` } }] }],
+          },
+          { title: 'JP-PD delivery starts', ok: true, tests: [{ results: [{ status: 'passed', duration: 2100 }] }] },
+        ],
+      },
+      {
+        title: 'journey/edit-sequence.spec.ts', file: 'journey/edit-sequence.spec.ts',
+        specs: [
+          {
+            title: 'JP-EDIT sequence editable before send', ok: false,
+            tests: [{ results: [{ status: 'failed', duration: 5200, error: { message: 'expect(received).toEqual — sequence order mismatch' } }] }],
+          },
+          { title: 'JP-EDIT reorder persists', ok: true, tests: [{ results: [{ status: 'passed', duration: 3300 }] }] },
+        ],
+      },
+    ],
+  },
+  'mock://report/business': {
+    stats: { expected: 6, unexpected: 0, skipped: 1, duration: 120000 },
+    suites: [
+      {
+        title: 'business/reporting.spec.ts', file: 'business/reporting.spec.ts',
+        specs: [
+          { title: 'monthly report renders totals', ok: true, tests: [{ results: [{ status: 'passed', duration: 21000 }] }] },
+          { title: 'export to CSV', ok: true, tests: [{ results: [{ status: 'passed', duration: 15000 }] }] },
+        ],
+      },
+    ],
+  },
+};
