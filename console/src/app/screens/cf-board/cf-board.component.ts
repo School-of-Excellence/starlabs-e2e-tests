@@ -4,7 +4,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { FirebaseService } from '../../core/firebase.service';
 import { ConfirmService } from '../../shared/confirm.service';
 import { ToastService } from '../../shared/toast.service';
-import { CfBranchInfo, CfFunctionDoc, cfDrift } from '../../core/cf-board.model';
+import { CfBranchInfo, CfFunctionDoc, cfDrift, cfStateOf } from '../../core/cf-board.model';
 import { cfRepos, DEFAULT_CF_REPO } from '../../core/repos';
 
 type MatrixFilter = 'all' | 'dev-only' | 'prod-only' | 'drift' | 'orphaned';
@@ -40,7 +40,10 @@ export class CfBoardComponent {
   readonly tab = signal<'branches' | 'functions'>('branches');
 
   // --- Branches tab ---------------------------------------------------------------------------
-  readonly branches = signal<CfBranchInfo[]>([]);
+  // LIVE STREAM of the push-mirrored cf-branches records (operator flow 2026-07-03) — the webhook
+  // keeps them current; ↻ Refresh triggers the GitHub heal/backfill (listCfBranches) which writes
+  // back into the same collection, so the stream updates by itself.
+  readonly branches = toSignal(this.fb.cfBranches(), { initialValue: [] as CfBranchInfo[] });
   readonly branchesLoading = signal(false);
   readonly branchesError = signal<string | null>(null);
   readonly branchFilter = signal<BranchFilter>('all');
@@ -49,24 +52,24 @@ export class CfBoardComponent {
 
   readonly visibleBranches = computed(() => {
     const f = this.branchFilter();
-    return this.branches().filter((b) =>
-      f === 'all' ? true : f === 'merged' ? !!b.mergedToDev : !b.mergedToDev,
-    );
+    return this.branches()
+      .filter((b) => (f === 'all' ? true : f === 'merged' ? !!b.mergedToDev : !b.mergedToDev))
+      .sort((a, b) => (b.lastCommit?.at ?? 0) - (a.lastCommit?.at ?? 0));
   });
 
   // --- Functions (matrix) tab -------------------------------------------------------------------
   private readonly fns = toSignal(this.fb.cfFunctions(), { initialValue: [] as CfFunctionDoc[] });
   readonly matrixFilter = signal<MatrixFilter>('all');
 
+  // Filters/chips read the SERVER-DERIVED state/drift (Option A, 2026-07-03) via the stored-first
+  // helpers — the client never re-invents the collapse logic.
   readonly matrix = computed(() => {
     const list = this.fns();
     const f = this.matrixFilter();
     return list.filter((x) => {
-      const dev = !!x.dev?.deployed;
-      const prod = !!x.prod?.deployed;
       switch (f) {
-        case 'dev-only': return dev && !prod;
-        case 'prod-only': return prod && !dev;
+        case 'dev-only': return cfStateOf(x) === 'dev-only';
+        case 'prod-only': return cfStateOf(x) === 'prod-only';
         case 'drift': return cfDrift(x);
         case 'orphaned': return !!x.orphaned;
         default: return true;
@@ -77,9 +80,9 @@ export class CfBoardComponent {
   readonly counts = computed(() => {
     const list = this.fns();
     return {
-      both: list.filter((x) => x.dev?.deployed && x.prod?.deployed).length,
-      devOnly: list.filter((x) => x.dev?.deployed && !x.prod?.deployed).length,
-      prodOnly: list.filter((x) => !x.dev?.deployed && x.prod?.deployed).length,
+      both: list.filter((x) => cfStateOf(x) === 'both').length,
+      devOnly: list.filter((x) => cfStateOf(x) === 'dev-only').length,
+      prodOnly: list.filter((x) => cfStateOf(x) === 'prod-only').length,
       drift: list.filter((x) => cfDrift(x)).length,
       orphaned: list.filter((x) => x.orphaned).length,
     };
@@ -91,11 +94,12 @@ export class CfBoardComponent {
     this.refreshBranches();
   }
 
+  /** GitHub heal/backfill — the callable recomputes + rewrites cf-branches; the stream re-emits. */
   async refreshBranches(): Promise<void> {
     this.branchesLoading.set(true);
     this.branchesError.set(null);
     try {
-      this.branches.set(await this.fb.listCfBranches(this.repo()));
+      await this.fb.listCfBranches(this.repo());
     } catch (e: unknown) {
       this.branchesError.set(e instanceof Error ? e.message : String(e));
     } finally {

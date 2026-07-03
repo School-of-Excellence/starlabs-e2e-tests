@@ -59,6 +59,8 @@ export class AppComponent {
       icon: 'ƒ',
       visible: () => this.auth.isDeveloper() || this.auth.isAdmin(),
     },
+    // Test Suites (operator flow 2026-07-03): read-only routing-map viewer — everyone.
+    { path: 'suites', label: 'Test Suites', icon: '▦', visible: () => true },
     { path: 'settings', label: 'Settings', icon: '⚙', visible: () => this.auth.isAdmin() },
   ];
 }

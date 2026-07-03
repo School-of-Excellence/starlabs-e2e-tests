@@ -124,6 +124,7 @@ export class FirebaseService {
   private readonly mockCfFns = signal<CfFunctionDoc[]>(structuredClone(MOCK_CF_FUNCTIONS));
   private readonly mockCfFunctions$ = toObservable(this.mockCfFns);
   private readonly mockCfBranches = signal<CfBranchInfo[]>(structuredClone(MOCK_CF_BRANCHES));
+  private readonly mockCfBranches$ = toObservable(this.mockCfBranches);
 
   /** Reactive sorted stream for mock mode — re-emits on every applyMock() call. */
   private readonly mockCandidates$ = toObservable(
@@ -295,11 +296,51 @@ export class FirebaseService {
 
   // --- Test orchestration (master plan 2026-07-02, L2/L4/L5/L6) -------------------------------
 
-  /** The suites catalogue — the READ-ONLY Firestore mirror of hub suites-manifest.json (L1). */
-  suitesManifest(): Observable<Record<string, unknown> | null> {
-    if (this.useMock) return of(MOCK_SUITES_MANIFEST as unknown as Record<string, unknown>);
+  /**
+   * The suites catalogue — ONE DOC PER SUITE in `test-suites/{key}` (lane-1 lock, 2026-07-03),
+   * mirrored one-way from hub suites-manifest.json. Read-only stream for the Test Suites screen.
+   */
+  testSuites(): Observable<Record<string, unknown>[]> {
+    if (this.useMock) {
+      const suites = MOCK_SUITES_MANIFEST.suites as Record<string, unknown>;
+      return of(Object.entries(suites).map(([key, s]) => ({ key, ...(s as object) })));
+    }
+    const col = collection(this.fs, 'test-suites');
+    return collectionData(query(col, orderBy('key'))) as Observable<Record<string, unknown>[]>;
+  }
+
+  /** The slim mirror meta doc: version, crossCutting, cfPredeploy, mirroredAt, source. */
+  suitesMeta(): Observable<{
+    version?: number;
+    crossCutting?: { appPaths?: string[]; cfPaths?: string[] } | null;
+    cfPredeploy?: { description?: string; specs?: string[]; config?: string } | null;
+    mirroredAt?: number;
+    source?: string;
+  } | null> {
+    if (this.useMock) {
+      return of({
+        version: 1,
+        crossCutting: MOCK_SUITES_MANIFEST.crossCutting,
+        cfPredeploy: null,
+        mirroredAt: Date.now() - 3600_000,
+        source: 'hub@main (mock)',
+      });
+    }
     const refDoc = doc(this.fs, 'console-config', 'suites');
-    return docData(refDoc).pipe(map((d) => ((d as { manifest?: Record<string, unknown> })?.manifest ?? null)));
+    return docData(refDoc).pipe(map((d) => (d ?? null))) as Observable<{
+      version?: number;
+      crossCutting?: { appPaths?: string[]; cfPaths?: string[] } | null;
+      cfPredeploy?: { description?: string; specs?: string[]; config?: string } | null;
+      mirroredAt?: number;
+      source?: string;
+    } | null>;
+  }
+
+  /** Live stream of the push-mirrored CF branch records (Branches tab; operator flow 2026-07-03). */
+  cfBranches(): Observable<CfBranchInfo[]> {
+    if (this.useMock) return this.mockCfBranches$;
+    const col = collection(this.fs, 'cf-branches');
+    return collectionData(query(col, orderBy('updatedAt', 'desc'))) as Observable<CfBranchInfo[]>;
   }
 
   /** Ask the backend which suites MUST run for this branch (+ why) and which are optional. */

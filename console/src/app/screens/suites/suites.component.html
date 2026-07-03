@@ -1,0 +1,74 @@
+<div class="page">
+  <header class="head">
+    <h2>Test Suites</h2>
+    <p class="muted">
+      The routing map: which file changes LOCK which suites in the Test Run dialog. READ-ONLY —
+      edit <code>suites-manifest.json</code> in the hub repo (PR → merge → <code>suites-deploy.yml</code> syncs).
+    </p>
+    @if (meta(); as d) {
+      <span class="mirror muted">
+        mirrored {{ d.mirroredAt | date: 'MMM d, HH:mm' }} · {{ d.source ?? 'hub@main' }}
+      </span>
+    }
+  </header>
+
+  @if (rows().length === 0) {
+    <div class="state">
+      Suites mirror is empty — merge <code>suites-manifest.json</code> to hub <code>main</code>
+      (or run the <code>suites-deploy</code> workflow once).
+    </div>
+  } @else {
+    @if (reviewCount() > 0) {
+      <div class="review-note">⚠ {{ reviewCount() }} suite(s) have DRAFT globs pending operator review (highlighted below).</div>
+    }
+
+    @for (r of rows(); track r.key) {
+      <article class="suite" [class.local]="!r.ciReady" [class.flagged]="r.reviewNote">
+        <div class="s-head">
+          <span class="s-key mono">{{ r.key }}</span>
+          <span class="s-title">{{ r.title }}</span>
+          @if (r.alwaysRun) { <span class="tag always">always runs</span> }
+          <span class="tag" [attr.data-cap]="r.capture">{{ r.capture }}</span>
+          @if (r.ciReady) { <span class="tag ci">CI</span> } @else { <span class="tag local">local-only</span> }
+          @if (r.areas.length) { <span class="tag">areas: {{ r.areas.join(' · ') }}</span> }
+        </div>
+        <div class="s-desc muted">{{ r.description }}</div>
+        <div class="globs">
+          <div class="g-col">
+            <span class="g-h">Locks on Angular changes</span>
+            @for (p of r.appPaths; track p) { <code>{{ p }}</code> } @empty { <span class="muted">—</span> }
+          </div>
+          <div class="g-col">
+            <span class="g-h">Locks on CF changes</span>
+            @for (p of r.cfPaths; track p) { <code>{{ p }}</code> } @empty { <span class="muted">—</span> }
+          </div>
+        </div>
+        @if (r.reviewNote) { <div class="flag">⚠ {{ r.reviewNote }}</div> }
+      </article>
+    }
+
+    <article class="suite cc">
+      <div class="s-head"><span class="s-title">Cross-cutting — any match locks ALL CI suites</span></div>
+      <div class="globs">
+        <div class="g-col">
+          <span class="g-h">Angular</span>
+          @for (p of crossCutting().app; track p) { <code>{{ p }}</code> }
+        </div>
+        <div class="g-col">
+          <span class="g-h">Cloud Functions</span>
+          @for (p of crossCutting().cf; track p) { <code>{{ p }}</code> }
+        </div>
+      </div>
+    </article>
+
+    @if (cfPredeploy(); as pre) {
+      <article class="suite cc">
+        <div class="s-head"><span class="s-title">CF predeploy gate (local, blocks firebase deploy)</span></div>
+        <div class="s-desc muted">{{ pre.description }}</div>
+        <div class="globs"><div class="g-col">
+          @for (s of pre.specs ?? []; track s) { <code>{{ s }}</code> }
+        </div></div>
+      </article>
+    }
+  }
+</div>

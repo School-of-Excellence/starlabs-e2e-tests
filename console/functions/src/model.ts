@@ -259,11 +259,30 @@ export const PATHS = {
   /** Top-level members collection — one doc per member, id = lowercased email. */
   usersCol: 'CICD-Users',
   allowlistDoc: 'allowlists',
-  /** console-config/suites — the READ-ONLY mirror of hub suites-manifest.json (plan L1). */
+  /** console-config/suites — SLIM meta doc of the suites mirror (version, crossCutting,
+   *  cfPredeploy, mirroredAt). Per-suite data lives in `test-suites` (lane-1 lock, 2026-07-03). */
   suitesDoc: 'suites',
+  /** test-suites/{suiteKey} — ONE DOC PER SUITE (read-only mirror of hub suites-manifest.json). */
+  testSuites: 'test-suites',
   /** cf-functions/{name} — the per-function Dev/Prod deploy matrix (plan L15/L17). */
   cfFunctions: 'cf-functions',
+  /** cf-branches/{repo__branch} — push-webhook-mirrored CF branch records (operator, 2026-07-03). */
+  cfBranches: 'cf-branches',
 } as const;
+
+/** Firestore `cf-branches/{repo__branch}` — the CF Board Branches tab, mirrored on push/PR
+ *  webhooks (GitHub stays truth; listCfBranches doubles as the ↻ heal/backfill). */
+export interface CfBranchDoc {
+  repo: string;
+  branch: string;
+  headSha?: string;
+  lastCommit?: { sha?: string; msg?: string; author?: string; at?: number };
+  aheadOfProd?: number;
+  changedFunctions?: { name: string; type: string; change: string }[];
+  mergedToDev?: boolean;
+  pr?: { number: number; url: string } | null;
+  updatedAt: number;
+}
 
 // --- Repo registry (plan L20 — room for future repos) -----------------------------
 
@@ -298,6 +317,9 @@ export interface CfEnvDeploy {
   healed?: boolean;
 }
 
+/** Where a function is deployed, collapsed (Option A, locked 2026-07-03). */
+export type CfMatrixState = 'both' | 'dev-only' | 'prod-only' | 'none';
+
 /** Firestore `cf-functions/{name}` — one row per Cloud Function in the CF Board matrix. */
 export interface CfFunctionDoc {
   repo: string;
@@ -308,9 +330,28 @@ export interface CfFunctionDoc {
   codebase?: string;
   dev?: CfEnvDeploy;
   prod?: CfEnvDeploy;
+  /**
+   * DERIVED at write time by recordCfDeploy / reconcilePoll (Option A, 2026-07-03): the collapsed
+   * deploy state + sha drift, so the CF Board filters/chips are plain Firestore queries and
+   * alerting can key off them — never computed ad-hoc by clients.
+   */
+  state?: CfMatrixState;
+  drift?: boolean;
   /** Deployed somewhere but no longer present in the repo's development-branch manifest. */
   orphaned?: boolean;
   updatedAt: number;
+}
+
+/** Option A derivation — the ONE place both writers use. */
+export function computeCfMatrixState(
+  dev?: CfEnvDeploy,
+  prod?: CfEnvDeploy,
+): { state: CfMatrixState; drift: boolean } {
+  const d = !!dev?.deployed;
+  const p = !!prod?.deployed;
+  const state: CfMatrixState = d && p ? 'both' : d ? 'dev-only' : p ? 'prod-only' : 'none';
+  const drift = d && p && !!dev?.sha && !!prod?.sha && dev.sha !== prod.sha;
+  return { state, drift };
 }
 
 /**

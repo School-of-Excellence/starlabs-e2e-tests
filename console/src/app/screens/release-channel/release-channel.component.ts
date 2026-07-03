@@ -8,6 +8,7 @@ import { ConfirmService } from '../../shared/confirm.service';
 import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
 import { RouterLink } from '@angular/router';
 import { ReleaseCandidate, isProtectedBranch, toMillis } from '../../core/release-candidate.model';
+import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent } from '../../shared/activity-drawer/activity-drawer.component';
 import { environment } from '../../../environments/environment';
@@ -116,6 +117,11 @@ export class ReleaseChannelComponent {
   /** Internal /report/… route vs external GitHub href (service contract). */
   reportIsRoute(url: string): boolean {
     return url.startsWith('/');
+  }
+
+  /** CF-type repos have no gate workflow (plan L13) — no system-test button on their entries. */
+  isCfRepo(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'cloud-function';
   }
 
   /**

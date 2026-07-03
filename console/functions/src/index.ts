@@ -55,6 +55,8 @@ import {
   repoTypeOf,
   CF_ENV_BY_PROJECT,
   CfFunctionDoc,
+  CfBranchDoc,
+  computeCfMatrixState,
 } from './model';
 import { loadSuitesManifest, planSuites } from './suites';
 import { mutateCandidate, computePromotable } from './candidate';
@@ -240,7 +242,9 @@ function isProtected(branch: string): branch is TargetBranch {
 }
 
 export const webhookReceiver = onRequest(
-  { region, secrets: [GITHUB_WEBHOOK_SECRET], cors: false },
+  // GITHUB_APP_PRIVATE_KEY: CF-repo pushes mirror a cf-branches record (compare + branch manifest
+  // via the GitHub API) — operator flow decision 2026-07-03.
+  { region, secrets: [GITHUB_WEBHOOK_SECRET, GITHUB_APP_PRIVATE_KEY], cors: false },
   async (req: Request, res: Response) => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
@@ -349,6 +353,15 @@ async function handlePush(deliveryId: string, payload: any): Promise<boolean> {
       at: eventTime,
     };
   });
+
+  // CF repo: keep the Branches-tab record current on every push (operator flow, 2026-07-03).
+  if (repoTypeOf(repo) === 'cloud-function') {
+    if (payload.deleted === true) {
+      await db.collection(PATHS.cfBranches).doc(candidateId(repo, branch)).delete().catch(() => undefined);
+    } else {
+      await upsertCfBranchRecord(repo, branch);
+    }
+  }
   return true;
 }
 
@@ -436,6 +449,22 @@ async function handlePullRequest(deliveryId: string, payload: any): Promise<bool
       facet.state = 'CLOSED';
     }
   });
+
+  // CF repo: reflect PR state on the Branches-tab record (operator flow, 2026-07-03).
+  if (repoTypeOf(repo) === 'cloud-function' && isDev) {
+    const patch: Record<string, unknown> = { updatedAt: Date.now() };
+    if (isOpen && number && url) patch['pr'] = { number, url };
+    if (isClosedUnmerged) patch['pr'] = null;
+    if (isMerged) {
+      patch['pr'] = null;
+      patch['mergedToDev'] = true;
+    }
+    await db
+      .collection(PATHS.cfBranches)
+      .doc(candidateId(repo, head))
+      .set(patch, { merge: true })
+      .catch((e) => logger.error('cf-branches PR patch failed (non-fatal)', e));
+  }
 
   // --- Promotion lane maintenance (promotion-chain plan 2026-06-24) ---
   // A feature merged INTO development → development now has unreleased changes. Create-PR-to-prod
@@ -628,6 +657,76 @@ async function handleDeploymentStatus(deliveryId: string, payload: any): Promise
 /** Collapse an activity entry to the candidate's `lastActivity` shape. */
 function lastActivityFrom(entry: ActivityLogEntry): LastActivity {
   return { type: entry.type, sha: entry.sha, actor: entry.actor, at: entry.eventTime };
+}
+
+// ---------------------------------------------------------------------------
+// CF branch records (operator flow, 2026-07-03): `cf-branches/{repo__branch}` is the CF Board's
+// Branches tab, MIRRORED on every CF push / PR webhook so the screen streams instantly. GitHub
+// stays the truth — records are recomputed FROM it; listCfBranches is the ↻ heal/backfill.
+// ---------------------------------------------------------------------------
+
+async function computeCfBranchRecord(repo: string, branch: string): Promise<CfBranchDoc> {
+  const octokit = appOctokit();
+  const [cmpProd, cmpDev, br] = await Promise.all([
+    octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `production...${branch}` }),
+    octokit.repos.compareCommitsWithBasehead({ owner: GITHUB_ORG, repo, basehead: `development...${branch}` }),
+    octokit.repos.getBranch({ owner: GITHUB_ORG, repo, branch }),
+  ]);
+
+  // The branch's committed functions-manifest.json → function names + trigger types (L19).
+  let manifestFns: { name: string; type?: string; file?: string }[] = [];
+  try {
+    const content = await octokit.repos.getContent({ owner: GITHUB_ORG, repo, path: 'functions-manifest.json', ref: branch });
+    if (!Array.isArray(content.data) && content.data.type === 'file' && 'content' in content.data) {
+      manifestFns = JSON.parse(Buffer.from(content.data.content, 'base64').toString('utf8'))?.functions ?? [];
+    }
+  } catch {
+    /* branch predates the manifest — file-level fallback below */
+  }
+
+  const changedFunctions: { name: string; type: string; change: string }[] = [];
+  const seen = new Set<string>();
+  for (const f of cmpProd.data.files ?? []) {
+    if (!f.filename.startsWith('functions/')) continue;
+    const rel = f.filename.replace(/^functions\//, '');
+    const change = f.status === 'added' ? 'NEW' : f.status === 'removed' ? 'DELETED' : 'UPDATED';
+    const hits = manifestFns.filter((m) => m.file === rel || m.file === f.filename);
+    if (hits.length === 0) {
+      const label = rel.split('/').pop() ?? rel;
+      if (!seen.has(label)) { seen.add(label); changedFunctions.push({ name: label, type: 'file', change }); }
+    } else {
+      for (const m of hits) {
+        if (!seen.has(m.name)) { seen.add(m.name); changedFunctions.push({ name: m.name, type: m.type ?? 'unknown', change }); }
+      }
+    }
+  }
+
+  const commit = br.data.commit;
+  return {
+    repo,
+    branch,
+    headSha: commit?.sha,
+    lastCommit: {
+      sha: commit?.sha,
+      msg: commit?.commit?.message?.split('\n')[0],
+      author: commit?.commit?.author?.email ?? commit?.commit?.author?.name ?? undefined,
+      at: commit?.commit?.author?.date ? Date.parse(commit.commit.author.date) : undefined,
+    },
+    aheadOfProd: cmpProd.data.ahead_by ?? 0,
+    changedFunctions,
+    mergedToDev: (cmpDev.data.ahead_by ?? 0) === 0,
+    updatedAt: Date.now(),
+  };
+}
+
+/** Best-effort mirror write — a GitHub hiccup must never fail the webhook. Preserves `pr` (merge). */
+async function upsertCfBranchRecord(repo: string, branch: string): Promise<void> {
+  try {
+    const rec = await computeCfBranchRecord(repo, branch);
+    await db.collection(PATHS.cfBranches).doc(candidateId(repo, branch)).set(rec, { merge: true });
+  } catch (e) {
+    logger.error(`cf-branches mirror failed for ${repo}/${branch} (non-fatal)`, e);
+  }
 }
 
 // ===========================================================================
@@ -1093,7 +1192,7 @@ export const planTestRun = onCall<PlanTestRunData>(
     if (!manifest) {
       throw new HttpsError(
         'failed-precondition',
-        'Suites manifest mirror is empty — merge suites-manifest.json to hub main (mirror-suites workflow) first.',
+        'Suites manifest mirror is empty — merge suites-manifest.json to hub main (suites-deploy workflow) first.',
       );
     }
 
@@ -1140,6 +1239,16 @@ export const runTests = onCall<RunTestsData>(
     await loadMemberCanonical(caller);
     const { repo, branch, suites, cfRepo, cfBranch } = req.data ?? ({} as RunTestsData);
     if (!repo || !branch) throw new HttpsError('invalid-argument', 'repo and branch are required.');
+    // CF repos have NO gate workflow of their own (plan L13 — their gate is the local predeploy
+    // guard). A CF change is tested through the ANGULAR suites: open the Test Run dialog on an
+    // Angular card and pick the CF branch as the CF source (the emulator then runs THAT CF code).
+    if (repoTypeOf(repo) === 'cloud-function') {
+      throw new HttpsError(
+        'failed-precondition',
+        `${repo} has no test workflow — test a CF branch by running the Angular suites with it: ` +
+          `Test Run dialog → CF source → branch "${branch}".`,
+      );
+    }
     if (!Array.isArray(suites) || suites.length === 0 || suites.some((s) => typeof s !== 'string')) {
       throw new HttpsError('invalid-argument', 'suites must be a non-empty string array.');
     }
@@ -1222,10 +1331,30 @@ export const recordSuitesManifest = onRequest(
     }
     try {
       const now = Date.now();
-      await db
-        .collection(PATHS.consoleConfig)
-        .doc(PATHS.suitesDoc)
-        .set({ manifest: body, mirroredAt: now, source: 'hub@main' });
+      // ONE DOC PER SUITE + slim meta doc (lane-1 lock, 2026-07-03). Full-replace set (no merge):
+      // git is the truth, so removed fields/suites must disappear here too.
+      const entries = Object.entries(suites);
+      const existing = await db.collection(PATHS.testSuites).get();
+      const batch = db.batch();
+      for (const [key, def] of entries) {
+        batch.set(db.collection(PATHS.testSuites).doc(key), {
+          key,
+          ...(def as Record<string, unknown>),
+          updatedAt: now,
+        });
+      }
+      const live = new Set(entries.map(([k]) => k));
+      for (const d of existing.docs) {
+        if (!live.has(d.id)) batch.delete(d.ref);
+      }
+      batch.set(db.collection(PATHS.consoleConfig).doc(PATHS.suitesDoc), {
+        version: body.version,
+        crossCutting: body.crossCutting ?? null,
+        cfPredeploy: body.cfPredeploy ?? null,
+        mirroredAt: now,
+        source: 'hub@main',
+      });
+      await batch.commit();
       await appendActivity({
         branchId: 'console-config',
         type: 'suites_mirror',
@@ -1301,22 +1430,31 @@ export const recordCfDeploy = onRequest(
 
     try {
       const now = Date.now();
-      // Chunked batches (Firestore batch cap 500 writes).
+      // Chunked read-then-write (Firestore batch cap 500): the OTHER env's cell is needed to derive
+      // state/drift at write time (Option A, 2026-07-03).
       for (let i = 0; i < valid.length; i += 400) {
+        const chunk = valid.slice(i, i + 400);
+        const refs = chunk.map((f) => db.collection(PATHS.cfFunctions).doc(f.name!));
+        const snaps = await db.getAll(...refs);
         const batch = db.batch();
-        for (const f of valid.slice(i, i + 400)) {
+        chunk.forEach((f, idx) => {
+          const existing = (snaps[idx].data() ?? {}) as Partial<CfFunctionDoc>;
+          const cell = { deployed: true, ...(sha ? { sha } : {}), branch, at: now, ...(by ? { by } : {}) };
+          const dev = envKey === 'dev' ? cell : existing.dev;
+          const prod = envKey === 'prod' ? cell : existing.prod;
           const doc: Partial<CfFunctionDoc> & Record<string, unknown> = {
             repo,
             name: f.name!,
             ...(f.type ? { type: f.type } : {}),
             ...(f.file ? { file: f.file } : {}),
             ...(f.codebase ? { codebase: f.codebase } : {}),
-            [envKey]: { deployed: true, ...(sha ? { sha } : {}), branch, at: now, ...(by ? { by } : {}) },
+            [envKey]: cell,
+            ...computeCfMatrixState(dev, prod),
             orphaned: false,
             updatedAt: now,
           };
-          batch.set(db.collection(PATHS.cfFunctions).doc(f.name!), doc, { merge: true });
-        }
+          batch.set(refs[idx], doc, { merge: true });
+        });
         await batch.commit();
       }
       await appendActivity({
@@ -1426,6 +1564,40 @@ export const listCfBranches = onCall<ListCfBranchesData>(
         logger.error(`listCfBranches: ${b.name} failed`, err);
         out.push({ name: b.name, error: String(err?.message ?? err).slice(0, 200) });
       }
+    }
+
+    // HEAL/BACKFILL (operator flow, 2026-07-03): persist what we just computed into cf-branches so
+    // the Branches tab streams instantly, and drop records for branches deleted on GitHub.
+    try {
+      const existing = await db.collection(PATHS.cfBranches).where('repo', '==', repo).get();
+      const live = new Set<string>();
+      const batch = db.batch();
+      for (const b of out) {
+        if (b['error']) continue;
+        const id = candidateId(repo, b['name'] as string);
+        live.add(id);
+        batch.set(
+          db.collection(PATHS.cfBranches).doc(id),
+          {
+            repo,
+            branch: b['name'],
+            headSha: (b['lastCommit'] as { sha?: string } | undefined)?.sha,
+            lastCommit: b['lastCommit'],
+            aheadOfProd: b['aheadOfProd'],
+            changedFunctions: b['changedFunctions'],
+            mergedToDev: b['mergedToDev'],
+            pr: b['pr'] ?? null,
+            updatedAt: Date.now(),
+          },
+          { merge: true },
+        );
+      }
+      for (const d of existing.docs) {
+        if (!live.has(d.id)) batch.delete(d.ref);
+      }
+      await batch.commit();
+    } catch (e) {
+      logger.error('listCfBranches: cf-branches heal write failed (non-fatal)', e);
     }
 
     return { ok: true, repo, branches: out };
@@ -1624,30 +1796,40 @@ export const reconcilePoll = onSchedule(
 
         const now = Date.now();
         // Flip stale cells: doc says deployed but the platform disagrees (or vice versa).
+        // state/drift are re-derived on every write (Option A) and the in-memory map is kept
+        // current so the SECOND project's pass computes against fresh cells.
         for (const [name, doc] of docs) {
           const cell = doc[envKey as 'dev' | 'prod'];
           const isListed = deployedNames.has(name);
           if ((cell?.deployed ?? false) !== isListed) {
+            const newCell = { ...(cell ?? {}), deployed: isListed, healed: true, at: now };
+            const updated = { ...doc, [envKey]: newCell } as CfFunctionDoc;
+            const sd = computeCfMatrixState(updated.dev, updated.prod);
             await db.collection(PATHS.cfFunctions).doc(name).set(
-              { [envKey]: { ...(cell ?? {}), deployed: isListed, healed: true, at: now }, updatedAt: now },
+              { [envKey]: newCell, ...sd, updatedAt: now },
               { merge: true },
             );
+            docs.set(name, { ...updated, ...sd, updatedAt: now });
             cfHealed++;
           }
         }
         // Deployed functions the matrix has never seen (hook skipped entirely).
         for (const name of deployedNames) {
           if (!docs.has(name)) {
-            await db.collection(PATHS.cfFunctions).doc(name).set(
-              {
-                repo: 'starlabs-cloud-function',
-                name,
-                [envKey]: { deployed: true, healed: true, at: now },
-                updatedAt: now,
-              },
-              { merge: true },
-            );
-            docs.set(name, { repo: 'starlabs-cloud-function', name, updatedAt: now } as CfFunctionDoc);
+            const cell = { deployed: true, healed: true, at: now };
+            const dev = envKey === 'dev' ? cell : undefined;
+            const prod = envKey === 'prod' ? cell : undefined;
+            const sd = computeCfMatrixState(dev, prod);
+            const fresh: CfFunctionDoc = {
+              repo: 'starlabs-cloud-function',
+              name,
+              ...(dev ? { dev } : {}),
+              ...(prod ? { prod } : {}),
+              ...sd,
+              updatedAt: now,
+            };
+            await db.collection(PATHS.cfFunctions).doc(name).set(fresh, { merge: true });
+            docs.set(name, fresh);
             cfHealed++;
           }
         }

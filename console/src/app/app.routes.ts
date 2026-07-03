@@ -57,6 +57,14 @@ export const routes: Routes = [
     title: 'Release Channel · Release Console',
   },
   {
+    // Test Suites (operator flow 2026-07-03) — read-only view of the suites-manifest mirror.
+    // Any active member (the shell's member gate is the fence, like Overview).
+    path: 'suites',
+    loadComponent: () =>
+      import('./screens/suites/suites.component').then((m) => m.SuitesComponent),
+    title: 'Test Suites · Release Console',
+  },
+  {
     // CF Board (master plan 2026-07-02, L17) — CF branches + the Dev/Prod function matrix.
     // Developer/admin only, same fence as Working Branches.
     path: 'cf-board',

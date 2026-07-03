@@ -35,6 +35,7 @@ import { ToastService } from '../../shared/toast.service';
 import { ConfirmService } from '../../shared/confirm.service';
 import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
 import { RouterLink } from '@angular/router';
+import { repoTypeOf } from '../../core/repos';
 
 /** Which lane a candidate belongs to (promotion-chain architecture, 2026-06-24). */
 type BranchKind = 'feature' | 'development' | 'production';
@@ -460,6 +461,15 @@ export class WorkingBranchesComponent {
   /** Internal /report/… route vs external GitHub href (service contract). */
   reportIsRoute(url: string): boolean {
     return url.startsWith('/');
+  }
+
+  /**
+   * CF-type repos have NO app preview and NO gate workflow (plan L13/L17): their quality gate is
+   * the LOCAL predeploy loop-guard, and their PR/deploy tracking lives on the CF Board. So CF
+   * cards hide Deploy/Run-tests; a CF branch is tested via an Angular card's dialog (CF source).
+   */
+  isCfRepo(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'cloud-function';
   }
 
   /** Preview is LIVE but the gate never ran for THIS build → the honesty warning (plan S1). */

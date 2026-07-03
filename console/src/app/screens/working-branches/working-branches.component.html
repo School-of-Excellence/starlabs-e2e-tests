@@ -138,22 +138,24 @@
           <div class="actions">
             @for (a of actionsFor(rc); track a.action) {
               @if (a.action === 'deployPreview') {
-                <!-- Deploy ▾ split (plan L5): without tests = preview only; with tests… = dialog -->
-                <div class="menu-wrap">
-                  <button
-                    [disabled]="!a.enabled || busy() === rc.id"
-                    [title]="a.reason || a.label"
-                    (click)="toggleDeployMenu(rc.id, $event)"
-                  >
-                    {{ a.label }} ▾
-                  </button>
-                  @if (deployMenu() === rc.id) {
-                    <div class="menu">
-                      <button (click)="runDeploy(rc, false)">Deploy without tests</button>
-                      <button (click)="runDeploy(rc, true)">Deploy with tests…</button>
-                    </div>
-                  }
-                </div>
+                <!-- Deploy ▾ split (plan L5) — hidden for CF repos (no preview/gate workflow, L13/L17) -->
+                @if (!isCfRepo(rc)) {
+                  <div class="menu-wrap">
+                    <button
+                      [disabled]="!a.enabled || busy() === rc.id"
+                      [title]="a.reason || a.label"
+                      (click)="toggleDeployMenu(rc.id, $event)"
+                    >
+                      {{ a.label }} ▾
+                    </button>
+                    @if (deployMenu() === rc.id) {
+                      <div class="menu">
+                        <button (click)="runDeploy(rc, false)">Deploy without tests</button>
+                        <button (click)="runDeploy(rc, true)">Deploy with tests…</button>
+                      </div>
+                    }
+                  </div>
+                }
               } @else {
                 <button
                   [class.primary]="a.enabled"
@@ -165,7 +167,7 @@
                 </button>
               }
             }
-            @if (kind(rc) === 'feature' && canAct()) {
+            @if (kind(rc) === 'feature' && canAct() && !isCfRepo(rc)) {
               <button
                 class="runtests"
                 [disabled]="busy() === rc.id"
@@ -174,6 +176,11 @@
               >
                 Run tests…
               </button>
+            }
+            @if (isCfRepo(rc)) {
+              <span class="muted" title="CF quality gate = the local predeploy loop-guard. Deploy tracking lives on the CF Board.">
+                CF branch — gate runs locally at deploy · track on CF Board · test via an Angular card’s CF picker
+              </span>
             }
             @if (openPrUrl(rc); as url) {
               <a class="ghlink" [href]="url" target="_blank" rel="noopener">Open PR on GitHub ↗</a>

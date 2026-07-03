@@ -43,9 +43,11 @@
                 }
               }
             }
-            <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against development (plan S5)" (click)="runTestsFor(rc)">
-              Run tests…
-            </button>
+            @if (!isCfRepo(rc)) {
+              <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against development (plan S5)" (click)="runTestsFor(rc)">
+                Run tests…
+              </button>
+            }
           </div>
 
           <!-- Incoming feature → development PRs (review & merge on GitHub) -->
@@ -155,9 +157,11 @@
                 }
               }
             }
-            <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against production (plan S5)" (click)="runTestsFor(rc)">
-              Run tests…
-            </button>
+            @if (!isCfRepo(rc)) {
+              <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against production (plan S5)" (click)="runTestsFor(rc)">
+                Run tests…
+              </button>
+            }
           </div>
 
           @if (rc.prProd.state !== 'NONE') {

@@ -80,10 +80,23 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // One doc per test suite (lane-1 lock 2026-07-03) — same one-way mirror, same fence.
+    match /test-suites/{suiteKey} {
+      allow read: if isActiveMember();
+      allow write: if false;
+    }
+
     // CF deploy matrix (plan L15/L17) — one doc per Cloud Function, Dev/Prod columns. Written only
     // by recordCfDeploy (postdeploy hook) + reconcilePoll's CF-API heal (Admin SDK). CF Board is a
     // developer/admin screen; scope reads accordingly.
     match /cf-functions/{name} {
+      allow read: if hasRole('developer') || hasRole('admin');
+      allow write: if false;
+    }
+
+    // CF branch records (operator flow 2026-07-03) — the CF Board Branches tab, mirrored from
+    // GitHub by the push/PR webhooks + the listCfBranches heal (Admin SDK). Same fence.
+    match /cf-branches/{id} {
       allow read: if hasRole('developer') || hasRole('admin');
       allow write: if false;
     }

@@ -13,6 +13,9 @@ export interface CfEnvDeploy {
   healed?: boolean;
 }
 
+/** Where a function is deployed, collapsed (Option A, locked 2026-07-03). */
+export type CfMatrixState = 'both' | 'dev-only' | 'prod-only' | 'none';
+
 /** Firestore `cf-functions/{name}` — one row per Cloud Function in the Dev/Prod matrix. */
 export interface CfFunctionDoc {
   repo: string;
@@ -22,12 +25,24 @@ export interface CfFunctionDoc {
   codebase?: string;
   dev?: CfEnvDeploy;
   prod?: CfEnvDeploy;
+  /** DERIVED server-side at write time (Option A) — prefer these over recomputing. */
+  state?: CfMatrixState;
+  drift?: boolean;
   orphaned?: boolean;
   updatedAt: number;
 }
 
-/** DRIFT: deployed in both envs but from different shas (prod runs different code than dev). */
+/** Collapsed deploy state — stored value first (Option A), client derivation as legacy fallback. */
+export function cfStateOf(f: CfFunctionDoc): CfMatrixState {
+  if (f.state) return f.state;
+  const d = !!f.dev?.deployed;
+  const p = !!f.prod?.deployed;
+  return d && p ? 'both' : d ? 'dev-only' : p ? 'prod-only' : 'none';
+}
+
+/** DRIFT: both envs deployed but different shas — stored value first, fallback derivation. */
 export function cfDrift(f: CfFunctionDoc): boolean {
+  if (typeof f.drift === 'boolean') return f.drift;
   return !!f.dev?.deployed && !!f.prod?.deployed && !!f.dev.sha && !!f.prod.sha && f.dev.sha !== f.prod.sha;
 }
 
