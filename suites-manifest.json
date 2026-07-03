@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_readme": "SINGLE SOURCE OF TRUTH for test-suite routing (master plan 2026-07-02, L1). Lives in hub git @ main; mirrored ONE-WAY to Firestore console-config/suites by .github/workflows/mirror-suites.yml. The console reads the mirror (read-only); CI reads this file from its checkout. Edit HERE via PR — never in Firestore. Regenerate SUITES.md with: node scripts/gen-suites-doc.mjs",
+  "_readme": "SINGLE SOURCE OF TRUTH for test-suite routing (master plan 2026-07-02, L1). Lives in hub git @ main; mirrored ONE-WAY to Firestore by .github/workflows/suites-deploy.yml — one doc per suite in `test-suites/{key}` + a slim meta doc `console-config/suites` (lane-1 lock 2026-07-03). The console reads the mirror (read-only); CI reads this file from its checkout. Edit HERE via PR — never in Firestore. Regenerate SUITES.md with: node scripts/gen-suites-doc.mjs",
   "_fields": {
     "title/description": "shown in the console Test Run dialog",
     "config": "the Playwright config the CI gate runs for this suite (already capture-appropriate)",

@@ -1,4 +1,4 @@
-# mirror-suites — ONE-WAY mirror of suites-manifest.json → Firestore console-config/suites (plan L1).
+# suites-deploy — ONE-WAY mirror of suites-manifest.json → Firestore console-config/suites (plan L1).
 #
 # git (this file's repo, @main) is the TRUTH; Firestore is a read-only copy the console reads natively.
 # On every push to main that touches the manifest, POST it to the recordSuitesManifest ingest function
@@ -9,14 +9,14 @@
 #   secrets.CONSOLE_INGEST_TOKEN   — the shared ingest bearer token
 #   vars.CONSOLE_FUNCTIONS_BASE    — optional override of the functions base URL
 #                                    (default https://us-central1-starlabs-cicd.cloudfunctions.net)
-name: mirror-suites (manifest → Firestore)
+name: suites-deploy (manifest → Firestore)
 
 on:
   push:
     branches: [main]
     paths:
       - 'suites-manifest.json'
-      - '.github/workflows/mirror-suites.yml'
+      - '.github/workflows/suites-deploy.yml'
   workflow_dispatch: {}   # manual re-mirror (e.g. after first functions deploy)
 
 jobs:

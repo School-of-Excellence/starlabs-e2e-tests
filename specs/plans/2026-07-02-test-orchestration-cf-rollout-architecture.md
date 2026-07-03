@@ -54,6 +54,7 @@ CF and Flutter are **independent** rollout tracks. Flutter is parked (see compan
 | L20 | Repo registry (`core/repos.ts` + config) drives all repo/branch pickers | Future Angular/CF repos = registry entries, no redesign |
 | L21 | `web-e2e.yml` gains **`cf_repo`** input (next to existing `cf_branch`) | Future CF repos |
 | L22 | CF repo gets a ~15-line **manifest-freshness** CI check (regenerate + `git diff --exit-code`) | Keeps CF Board data trustworthy |
+| L23 | **Option A (locked 2026-07-03):** `cf-functions` docs carry SERVER-DERIVED `state` (`both/dev-only/prod-only/none`) + `drift`, written by recordCfDeploy + the reconcile healer; clients read, never re-derive (fallback only for pre-A docs). Option B (`envs` map keyed by project id) parked until a 3rd Firebase project exists | Board filters/chips become plain queries; enables future drift alerting; one derivation source (`computeCfMatrixState`) |
 
 ---
 
