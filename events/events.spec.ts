@@ -61,10 +61,15 @@ test.describe('Events — list / approve / attendance-log / layers (real UI, ant
     // EPR0 lands in BOTH the "Approved" and "Mark Attendence" tabs (status in [approved,unattended]).
     const eventSelect = page.getByRole('combobox', { name: /Select an Event/i });
     await expect(eventSelect, 'EVT-04: the event select must render').toBeVisible({ timeout: 30_000 });
-    // force: the floating <mat-label> notched-outline overlays the combobox trigger and intercepts a
-    // normal click; force dispatches the click that opens the mat-select panel.
-    await eventSelect.click({ force: true });
-    await page.getByRole('option', { name: EVENT_NAME }).click();
+    // The event list streams in asynchronously (event-participation-approve.component.ts:120,
+    // collectionData(event collection)), so the mat-select panel can OPEN BEFORE eventList populates
+    // (leaving it empty), and a force-dispatched click can focus the trigger WITHOUT toggling the CDK
+    // overlay. Retry a normal open+pick until the streamed option is clickable (root cause of the earlier
+    // 120s timeout on the emulator; the app + query are correct — verified the option renders live).
+    await expect(async () => {
+      await eventSelect.click();
+      await page.getByRole('option', { name: EVENT_NAME }).click({ timeout: 3_000 });
+    }).toPass({ timeout: 45_000 });
 
     // Switch to the "Mark Attendence" tab (the only tab whose selection drives a COMMITTED write —
     // recon risk #1: the Requested-tab approve path has its batch.commit() commented out). The approved

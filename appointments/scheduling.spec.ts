@@ -117,8 +117,10 @@ test.describe('Appointments — route-mount smoke (guard admits super-role admin
     const bounced: string[] = [];
     for (const route of ROUTES) {
       await page.goto(route, { waitUntil: 'domcontentloaded' });
-      // Give the guard + lazy chunk a moment to resolve.
-      await page.waitForLoadState('networkidle').catch(() => {});
+      // Bounded settle for the guard + lazy chunk. NOT networkidle: the emulator-wired app holds persistent
+      // Firestore onSnapshot connections (and EISzoom/studio stream routes) so 'networkidle' never fires and
+      // the wait blocks until the test timeout. Mirrors the proven evomap/routes.spec.ts route-mount smoke.
+      await page.waitForTimeout(800);
       const url = page.url();
       if (/\/login/.test(url)) bounced.push(`${route} -> ${url}`);
     }

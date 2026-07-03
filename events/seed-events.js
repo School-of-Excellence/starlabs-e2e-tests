@@ -22,7 +22,9 @@
  */
 'use strict';
 
-const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
+// initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
+// FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.EVT_RUNID || 'evt';
 
@@ -136,7 +138,7 @@ const ROUTES = [
 ];
 
 async function seedEvents() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const T = admin.firestore.Timestamp;
@@ -401,7 +403,7 @@ const SEEDED = [
 ];
 
 async function teardownEvents() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
   // Also delete the Auth users (uids carry the run id).
