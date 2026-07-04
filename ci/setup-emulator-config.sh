@@ -20,8 +20,9 @@ OVERLAY="$HERE/overlay"
 APP_PATH="${APP_PATH:-$HUB_ROOT/app}"
 
 echo "→ emulator overlay: hub = $HUB_ROOT | app = $APP_PATH"
-[ -d "$APP_PATH/src" ] || { echo "::error::APP_PATH '$APP_PATH' has no src/ — set APP_PATH or run ./setup.sh to create the app symlink"; exit 1; }
-for f in firebase.emulator.json firestore.rules firestore.indexes.json environment.emulator.ts; do
+
+# Hub-root emulator config files — needed in BOTH the CF-guard-only and full web-e2e modes.
+for f in firebase.emulator.json firestore.rules firestore.indexes.json; do
   [ -f "$OVERLAY/$f" ] || { echo "::error::overlay file missing: $OVERLAY/$f"; exit 1; }
 done
 
@@ -31,6 +32,19 @@ cp "$OVERLAY/firebase.emulator.json"  "$HUB_ROOT/firebase.emulator.json"
 cp "$OVERLAY/firestore.rules"         "$HUB_ROOT/firestore.rules"
 cp "$OVERLAY/firestore.indexes.json"  "$HUB_ROOT/firestore.indexes.json"
 echo "✓ firebase.emulator.json + firestore.rules + firestore.indexes.json → hub root"
+
+# CF PREDEPLOY LOOP-GUARD (CF_GUARD_ONLY, Option B 2026-07-05): the guard boots the emulator with ONLY
+# firestore + the CF functions — NO Angular app, NO ng serve (see playwright.cf-guards.config.ts). It
+# needs just the hub-root config staged above, so stop here and DON'T require or wire the app. This is
+# what lets the CF repo's predeploy run against a BARE hub clone (no ./setup.sh, no app symlink).
+if [ "${CF_GUARD_ONLY:-0}" = "1" ]; then
+  echo "✅ emulator config staged (CF-guard-only — Angular app overlay skipped)"
+  exit 0
+fi
+
+# --- full web-e2e overlay below: wires the Angular app under test (needs $APP_PATH) ---
+[ -f "$OVERLAY/environment.emulator.ts" ] || { echo "::error::overlay file missing: $OVERLAY/environment.emulator.ts"; exit 1; }
+[ -d "$APP_PATH/src" ] || { echo "::error::APP_PATH '$APP_PATH' has no src/ — set APP_PATH or run ./setup.sh to create the app symlink"; exit 1; }
 
 # 2) emulator environment file → the app (angular.json's emulator fileReplacement swaps environment.ts for this)
 mkdir -p "$APP_PATH/src/environments"

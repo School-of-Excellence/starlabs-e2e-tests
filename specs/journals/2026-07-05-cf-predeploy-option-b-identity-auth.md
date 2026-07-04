@@ -56,8 +56,12 @@ deploys and then silently fails to record (postdeploy needs the token). `gh auth
 **Hub (`starlabs-e2e-tests`):**
 - `console/functions/src/index.ts` — `recordCfDeploy` dual-auth (+ `bearerValue`). Moved body/repo
   validation ahead of auth (the GitHub path needs `repo`). `by` is now `let` (identity override).
-- Guard machinery (`scripts/cf-predeploy.sh`, `deploy-cf-emulator.sh`, `cf-guards/*`,
-  `playwright.cf-guards.config.ts`, `ci/setup-emulator-config.sh`) — **unchanged** (reused from cache).
+- `ci/setup-emulator-config.sh` — added a **`CF_GUARD_ONLY`** mode: stage the hub-root emulator config
+  (firebase.emulator.json + rules + indexes) and **exit before the Angular-app overlay**. Needed because
+  a bare hub clone has no app symlink, and the CF loop-guard runs no app — without this the cache setup
+  failed on `APP_PATH … has no src/`. `predeploy.js` passes `CF_GUARD_ONLY=1`.
+- Other guard machinery (`scripts/cf-predeploy.sh`, `deploy-cf-emulator.sh`, `cf-guards/*`,
+  `playwright.cf-guards.config.ts`) — **unchanged** (reused verbatim from the cache).
 
 **CF (`starlabs-cloud-function` @ `cicd-rollout`):**
 - `scripts/cicd/predeploy.js` — REWRITE: gh-auth gate + `ensureHubCache()` (clone/fetch/`npm ci`/stage
