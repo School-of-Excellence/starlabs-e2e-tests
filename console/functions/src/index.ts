@@ -1453,21 +1453,47 @@ export const recordCfDeploy = onRequest(
       res.status(405).send('Method Not Allowed');
       return;
     }
-    if (!bearerOk(req.header('authorization'), CONSOLE_INGEST_TOKEN.value())) {
-      res.status(401).json({ ok: false, error: 'unauthorized' });
-      return;
-    }
     const body = (req.body ?? {}) as CfDeployBody;
     const repo = typeof body.repo === 'string' ? body.repo.trim() : '';
     const project = typeof body.project === 'string' ? body.project.trim() : '';
     const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
     const sha = typeof body.sha === 'string' && /^[0-9a-f]{7,40}$/i.test(body.sha) ? body.sha : undefined;
-    const by = typeof body.by === 'string' ? body.by.trim().slice(0, 200) : undefined;
+    let by = typeof body.by === 'string' ? body.by.trim().slice(0, 200) : undefined;
     const fns = Array.isArray(body.functions) ? body.functions : [];
 
     if (!INGEST_REPO_ALLOWLIST.has(repo) || repoTypeOf(repo) !== 'cloud-function') {
       res.status(400).json({ ok: false, error: 'repo not allowed' });
       return;
+    }
+
+    // AUTH — DUAL (2026-07-05, identity-based CF deploy recording). Accept EITHER:
+    //   (a) the shared low-priv CONSOLE_INGEST_TOKEN — CI / recordPreviewUrl parity, `by` from body; or
+    //   (b) a developer's OWN GitHub token (from `gh auth token`) — no shared secret on dev machines.
+    // For (b) we require PUSH access to the CF repo being recorded (rule ①) and stamp `by` from the
+    // verified GitHub identity. The dev token is used ONLY for verification here and is never stored.
+    const authHeader = req.header('authorization');
+    if (bearerOk(authHeader, CONSOLE_INGEST_TOKEN.value())) {
+      // shared-token path — `by` stays as supplied in the body
+    } else {
+      const ghToken = bearerValue(authHeader);
+      if (!ghToken) {
+        res.status(401).json({ ok: false, error: 'unauthorized' });
+        return;
+      }
+      try {
+        const userOctokit = new Octokit({ auth: ghToken });
+        const me = await userOctokit.users.getAuthenticated();
+        const repoInfo = await userOctokit.repos.get({ owner: GITHUB_ORG, repo });
+        if (!repoInfo.data.permissions?.push) {
+          res.status(403).json({ ok: false, error: `not authorized — push access to ${repo} required` });
+          return;
+        }
+        by = me.data.login; // verified identity wins over any self-reported body.by
+      } catch (err: any) {
+        logger.warn('recordCfDeploy GitHub-identity auth failed', err?.status ?? err);
+        res.status(401).json({ ok: false, error: 'invalid GitHub token' });
+        return;
+      }
     }
     const envKey = CF_ENV_BY_PROJECT[project];
     if (!envKey) {
@@ -1834,6 +1860,13 @@ function bearerOk(authHeader: string | undefined, token: string): boolean {
   const b = Buffer.from(token);
   if (a.length !== b.length) return false;
   return crypto.timingSafeEqual(a, b);
+}
+
+/** Extract the raw Bearer token value (for the GitHub-identity auth path in recordCfDeploy). */
+function bearerValue(authHeader: string | undefined): string | null {
+  if (!authHeader) return null;
+  const m = /^Bearer\s+(.+)$/.exec(authHeader.trim());
+  return m ? m[1].trim() : null;
 }
 
 export const recordPreviewUrl = onRequest(

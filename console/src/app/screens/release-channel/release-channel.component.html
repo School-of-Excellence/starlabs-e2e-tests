@@ -37,7 +37,7 @@
               </span>
               @if (reportUrl(rc); as url) {
                 @if (reportIsRoute(url)) {
-                  <a class="ghlink sm" [routerLink]="url">▶ report</a>
+                  <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ report</a>
                 } @else {
                   <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">report ↗</a>
                 }
@@ -62,7 +62,7 @@
                 }
                 @if (reportUrl(f); as url) {
                   @if (reportIsRoute(url)) {
-                    <a class="ghlink sm" [routerLink]="url">▶ report</a>
+                    <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ report</a>
                   } @else {
                     <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">report ↗</a>
                   }
@@ -151,7 +151,7 @@
               </span>
               @if (reportUrl(rc); as url) {
                 @if (reportIsRoute(url)) {
-                  <a class="ghlink sm" [routerLink]="url">▶ report</a>
+                  <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ report</a>
                 } @else {
                   <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">report ↗</a>
                 }

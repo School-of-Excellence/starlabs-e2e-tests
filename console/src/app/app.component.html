@@ -1,5 +1,17 @@
 
-    @if (auth.user(); as u) {
+    @if (!auth.authReady()) {
+      <!-- Auth not yet resolved (hard load / new tab): wait before showing login OR content, so a
+           deep link never flashes the login gate or a blank frame before the session settles. -->
+      <div class="gate">
+        <div class="gate-card">
+          <span class="logo">◆</span>
+          <h1>Release Console</h1>
+          <div class="spinner" aria-label="Loading"></div>
+          <p class="muted">Loading…</p>
+        </div>
+      </div>
+    } @else {
+      @if (auth.user(); as u) {
       <div class="shell">
         <!-- Side nav -->
         <aside class="nav">
@@ -78,4 +90,5 @@
           }
         </div>
       </div>
+      }
     }

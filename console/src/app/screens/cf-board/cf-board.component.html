@@ -50,11 +50,10 @@
 
           @if ((b.changedFunctions ?? []).length > 0) {
             <button class="delta" (click)="toggleExpand(b.name)">
-              ~{{ b.changedFunctions!.length }} function{{ b.changedFunctions!.length === 1 ? '' : 's' }} changed
-              {{ expanded().has(b.name) ? '▴' : '▾' }}
+              View changes {{ expanded().has(b.name) ? '▴' : '▾' }}
             </button>
           } @else {
-            <span class="delta none">no function changes vs development</span>
+            <span class="delta none">no changes vs development</span>
           }
 
           <div class="merge">

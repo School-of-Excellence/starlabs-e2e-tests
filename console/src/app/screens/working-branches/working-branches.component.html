@@ -121,7 +121,7 @@
               @if (noTestOnBuild(rc)) { <em class="stale">report is for an older build</em> }
               @if (reportUrl(rc); as url) {
                 @if (reportIsRoute(url)) {
-                  <a class="ghlink sm" [routerLink]="url">▶ View report</a>
+                  <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ View report</a>
                 } @else {
                   <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
                 }

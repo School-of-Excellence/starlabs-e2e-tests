@@ -3,6 +3,11 @@
   <head>
     <meta charset="utf-8" />
     <title>StarLabs · Release Console</title>
+    <!-- REQUIRED for deep-link hard loads: without it, PathLocationStrategy resolves lazy-chunk
+         imports relative to the current path, so a NESTED route (e.g. /report/:id) requests its
+         chunk from /report/… → 404 → blank page. Single-segment routes happen to work; nested
+         ones don't. Keep this. -->
+    <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/x-icon" href="data:image/x-icon;," />
   </head>

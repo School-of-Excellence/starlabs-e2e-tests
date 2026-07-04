@@ -1,32 +1,42 @@
-import { Routes } from '@angular/router';
+import { Routes, Router, RouterStateSnapshot } from '@angular/router';
 import { inject } from '@angular/core';
-import { Router } from '@angular/router';
+import { filter, take, map } from 'rxjs';
 import { AuthService } from './core/auth.service';
 
-/** Route guard: only admins may reach Settings; everyone else is redirected to Overview. */
-const adminGuard = () => {
-  const auth = inject(AuthService);
-  const router = inject(Router);
-  return auth.isAdmin() ? true : router.createUrlTree(['']);
-};
-
 /**
- * Role guards mirroring the nav visibility (usability plan 2026-07-02) — nav hiding alone
- * doesn't stop a deep-link, so these enforce the same fence at the route.
- *  - Working Branches → developer/admin
+ * Role guards mirroring the nav visibility (usability plan 2026-07-02) — nav hiding alone doesn't
+ * stop a deep-link, so these enforce the same fence at the route.
+ *  - Settings / Release Channel → admin
+ *  - Working Branches / CF Board → developer/admin
  *  - Preview Channels → tester/admin
- * Unauthorized users are redirected to Overview (visible to everyone).
+ *
+ * CRITICAL: auth resolves ASYNCHRONOUSLY (authState → member fetch), but a hard page load (deep
+ * link, or a `target=_blank` new tab) runs the guard immediately. Deciding on not-yet-loaded roles
+ * used to reject every guarded route and bounce to Overview (the `/release-channel → /` bug). So
+ * each guard WAITS for `authReady` before deciding. When an UNauthenticated visitor is turned away
+ * we stash `returnUrl` so the post-sign-in redirect (app.component) lands them back on target.
  */
-const devOrAdminGuard = () => {
-  const auth = inject(AuthService);
-  const router = inject(Router);
-  return auth.isDeveloper() || auth.isAdmin() ? true : router.createUrlTree(['']);
-};
-const testerOrAdminGuard = () => {
-  const auth = inject(AuthService);
-  const router = inject(Router);
-  return auth.isTester() || auth.isAdmin() ? true : router.createUrlTree(['']);
-};
+function roleGuard(allow: (a: AuthService) => boolean) {
+  return (_route: unknown, state: RouterStateSnapshot) => {
+    const auth = inject(AuthService);
+    const router = inject(Router);
+    return auth.authReady$.pipe(
+      filter(Boolean),
+      take(1),
+      map(() => {
+        if (allow(auth)) return true;
+        // Signed in but wrong role → Overview. Signed out → Overview + returnUrl (restored on login).
+        return auth.user()
+          ? router.createUrlTree([''])
+          : router.createUrlTree([''], { queryParams: { returnUrl: state.url } });
+      }),
+    );
+  };
+}
+
+const adminGuard = roleGuard((a) => a.isAdmin());
+const devOrAdminGuard = roleGuard((a) => a.isDeveloper() || a.isAdmin());
+const testerOrAdminGuard = roleGuard((a) => a.isTester() || a.isAdmin());
 
 export const routes: Routes = [
   {

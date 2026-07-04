@@ -152,7 +152,7 @@
               @if (gateStale(rc)) { <span class="warn">stale — ran on <code>{{ short(rc.gateRun.sha) }}</code>, redeploy + re-test</span> }
               @if (reportUrl(rc); as url) {
                 @if (reportIsRoute(url)) {
-                  <a class="ghlink sm" [routerLink]="url">▶ View report</a>
+                  <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ View report</a>
                 } @else {
                   <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
                 }

@@ -1,4 +1,5 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
 import {
   Auth,
   authState,
@@ -50,6 +51,16 @@ export class AuthService {
   /** True between popup return and gate resolution, so the shell can show a spinner. */
   readonly checking = signal<boolean>(false);
 
+  /**
+   * False until auth has DEFINITIVELY resolved — i.e. the first `authState` emission has been
+   * processed (and, if a user was present, `gate()` has finished). Route guards and the shell wait
+   * on this so a hard page load (deep link / `target=_blank` new tab) no longer decides against an
+   * as-yet-unresolved session and bounces to Overview. Declared before `authReady$` (field order).
+   */
+  readonly authReady = signal<boolean>(false);
+  /** Observable mirror of `authReady` for the async route guards (app.routes.ts). */
+  readonly authReady$ = toObservable(this.authReady);
+
   /** Effective roles of the signed-in member. */
   readonly roles = computed<Role[]>(() => this.member()?.roles ?? []);
 
@@ -64,6 +75,7 @@ export class AuthService {
         active: true,
       });
       this.user.set({ email: 'mock@soexcellence.com', displayName: 'Mock User' });
+      this.authReady.set(true);
       return;
     }
 
@@ -85,6 +97,7 @@ export class AuthService {
       } else {
         this.user.set(null);
         this.member.set(null);
+        this.authReady.set(true); // resolved: signed out
       }
     });
   }
@@ -129,6 +142,7 @@ export class AuthService {
       this.rejectAndSignOut('Could not verify your access. Try again.');
     } finally {
       this.checking.set(false);
+      this.authReady.set(true); // resolved: gate ran (grant or reject)
     }
   }
 
