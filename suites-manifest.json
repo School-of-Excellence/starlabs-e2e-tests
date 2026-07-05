@@ -177,31 +177,31 @@
     },
     "appointments": {
       "title": "Appointments",
-      "description": "Appointment dashboard flows (local-only — no emulator config yet).",
-      "config": "playwright.appointments.config.ts",
-      "capture": "failure-only",
+      "description": "Appointment dashboard flows.",
+      "config": "playwright.appointments.emulator.evidence.config.ts",
+      "capture": "all",
       "specDir": "appointments",
-      "ciReady": false,
+      "ciReady": true,
       "appPaths": ["src/app/appointment-dashboard/**"],
       "cfPaths": ["functions/components/appointment.js", "functions/components/appointmentZoomIntegraion.js"]
     },
     "events": {
       "title": "Events",
-      "description": "Events flows (local-only — no emulator config yet).",
-      "config": "playwright.events.config.ts",
-      "capture": "failure-only",
+      "description": "Events flows.",
+      "config": "playwright.events.emulator.evidence.config.ts",
+      "capture": "all",
       "specDir": "events",
-      "ciReady": false,
+      "ciReady": true,
       "appPaths": ["src/app/Events/**"],
       "cfPaths": []
     },
     "profiles": {
       "title": "Profiles",
-      "description": "Participant profile management (local-only — no emulator config yet).",
-      "config": "playwright.profiles.config.ts",
-      "capture": "failure-only",
+      "description": "Participant profile management.",
+      "config": "playwright.profiles.emulator.evidence.config.ts",
+      "capture": "all",
       "specDir": "profiles",
-      "ciReady": false,
+      "ciReady": true,
       "appPaths": ["src/app/Participants Profile Management/**", "src/app/ProfilePicture/**"],
       "cfPaths": ["functions/components/participantmetadata.js"]
     }

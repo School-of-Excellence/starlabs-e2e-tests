@@ -30,7 +30,7 @@ export function makeEmulatorConfig(opts: { suite: string }): PlaywrightTestConfi
     fullyParallel: false,        // shared seed state — serialize for determinism (same as queue/journey)
     workers: 1,
     retries: process.env.CI ? 1 : 0,
-    reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['junit', { outputFile: 'results.xml' }]],
+    reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['json', { outputFile: 'playwright-report/report.json' }], ['junit', { outputFile: 'results.xml' }]],
     use: {
       baseURL: process.env.BASE_URL || 'http://localhost:4200',
       trace: 'on-first-retry',
@@ -73,6 +73,7 @@ export function makeEmulatorEvidenceConfig(base: PlaywrightTestConfig): Playwrig
     reporter: [
       ['list'],
       ['html', { open: 'never', outputFolder: 'playwright-report' }],
+      ['json', { outputFile: 'playwright-report/report.json' }],
       ['junit', { outputFile: 'results.xml' }],
     ],
   });
@@ -102,6 +103,7 @@ export function makeEmulatorReportConfig(base: PlaywrightTestConfig): Playwright
     reporter: [
       ['list'],
       ['html', { open: 'never', outputFolder: 'playwright-report' }],
+      ['json', { outputFile: 'playwright-report/report.json' }],
       ['junit', { outputFile: 'results.xml' }],
     ],
   });
