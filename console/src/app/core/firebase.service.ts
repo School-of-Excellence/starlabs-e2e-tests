@@ -544,6 +544,35 @@ export class FirebaseService {
     );
   }
 
+  /**
+   * ADMIN SHORTCUT (2026-07-04) — "Promote & Create PR → prod": the admin self-validates the dev
+   * deploy (prod sign-off) AND opens the development → production PR in one action, instead of
+   * waiting for a separate tester validation. Reuses the callables the admin is already authorized
+   * for (SIGNOFF_DEV_PROD + CREATE_PR_PROD); the self-sign-off is written to the audit log. STOP-ON-
+   * ERROR: if the sign-off fails we never open the PR; if the PR fails the sign-off remains
+   * (promotable = true) so the normal "Create PR → prod" button finishes it.
+   */
+  async promoteAndPrToProd(devRc: ReleaseCandidate): Promise<ActionResult> {
+    const signoff = await this.signoffProd(devRc, 'OK');
+    if (!signoff.ok) return signoff;
+    return this.createPrToProd(devRc);
+  }
+
+  /**
+   * ADMIN SHORTCUT (2026-07-04) — "Deploy & create PR → Dev": self-sign-off for dev + open the
+   * feature → development PR, then fire the preview build (with tests, for the record). Reuses
+   * SIGNOFF_PREVIEW_DEV + CREATE_PR_DEV + DEPLOY_PREVIEW (all admin-held). Order sign-off → PR →
+   * deploy so the build's PREVIEW_BUILDING status can't race the PR's OK_FOR_DEV precondition.
+   * STOP-ON-ERROR at each step; a failed final deploy leaves the PR open (retry via the Deploy menu).
+   */
+  async deployAndPrToDev(rc: ReleaseCandidate, opts: DeployOptions): Promise<ActionResult> {
+    const signoff = await this.signoffDev(rc, 'OK');
+    if (!signoff.ok) return signoff;
+    const pr = await this.createPrToDev(rc);
+    if (!pr.ok) return pr;
+    return this.deployPreview(rc, opts);
+  }
+
   /** Admin: add / update a console member (Settings, D1). → `setMember`. */
   setMember(m: Member): Promise<ActionResult> {
     return this.invoke(

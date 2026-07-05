@@ -445,6 +445,58 @@ export class WorkingBranchesComponent {
     }
   }
 
+  /** Admin-only shortcut visibility (the "Deploy & create PR → Dev" menu item). */
+  isAdmin(): boolean {
+    return this.auth.isAdmin();
+  }
+
+  /**
+   * ADMIN SHORTCUT — "Deploy (with tests) & create PR → Dev": one confirm → suite picker → self-sign-
+   * off dev + open the PR → development + fire a preview build WITH the picked suites
+   * (fb.deployAndPrToDev, sign-off → PR → deploy). Tests run for the record and do NOT block the PR;
+   * a failed final deploy still leaves the PR open (stop-on-error). Admin-only.
+   */
+  async deployAndPrWithTests(rc: ReleaseCandidate): Promise<void> {
+    this.deployMenu.set(null);
+    const ok = await this.confirm.ask({
+      title: 'Deploy (with tests) & create PR → Dev?',
+      message: `Admin shortcut for ${rc.branch} (${rc.repo}): SELF-APPROVE the tester dev sign-off, open the PR → development, and fire a preview build with the suites you pick next. Tests run for the record — they do not block the PR.`,
+      confirmLabel: 'Pick suites & deploy',
+    });
+    if (!ok) return;
+    const choice = await this.testDialog.open({ repo: rc.repo, branch: rc.branch, mode: 'deploy' });
+    if (!choice) return;
+    this.busy.set(rc.id);
+    try {
+      const res = await this.fb.deployAndPrToDev(rc, { runTests: true, ...choice });
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  /**
+   * ADMIN SHORTCUT — "Deploy (without tests) & create PR → Dev": NO suite picker — self-sign-off dev
+   * + open the PR → development + fire a preview build with NO test suites. Solves the "no suite
+   * forced" case where the with-tests picker would otherwise require a selection. Admin-only.
+   */
+  async deployAndPrNoTests(rc: ReleaseCandidate): Promise<void> {
+    this.deployMenu.set(null);
+    const ok = await this.confirm.ask({
+      title: 'Deploy (without tests) & create PR → Dev?',
+      message: `Admin shortcut for ${rc.branch} (${rc.repo}): SELF-APPROVE the tester dev sign-off, open the PR → development, and fire a preview build with NO test suites. Testers will see "No test done on this build".`,
+      confirmLabel: 'Deploy & create PR',
+    });
+    if (!ok) return;
+    this.busy.set(rc.id);
+    try {
+      const res = await this.fb.deployAndPrToDev(rc, { runTests: false });
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
   /** [Run tests…] — test-only dispatch on the card's branch (Angular ref fixed, L4/L6). */
   async runTestsFor(rc: ReleaseCandidate): Promise<void> {
     const choice = await this.testDialog.open({ repo: rc.repo, branch: rc.branch, mode: 'test-only' });

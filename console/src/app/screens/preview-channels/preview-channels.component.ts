@@ -14,6 +14,7 @@ import {
   toMillis,
   isProtectedBranch,
 } from '../../core/release-candidate.model';
+import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent } from '../../shared/activity-drawer/activity-drawer.component';
 import {
@@ -118,7 +119,8 @@ export class PreviewChannelsComponent {
    */
   readonly envEntries = computed(() =>
     this.rcs()
-      .filter((rc) => rc.branch === 'development')
+      // CF repos have no preview/deploy lane here — they're managed on the CF Board (2026-07-04).
+      .filter((rc) => rc.branch === 'development' && repoTypeOf(rc.repo) !== 'cloud-function')
       .sort((a, b) => a.repo.localeCompare(b.repo)),
   );
 
@@ -229,6 +231,16 @@ export class PreviewChannelsComponent {
       return 'Your role does not grant deploy sign-off.';
     if (rc.lastDeploymentState !== 'success')
       return 'Waiting for the deploy to finish (or it failed).';
+    // DEV promote gate: hide "OK to promote" once a promotion is in flight or there's nothing left
+    // to promote. Without this the button wrongly reappears after the prod PR opens/merges — on
+    // merge the backend resets prodGate to NONE (batch released), so the prodGate-OK check below no
+    // longer covers those states. Mirrors the release-channel promoteReason (2026-07-04 fix).
+    if (!this.isProd(rc)) {
+      if (rc.prProd.state === 'OPEN')
+        return 'A promotion PR → production is already open.';
+      if (!rc.hasUnreleased)
+        return 'Nothing to promote — production is up to date with development.';
+    }
     if (rc.prodGate.verdict === 'OK') return 'Validated for the current deploy.';
     return null;
   }

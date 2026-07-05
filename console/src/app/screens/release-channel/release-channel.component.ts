@@ -40,11 +40,17 @@ export class ReleaseChannelComponent {
 
   readonly isAdmin = computed(() => this.auth.isAdmin());
 
+  // CF repos aren't promoted from here — they're managed on the CF Board (2026-07-04), so the CF
+  // development/production entries are excluded from the release channel.
   readonly devEntries = computed(() =>
-    this.rcs().filter((rc) => rc.branch === 'development').sort((a, b) => a.repo.localeCompare(b.repo)),
+    this.rcs()
+      .filter((rc) => rc.branch === 'development' && repoTypeOf(rc.repo) !== 'cloud-function')
+      .sort((a, b) => a.repo.localeCompare(b.repo)),
   );
   readonly prodEntries = computed(() =>
-    this.rcs().filter((rc) => rc.branch === 'production').sort((a, b) => a.repo.localeCompare(b.repo)),
+    this.rcs()
+      .filter((rc) => rc.branch === 'production' && repoTypeOf(rc.repo) !== 'cloud-function')
+      .sort((a, b) => a.repo.localeCompare(b.repo)),
   );
 
   /** Every incoming feature→development PR for this repo (open/merged/denied). */
@@ -171,6 +177,48 @@ export class ReleaseChannelComponent {
     this.busy.set(devRc.id);
     try {
       const res = await this.fb.createPrToProd(devRc);
+      this.toast.show(res.ok, res.message);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
+  /**
+   * ADMIN SHORTCUT — show "Promote & Create PR → prod" when the ONLY thing blocking the promotion is
+   * the tester's validation: admin, dev is ahead of prod, no prod PR open, the dev deploy SUCCEEDED,
+   * but `promotable` is still false (awaiting tester "OK to promote"). The admin can self-validate.
+   */
+  canPromoteAndPr(devRc: ReleaseCandidate): boolean {
+    return !!(
+      this.auth.isAdmin() &&
+      devRc.hasUnreleased &&
+      devRc.prProd.state !== 'OPEN' &&
+      devRc.lastDeploymentState === 'success' &&
+      !devRc.promotable
+    );
+  }
+
+  /**
+   * ADMIN SHORTCUT — self-validate the dev deploy (prod sign-off) AND open the prod PR in one action,
+   * instead of waiting for a tester. fb.promoteAndPrToProd is stop-on-error: if the PR step fails the
+   * validation remains, so the normal "Create PR → prod" button (now enabled) finishes it.
+   */
+  async promoteAndPr(devRc: ReleaseCandidate): Promise<void> {
+    const branches = this.batch(devRc).map((b) => b.branch);
+    const confirmed = await this.confirm.ask({
+      title: 'Promote & create PR → production?',
+      message: `Admin shortcut for ${devRc.repo}: you are SELF-VALIDATING the development deploy (the tester's "OK to promote") AND opening the development → production pull request in one step.`,
+      confirmLabel: 'Promote & Create PR',
+      tone: 'prod',
+      detailsHeading: branches.length
+        ? `Promoting ${branches.length} branch${branches.length === 1 ? '' : 'es'}:`
+        : undefined,
+      details: branches.length ? branches : undefined,
+    });
+    if (!confirmed) return;
+    this.busy.set(devRc.id);
+    try {
+      const res = await this.fb.promoteAndPrToProd(devRc);
       this.toast.show(res.ok, res.message);
     } finally {
       this.busy.set(null);

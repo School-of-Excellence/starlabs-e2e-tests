@@ -360,6 +360,20 @@
       .menu button:hover {
         background: var(--chip);
       }
+      /* Admin power-shortcut — subtle accent to set it apart from the plain deploy options. */
+      .menu button.shortcut {
+        color: var(--accent);
+        font-weight: 600;
+        border-top: 1px solid var(--border);
+        margin-top: 2px;
+        padding-top: 9px;
+      }
+      /* Two shortcuts in a row: keep the divider only above the first. */
+      .menu button.shortcut + button.shortcut {
+        border-top: none;
+        margin-top: 0;
+        padding-top: 8px;
+      }
       .menu-backdrop {
         position: fixed;
         inset: 0;

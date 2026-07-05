@@ -51,6 +51,8 @@
         border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer;
       }
       button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+      /* Admin power-shortcut (self-validate + open prod PR) — warm tone to flag the combined action. */
+      button.primary.shortcut { background: var(--warn, #e0a83a); border-color: var(--warn, #e0a83a); color: #1a1205; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
       .histbtn { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 5px 9px; color: var(--muted); }
       .ghlink { font-size: 13px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--accent); text-decoration: none; }

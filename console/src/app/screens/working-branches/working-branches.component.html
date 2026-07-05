@@ -152,6 +152,10 @@
                       <div class="menu">
                         <button (click)="runDeploy(rc, false)">Deploy without tests</button>
                         <button (click)="runDeploy(rc, true)">Deploy with tests…</button>
+                        @if (isAdmin()) {
+                          <button class="shortcut" (click)="deployAndPrWithTests(rc)">Deploy (with tests) &amp; create PR → Dev</button>
+                          <button class="shortcut" (click)="deployAndPrNoTests(rc)">Deploy (without tests) &amp; create PR → Dev</button>
+                        }
                       </div>
                     }
                   </div>

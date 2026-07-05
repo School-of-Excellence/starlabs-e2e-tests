@@ -101,6 +101,17 @@
               }
             } @else if (releasedUpToDate(rc)) {
               <span class="badge" data-tone="ok">✓ Production is up to date — nothing to promote</span>
+            } @else if (canPromoteAndPr(rc)) {
+              <!-- Admin shortcut: the dev deploy succeeded but the tester hasn't validated yet — the
+                   admin self-validates AND opens the prod PR in one step (promoteAndPr). -->
+              <button
+                class="primary shortcut"
+                [disabled]="busy() === rc.id"
+                title="Self-validate the dev deploy and open the prod PR (admin shortcut)"
+                (click)="promoteAndPr(rc)"
+              >
+                Promote &amp; Create PR → prod
+              </button>
             } @else {
               <button
                 class="primary"
