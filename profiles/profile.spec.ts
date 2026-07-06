@@ -43,10 +43,17 @@ test.describe('Profiles — userprofile + profilesummary (real UI, anti-circular
     await page.goto(`/userprofile/${profProfileIds.p0}`, { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/userprofile/, { timeout: 30_000 });
 
-    // [REAL-UI] loadJourneyData() reads participant metadata/<p0> and binds userData.name -> .profile-name,
-    // userData.email -> a .detail-value (userprofile.component.ts:448 / .html:8,45). The seed wrote a
-    // friendly unique name; the APP queried the collection and rendered it.
-    await expect(page.locator('.profile-name'), 'PA-01: profile name must render').toHaveText(
+    // [REAL-UI] loadJourneyData() reads participant metadata/<p0> and binds userData.name -> the
+    // userprofile heading `<h3 class="profile-name">`, userData.email -> a .detail-value
+    // (userprofile.component.ts:448 / .html:8,45). The seed wrote a friendly unique name; the APP
+    // queried the collection and rendered it.
+    // Scope to `h3.profile-name`: on cicd-dev/development the shared app-shell toolbar (app.component
+    // .html:32, the mahalakshmi profile-picture integration — same branch divergence as PA-09) ALSO
+    // renders the signed-in user's name in a `<span class="profile-name">`, so a bare `.profile-name`
+    // matches two elements and trips Playwright strict mode. `h3.profile-name` is unique to this screen
+    // on BOTH branches (only userprofile.component.html:8 uses it), so this keeps coverage live on cicd
+    // and cicd-dev alike — cf. the PA-09 "broaden, don't skip" fix.
+    await expect(page.locator('h3.profile-name'), 'PA-01: profile name must render').toHaveText(
       new RegExp(profNames.p0.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), { timeout: 30_000 },
     );
     // The seeded email appears in one of the .detail-value spans.
