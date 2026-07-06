@@ -494,7 +494,12 @@ test.describe('V7 · uP! - Next Cycle — closed-loop walk to terminal (WF-uPNex
     await loginAsOperator(page);
     const studio = new StudioPage(page);
     await studio.load(SPECIALIST_PROFILE_ID);
-    await studio.selectStudio({ studioId: SE_PAIRING_ID });
+    // selectStudioWithLivePanel tolerates BOTH the v1 picker AND dynamic-studio-v2's auto-entered live
+    // panel (the seeded live assignment makes V2 skip the "Your Studios" picker; a bare selectStudio would
+    // wait for a picker button that never renders — the same V2 divergence lyl/big-next-cycle already
+    // migrated to this call). Its final wait asserts the live participant name hydrated — the drivability
+    // proof this hop needs (the variationid + participantsactivity preconditions resolved).
+    await studio.selectStudioWithLivePanel(SE_PAIRING_ID);
     await expect(studio.liveParticipantName, 'studio live panel must mount + hydrate for the Scope Enhancement session (proves the variationid + participantsactivity preconditions)').toBeVisible({ timeout: 30_000 });
 
     // 4. COMMIT the NEXT-CYCLE forward move (markascompleted:true) on the REAL OPERATOR BOARD.
