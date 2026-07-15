@@ -28,6 +28,9 @@ import {
   UserPrefs,
   toMillis,
   isProtectedBranch,
+  MobilePlatform,
+  MobileDeliveryFacet,
+  mobileAggregateVerdict,
 } from './release-candidate.model';
 import { Member } from './roles';
 import { AuthService } from './auth.service';
@@ -496,17 +499,23 @@ export class FirebaseService {
     );
   }
 
-  /** Tester sign-off on the preview channel (OK for dev, D4). → `signoff` stage=dev. */
+  /** Tester sign-off on the preview channel (OK for dev, D4). → `signoff` stage=dev.
+   *  FLUTTER: pass `platform` — sign-off is per-platform; the aggregate gate turns OK when every
+   *  delivered platform is signed off (plan 2026-07-14). */
   signoffDev(
     rc: ReleaseCandidate,
     verdict: 'OK' | 'REJECTED',
     note?: string,
+    platform?: MobilePlatform,
   ): Promise<ActionResult> {
     return this.invoke(
       'signoff',
-      { repo: rc.repo, branch: rc.branch, stage: 'dev', verdict, note },
-      () => this.applyGate(rc.id, 'dev', verdict, note),
-      `sign-off dev (${verdict}) for ${rc.branch}`,
+      { repo: rc.repo, branch: rc.branch, stage: 'dev', verdict, note, ...(platform ? { platform } : {}) },
+      () =>
+        platform
+          ? this.applyMobileSignoff(rc.id, 'dev', verdict, platform, note)
+          : this.applyGate(rc.id, 'dev', verdict, note),
+      `sign-off dev (${verdict}${platform ? '/' + platform : ''}) for ${rc.branch}`,
     );
   }
 
@@ -515,12 +524,16 @@ export class FirebaseService {
     rc: ReleaseCandidate,
     verdict: 'OK' | 'REJECTED',
     note?: string,
+    platform?: MobilePlatform,
   ): Promise<ActionResult> {
     return this.invoke(
       'signoff',
-      { repo: rc.repo, branch: rc.branch, stage: 'prod', verdict, note },
-      () => this.applyGate(rc.id, 'prod', verdict, note),
-      `sign-off prod (${verdict}) for ${rc.branch}`,
+      { repo: rc.repo, branch: rc.branch, stage: 'prod', verdict, note, ...(platform ? { platform } : {}) },
+      () =>
+        platform
+          ? this.applyMobileSignoff(rc.id, 'prod', verdict, platform, note)
+          : this.applyGate(rc.id, 'prod', verdict, note),
+      `sign-off prod (${verdict}${platform ? '/' + platform : ''}) for ${rc.branch}`,
     );
   }
 
@@ -756,6 +769,49 @@ export class FirebaseService {
         promotable: verdict === 'OK' && rc.lastDeploymentState === 'success' && !!rc.hasUnreleased,
         derivedStatus: verdict === 'OK' ? 'OK_FOR_PROD' : rc.derivedStatus,
         lastActivity: { type: 'signoff_prod', sha: rc.headSha, at },
+      };
+    });
+  }
+
+  /** MOCK optimistic per-platform sign-off (flutter): record the platform verdict, recompute the
+   *  aggregate gate + derivedStatus exactly like the backend. */
+  private applyMobileSignoff(
+    id: string,
+    stage: 'dev' | 'prod',
+    verdict: GateVerdict,
+    platform: MobilePlatform,
+    note?: string,
+  ): void {
+    this.patch(id, (rc) => {
+      const at = new Date().toISOString();
+      const md: MobileDeliveryFacet = {
+        ...(rc.mobileDelivery ?? {}),
+        [platform]: {
+          ...(rc.mobileDelivery?.[platform] ?? {}),
+          [stage === 'dev' ? 'devSignoff' : 'prodSignoff']: {
+            verdict,
+            sha: rc.headSha,
+            by: '(me)',
+            at,
+          },
+        },
+      };
+      const aggregate = mobileAggregateVerdict(md, stage, rc.headSha);
+      const gateKey = stage === 'dev' ? 'devGate' : 'prodGate';
+      const derivedStatus: RcStatus =
+        aggregate === 'OK' ? (stage === 'dev' ? 'OK_FOR_DEV' : 'OK_FOR_PROD') : rc.derivedStatus;
+      return {
+        ...rc,
+        mobileDelivery: md,
+        [gateKey]: { ...rc[gateKey], verdict: aggregate, sha: rc.headSha, at },
+        ...(stage === 'prod'
+          ? {
+              promotable:
+                aggregate === 'OK' && rc.lastDeploymentState === 'success' && !!rc.hasUnreleased,
+            }
+          : {}),
+        derivedStatus,
+        lastActivity: { type: stage === 'dev' ? 'signoff_dev' : 'signoff_prod', sha: rc.headSha, at },
       };
     });
   }

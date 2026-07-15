@@ -58,6 +58,11 @@ import {
   CfFunctionDoc,
   CfBranchDoc,
   computeCfMatrixState,
+  MobilePlatform,
+  MobileEnv,
+  MobileDeliveryStatus,
+  MobileEnvDelivery,
+  mobileAggregateVerdict,
 } from './model';
 import { loadSuitesManifest, planSuites } from './suites';
 import { mutateCandidate } from './candidate';
@@ -94,6 +99,9 @@ const PREVIEW_WORKFLOW = 'preview.yml';
 /** The preview-time test gate, dispatched alongside preview.yml on deploy (2026-06-29). */
 const PREVIEW_E2E_WORKFLOW = 'preview-e2e.yml';
 const DEPLOY_WORKFLOW = 'deploy_19.yml';
+/** Flutter feature-stage build+distribute workflow, dispatched by Deploy for flutter repos
+ *  (plan 2026-07-14). Builds both envs → App Distribution; no web preview channel. */
+const MOBILE_PREVIEW_WORKFLOW = 'mobile-preview.yml';
 /** Workflow_run "name" substring that identifies the e2e gate run. */
 const E2E_GATE_HINT = 'e2e';
 
@@ -809,14 +817,19 @@ export const deployPreview = onCall<DeployPreviewData>(
 
     await requireCapability(caller, 'DEPLOY_PREVIEW');
 
+    // FLUTTER (plan 2026-07-14): no web preview channel — Deploy dispatches the mobile build+distribute
+    // workflow (both envs → App Distribution) and the build lane is driven by `mobileDelivery`, not the
+    // preview facet. The e2e gate below (preview-e2e.yml) is web-only, so it's skipped for flutter.
+    const isFlutter = repoTypeOf(repo) === 'flutter';
+
     const octokit = appOctokit();
     try {
       await octokit.actions.createWorkflowDispatch({
         owner: GITHUB_ORG,
         repo,
-        workflow_id: PREVIEW_WORKFLOW,
+        workflow_id: isFlutter ? MOBILE_PREVIEW_WORKFLOW : PREVIEW_WORKFLOW,
         ref: branch,
-        // preview.yml declares `inputs.ref` as REQUIRED — must be sent or GitHub
+        // preview.yml / mobile-preview.yml declare `inputs.ref` as REQUIRED — must be sent or GitHub
         // rejects the dispatch with 422 "required input not provided".
         inputs: { ref: branch },
       });
@@ -831,7 +844,7 @@ export const deployPreview = onCall<DeployPreviewData>(
     // inputs (JSON array, plan L2) and the gate runs a matrix over them; with no inputs the gate
     // falls back to its own manifest path-routing. Best-effort — a gate-dispatch hiccup must NOT
     // fail the preview build.
-    if (runTests !== false) {
+    if (runTests !== false && !isFlutter) {
       const gateInputs: Record<string, string> = {};
       if (Array.isArray(suites) && suites.length > 0) gateInputs.suites = JSON.stringify(suites);
       if (cfRepo) gateInputs.cf_repo = cfRepo;
@@ -883,7 +896,16 @@ export const deployPreview = onCall<DeployPreviewData>(
     });
     await appendActivity(entry);
     await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
-      c.preview.buildState = 'BUILDING';
+      if (isFlutter) {
+        // Both envs (test + prod) will build for android; mark them BUILDING so the card shows
+        // progress. iOS is deferred (no build), so it's left absent.
+        c.mobileDelivery ??= {};
+        c.mobileDelivery.android ??= {};
+        c.mobileDelivery.android.test = { ...(c.mobileDelivery.android.test ?? {}), status: 'BUILDING' };
+        c.mobileDelivery.android.prod = { ...(c.mobileDelivery.android.prod ?? {}), status: 'BUILDING' };
+      } else {
+        c.preview.buildState = 'BUILDING';
+      }
     });
 
     logger.info(`deployPreview dispatched ${repo}/${branch} by ${callerLabel(caller)}`);
@@ -901,13 +923,16 @@ interface SignoffData {
   stage: 'dev' | 'prod';
   verdict: 'OK' | 'REJECTED';
   note?: string;
+  /** FLUTTER only (plan 2026-07-14): sign-off is PER-PLATFORM. Required for flutter repos; the
+   *  aggregate devGate/prodGate turns OK only when every delivered platform is signed off. */
+  platform?: MobilePlatform;
 }
 
 export const signoff = onCall<SignoffData>(
   { region },
   async (req: CallableRequest<SignoffData>) => {
     const caller = requireAuth(req);
-    const { repo, branch, stage, verdict, note } = req.data ?? ({} as SignoffData);
+    const { repo, branch, stage, verdict, note, platform } = req.data ?? ({} as SignoffData);
     if (!repo || !branch || !stage || !verdict) {
       throw new HttpsError('invalid-argument', 'repo, branch, stage and verdict are required.');
     }
@@ -916,6 +941,11 @@ export const signoff = onCall<SignoffData>(
     }
     if (verdict !== 'OK' && verdict !== 'REJECTED') {
       throw new HttpsError('invalid-argument', "verdict must be 'OK' or 'REJECTED'.");
+    }
+    // FLUTTER: sign-off is per-platform — `platform` is required and must be android/ios.
+    const isFlutter = repoTypeOf(repo) === 'flutter';
+    if (isFlutter && platform !== 'android' && platform !== 'ios') {
+      throw new HttpsError('invalid-argument', "flutter sign-off requires platform 'android' or 'ios'.");
     }
 
     const cap: Capability = stage === 'dev' ? 'SIGNOFF_PREVIEW_DEV' : 'SIGNOFF_DEV_PROD';
@@ -934,20 +964,44 @@ export const signoff = onCall<SignoffData>(
       confirmed: true,
       eventTime: Date.now(),
       actor: label,
-      detail: { verdict, stage },
+      detail: { verdict, stage, ...(platform ? { platform } : {}) },
     });
     await appendActivity(entry);
 
     const written = await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
-      const gate = stage === 'dev' ? c.devGate : c.prodGate;
-      gate.verdict = verdict as GateVerdict;
-      gate.sha = c.headSha; // sign-off is bound to the CURRENT head (freshness anchor)
-      gate.by = label;
-      gate.at = Date.now();
-      if (newNote) gate.notes = [...(gate.notes ?? []), newNote];
+      const now = Date.now();
+      if (isFlutter && platform) {
+        // Per-platform sign-off: record it on the platform, then recompute the AGGREGATE gate
+        // (OK only when every delivered platform is OK for this stage). The aggregate is what the
+        // projection reads, so derivedStatus advances exactly like a web repo's single gate.
+        c.mobileDelivery ??= {};
+        c.mobileDelivery[platform] ??= {};
+        const key = stage === 'dev' ? 'devSignoff' : 'prodSignoff';
+        c.mobileDelivery[platform]![key] = {
+          verdict: verdict as GateVerdict,
+          sha: c.headSha,
+          by: label,
+          at: now,
+        };
+        const gate = stage === 'dev' ? c.devGate : c.prodGate;
+        gate.verdict = mobileAggregateVerdict(c.mobileDelivery, stage, c.headSha);
+        gate.sha = c.headSha;
+        gate.by = label;
+        gate.at = now;
+        if (newNote) gate.notes = [...(gate.notes ?? []), newNote];
+      } else {
+        const gate = stage === 'dev' ? c.devGate : c.prodGate;
+        gate.verdict = verdict as GateVerdict;
+        gate.sha = c.headSha; // sign-off is bound to the CURRENT head (freshness anchor)
+        gate.by = label;
+        gate.at = now;
+        if (newNote) gate.notes = [...(gate.notes ?? []), newNote];
+      }
     });
 
-    logger.info(`signoff ${stage}=${verdict} on ${repo}/${branch} by ${label}`);
+    logger.info(
+      `signoff ${stage}=${verdict}${platform ? `/${platform}` : ''} on ${repo}/${branch} by ${label}`,
+    );
     return { ok: true, derivedStatus: written.derivedStatus, reconcile: written.reconcile };
   },
 );
@@ -1840,11 +1894,11 @@ function memberCollection() {
 // payload shape is strictly validated, and only the preview facet is written (via
 // mutateCandidate, so derivedStatus/reconcile/promotable stay consistent).
 
-/** Repos permitted to push a preview URL (the org's repos). */
+/** Repos permitted to push a WEB preview URL. Flutter is intentionally excluded (plan 2026-07-14):
+ *  it has no web preview channel — it reports native delivery via recordMobileRelease instead. */
 const INGEST_REPO_ALLOWLIST = new Set([
   'starlabs-angular',
   'starlabs-cloud-function',
-  'breakthroughs-flutter',
   'starlabs-e2e-tests',
 ]);
 
@@ -1929,6 +1983,108 @@ export const recordPreviewUrl = onRequest(
       res.status(200).json({ ok: true });
     } catch (err) {
       logger.error('recordPreviewUrl failed', err);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  },
+);
+
+// ===========================================================================
+// 9b. recordMobileRelease (HTTPS) — flutter CI pushes per-platform/env delivery
+// ===========================================================================
+//
+// The flutter build+distribute workflows POST here after each App Distribution / store-track
+// delivery. Auth is the same low-privilege bearer (CONSOLE_INGEST_TOKEN); a leak can at most set a
+// delivery status on a flutter candidate. Writes ONLY the mobileDelivery facet (per platform+env);
+// mutateCandidate re-projects, so the build lane advances to PREVIEW_LIVE once anything is delivered
+// and the per-platform sign-off buttons enable. There is NO store-release state here — Option A
+// (console stops at DEV_MERGED; store publish is manual, plan 2026-07-14).
+
+const MOBILE_STATUSES: ReadonlySet<MobileDeliveryStatus> = new Set([
+  'BUILDING',
+  'SENT',
+  'UPLOADED',
+  'FAILED',
+]);
+
+export const recordMobileRelease = onRequest(
+  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  async (req: Request, res: Response) => {
+    if (req.method !== 'POST') {
+      res.status(405).send('Method Not Allowed');
+      return;
+    }
+    if (!bearerOk(req.header('authorization'), CONSOLE_INGEST_TOKEN.value())) {
+      res.status(401).json({ ok: false, error: 'unauthorized' });
+      return;
+    }
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    // The workflow POSTs `${{ github.repository }}` (owner/repo) — accept either form.
+    const repoRaw = typeof body.repo === 'string' ? body.repo.trim() : '';
+    const repo = repoRaw.includes('/') ? repoRaw.split('/').pop()! : repoRaw;
+    const branch = typeof body.branch === 'string' ? body.branch.trim() : '';
+    const platform = body.platform as MobilePlatform;
+    const env = body.env as MobileEnv;
+    const status = body.status as MobileDeliveryStatus;
+    const distUrl =
+      typeof body.distUrl === 'string' && /^https:\/\/\S{1,480}$/.test(body.distUrl)
+        ? body.distUrl
+        : undefined;
+    const trackRef =
+      typeof body.trackRef === 'string' && body.trackRef.length <= 200 ? body.trackRef : undefined;
+    const sha =
+      typeof body.sha === 'string' && /^[0-9a-f]{7,40}$/i.test(body.sha) ? body.sha : undefined;
+
+    if (repoTypeOf(repo) !== 'flutter') {
+      res.status(400).json({ ok: false, error: 'repo not a flutter repo' });
+      return;
+    }
+    if (!branch || branch.length > 200) {
+      res.status(400).json({ ok: false, error: 'invalid branch' });
+      return;
+    }
+    if (platform !== 'android' && platform !== 'ios') {
+      res.status(400).json({ ok: false, error: 'invalid platform' });
+      return;
+    }
+    if (env !== 'test' && env !== 'prod') {
+      res.status(400).json({ ok: false, error: 'invalid env' });
+      return;
+    }
+    if (!MOBILE_STATUSES.has(status)) {
+      res.status(400).json({ ok: false, error: 'invalid status' });
+      return;
+    }
+
+    try {
+      const now = Date.now();
+      const entry = activityEntry({
+        repo,
+        branch,
+        type: 'mobile_release',
+        source: 'webhook',
+        confirmed: true,
+        eventTime: now,
+        sha,
+        actor: 'ci',
+        detail: { platform, env, status, ...(distUrl ? { distUrl } : {}), via: 'recordMobileRelease' },
+      });
+      await appendActivity(entry);
+
+      await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
+        c.mobileDelivery ??= {};
+        c.mobileDelivery[platform] ??= {};
+        const prev: MobileEnvDelivery = c.mobileDelivery[platform]![env] ?? { status: 'NONE' };
+        const next: MobileEnvDelivery = { ...prev, status, at: now };
+        if (distUrl) next.distUrl = distUrl;
+        if (trackRef) next.trackRef = trackRef;
+        c.mobileDelivery[platform]![env] = next;
+      });
+
+      logger.info(`recordMobileRelease ${repo}/${branch} ${platform}/${env} → ${status}`);
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      logger.error('recordMobileRelease failed', err);
       res.status(500).json({ ok: false, error: 'internal' });
     }
   },

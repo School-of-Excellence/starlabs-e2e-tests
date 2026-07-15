@@ -13,6 +13,11 @@ import {
   shippingBadge,
   toMillis,
   isProtectedBranch,
+  MobilePlatform,
+  MobileEnv,
+  MobileEnvDelivery,
+  mobileBuildState,
+  deliveredPlatforms,
 } from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
@@ -77,9 +82,15 @@ export class PreviewChannelsComponent {
   readonly previewStale = previewStale;
   readonly signoffStale = signoffStale;
 
-  /** Feature candidates with a preview channel (the dev-gate cards). */
+  /** Feature candidates with a preview channel (web) OR a native build (flutter) — the dev-gate cards. */
   readonly withPreview = computed(() =>
-    this.rcs().filter((r) => r.preview && r.preview.buildState !== 'NONE'),
+    this.rcs().filter((r) => {
+      const bs =
+        r.preview && r.preview.buildState !== 'NONE'
+          ? r.preview.buildState
+          : mobileBuildState(r.mobileDelivery);
+      return bs !== 'NONE';
+    }),
   );
 
   /**
@@ -88,6 +99,9 @@ export class PreviewChannelsComponent {
    * (usability plan 2026-07-02).
    */
   awaitingDevSignoff(rc: ReleaseCandidate): boolean {
+    if (repoTypeOf(rc.repo) === 'flutter') {
+      return mobileBuildState(rc.mobileDelivery) === 'LIVE' && rc.devGate.verdict !== 'OK';
+    }
     return (
       rc.preview.buildState === 'LIVE' && !previewStale(rc) && rc.devGate.verdict !== 'OK'
     );
@@ -139,7 +153,9 @@ export class PreviewChannelsComponent {
   }
 
   buildTone(rc: ReleaseCandidate): string {
-    switch (rc.preview.buildState) {
+    const bs =
+      rc.preview.buildState !== 'NONE' ? rc.preview.buildState : mobileBuildState(rc.mobileDelivery);
+    switch (bs) {
       case 'LIVE':
         return 'ok';
       case 'BUILDING':
@@ -152,6 +168,35 @@ export class PreviewChannelsComponent {
   }
   gateTone(v: string): string {
     return v === 'OK' ? 'ok' : v === 'REJECTED' ? 'bad' : 'none';
+  }
+
+  // --- Flutter native delivery (repoType 'flutter'; plan 2026-07-14) --------------------------
+  readonly MOBILE_ENVS: MobileEnv[] = ['test', 'prod'];
+  isFlutter(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'flutter';
+  }
+  /** Effective build lane state (mobileDelivery for flutter, preview facet otherwise). */
+  buildStateLabel(rc: ReleaseCandidate): string {
+    return rc.preview.buildState !== 'NONE'
+      ? rc.preview.buildState
+      : mobileBuildState(rc.mobileDelivery);
+  }
+  /** Platforms with a delivery (android/ios) — drives the per-platform sign-off rows. */
+  mobilePlatforms(rc: ReleaseCandidate): MobilePlatform[] {
+    return deliveredPlatforms(rc.mobileDelivery);
+  }
+  mobileEnv(rc: ReleaseCandidate, p: MobilePlatform, env: MobileEnv): MobileEnvDelivery | undefined {
+    return rc.mobileDelivery?.[p]?.[env];
+  }
+  /** This platform's dev/prod sign-off verdict (NONE if not yet signed). */
+  platformVerdict(rc: ReleaseCandidate, p: MobilePlatform, stage: 'dev' | 'prod'): string {
+    const s = rc.mobileDelivery?.[p]?.[stage === 'dev' ? 'devSignoff' : 'prodSignoff'];
+    return s?.verdict ?? 'NONE';
+  }
+  /** Whether this platform's dev sign-off is fresh (covers HEAD) — for the "signed" tick. */
+  platformSignedCurrent(rc: ReleaseCandidate, p: MobilePlatform): boolean {
+    const s = rc.mobileDelivery?.[p]?.devSignoff;
+    return s?.verdict === 'OK' && (!s.sha || !rc.headSha || s.sha === rc.headSha);
   }
 
   // --- Preview-time test-suite gate (preview-e2e.yml report, shown at sign-off) ---------------
@@ -215,10 +260,17 @@ export class PreviewChannelsComponent {
     return rc.devGate.verdict === 'OK' && !signoffStale(rc.devGate, rc.headSha);
   }
 
-  /** Disabled reason for the FEATURE dev gate, or null when the tester may (re-)approve. */
+  /** Disabled reason for the FEATURE dev gate, or null when the tester may (re-)approve.
+   *  FLUTTER: gated on native delivery (LIVE once any platform/env is distributed); per-platform
+   *  buttons handle the individual verdicts, so we don't block on the aggregate here. */
   devReason(rc: ReleaseCandidate): string | null {
     if (!this.auth.hasCapability('SIGNOFF_PREVIEW_DEV'))
       return 'Your role does not grant dev sign-off.';
+    if (this.isFlutter(rc)) {
+      if (mobileBuildState(rc.mobileDelivery) !== 'LIVE')
+        return 'Deploy a build (App Distribution) before signing off.';
+      return null;
+    }
     if (rc.preview.buildState !== 'LIVE' || previewStale(rc))
       return 'Deploy a fresh preview for the current commit before signing off.';
     if (this.devSignedCurrent(rc)) return 'Signed off for the current preview.';
@@ -269,13 +321,18 @@ export class PreviewChannelsComponent {
     });
   }
 
-  async signDev(rc: ReleaseCandidate, verdict: 'OK' | 'REJECTED'): Promise<void> {
+  async signDev(
+    rc: ReleaseCandidate,
+    verdict: 'OK' | 'REJECTED',
+    platform?: MobilePlatform,
+  ): Promise<void> {
     const note = this.devNote().trim();
+    const pfx = platform ? ` · ${platform}` : '';
     const ok =
       verdict === 'OK'
         ? await this.confirm.ask({
-            title: 'Sign off “OK for dev”?',
-            message: `This records your sign-off for ${rc.branch} (${rc.repo}) and lets the developer open a PR → development.`,
+            title: `Sign off “OK for dev”${pfx}?`,
+            message: `This records your ${platform ? platform + ' ' : ''}sign-off for ${rc.branch} (${rc.repo})${platform ? '. When every delivered platform is signed off, the developer can open a PR → development.' : ' and lets the developer open a PR → development.'}`,
             confirmLabel: 'OK for dev',
             detailsHeading: note ? 'Your note:' : undefined,
             details: note ? [note] : undefined,
@@ -291,7 +348,7 @@ export class PreviewChannelsComponent {
     if (!ok) return;
     this.busy.set(rc.id);
     try {
-      const res = await this.fb.signoffDev(rc, verdict, note || undefined);
+      const res = await this.fb.signoffDev(rc, verdict, note || undefined, platform);
       this.toast.show(res.ok, res.message);
       this.devNote.set('');
     } finally {

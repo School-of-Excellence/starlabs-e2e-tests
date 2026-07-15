@@ -14,6 +14,11 @@ import {
   isProtectedBranch,
   isMuted,
   shippingBadge,
+  MobilePlatform,
+  MobileEnv,
+  MobileEnvDelivery,
+  mobileBuildState,
+  deliveredPlatforms,
 } from '../../core/release-candidate.model';
 import { STATUS_META } from '../../core/status-meta';
 import {
@@ -269,7 +274,9 @@ export class WorkingBranchesComponent {
   }
 
   buildTone(rc: ReleaseCandidate): string {
-    switch (rc.preview.buildState) {
+    const bs =
+      rc.preview.buildState !== 'NONE' ? rc.preview.buildState : mobileBuildState(rc.mobileDelivery);
+    switch (bs) {
       case 'LIVE':
         return 'ok';
       case 'BUILDING':
@@ -279,6 +286,23 @@ export class WorkingBranchesComponent {
       default:
         return 'none';
     }
+  }
+
+  // --- Flutter native delivery (repoType 'flutter'; plan 2026-07-14) ------------------------
+  readonly MOBILE_ENVS: MobileEnv[] = ['test', 'prod'];
+  isFlutter(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'flutter';
+  }
+  buildStateLabel(rc: ReleaseCandidate): string {
+    return rc.preview.buildState !== 'NONE'
+      ? rc.preview.buildState
+      : mobileBuildState(rc.mobileDelivery);
+  }
+  mobilePlatforms(rc: ReleaseCandidate): MobilePlatform[] {
+    return deliveredPlatforms(rc.mobileDelivery);
+  }
+  mobileEnv(rc: ReleaseCandidate, p: MobilePlatform, env: MobileEnv): MobileEnvDelivery | undefined {
+    return rc.mobileDelivery?.[p]?.[env];
   }
   gateTone(v: string): string {
     return v === 'OK' ? 'ok' : v === 'REJECTED' ? 'bad' : 'none';

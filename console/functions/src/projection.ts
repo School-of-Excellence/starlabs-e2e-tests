@@ -19,6 +19,8 @@ import {
   PreviewFacet,
   GateFacet,
   PrFacet,
+  MobileDeliveryFacet,
+  mobileBuildState,
 } from './model';
 
 /** The slice of a candidate the projection needs (facets + head + last activity). */
@@ -29,6 +31,8 @@ export interface ProjectionInput {
   prDev: PrFacet;
   prodGate: GateFacet;
   prProd: PrFacet;
+  /** flutter native delivery — drives the build lane when there is no web preview. */
+  mobileDelivery?: MobileDeliveryFacet;
   lastActivity?: LastActivity;
 }
 
@@ -78,10 +82,15 @@ function deriveStatus(c: ProjectionInput): ReleaseStatus {
   if (c.prDev.state === 'OPEN' && covers(c.prDev.headSha)) return ReleaseStatus.PR_TO_DEV;
   if (c.devGate.verdict === 'OK' && covers(c.devGate.sha)) return ReleaseStatus.OK_FOR_DEV;
 
-  // PREVIEW lane -----------------------------------------------------------
-  if (c.preview.buildState === 'LIVE') return ReleaseStatus.PREVIEW_LIVE;
-  if (c.preview.buildState === 'BUILDING') return ReleaseStatus.PREVIEW_BUILDING;
-  if (c.preview.buildState === 'FAILED') return ReleaseStatus.PREVIEW_FAILED;
+  // PREVIEW / MOBILE-DELIVERY lane -----------------------------------------
+  // Web repos drive this lane from the preview facet; flutter repos have no web preview, so the
+  // lane is derived from `mobileDelivery` (LIVE once any platform/env is distributed → sign-off
+  // enabled). Whichever is non-NONE wins (a candidate is one or the other, never both).
+  const buildState =
+    c.preview.buildState !== 'NONE' ? c.preview.buildState : mobileBuildState(c.mobileDelivery);
+  if (buildState === 'LIVE') return ReleaseStatus.PREVIEW_LIVE;
+  if (buildState === 'BUILDING') return ReleaseStatus.PREVIEW_BUILDING;
+  if (buildState === 'FAILED') return ReleaseStatus.PREVIEW_FAILED;
 
   return ReleaseStatus.NO_ACTION;
 }
@@ -182,6 +191,7 @@ export function projectCandidate(c: ReleaseCandidate): ProjectionResult {
     prDev: c.prDev,
     prodGate: c.prodGate,
     prProd: c.prProd,
+    mobileDelivery: c.mobileDelivery,
     lastActivity: c.lastActivity,
   });
 }

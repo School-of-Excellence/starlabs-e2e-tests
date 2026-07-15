@@ -76,10 +76,27 @@
 
           <!-- Facet badges (dev lane only) -->
           <div class="facets">
-            <span class="badge" [attr.data-tone]="buildTone(rc)">
-              preview: {{ rc.preview.buildState }}
-              @if (previewStale(rc)) { <em class="stale">stale</em> }
-            </span>
+            @if (isFlutter(rc)) {
+              <!-- Flutter: native delivery (both envs → App Distribution), no web preview URL. -->
+              <span class="badge" [attr.data-tone]="buildTone(rc)">
+                build: {{ buildStateLabel(rc) }}
+              </span>
+              @for (p of mobilePlatforms(rc); track p) {
+                @for (env of MOBILE_ENVS; track env) {
+                  @if (mobileEnv(rc, p, env); as d) {
+                    <span class="badge" [attr.data-tone]="buildTone(rc)">
+                      {{ p }}/{{ env }}: {{ d.status }}
+                      @if (d.distUrl) { · <a class="ghlink sm" [href]="d.distUrl" target="_blank" rel="noopener">install ↗</a> }
+                    </span>
+                  }
+                }
+              }
+            } @else {
+              <span class="badge" [attr.data-tone]="buildTone(rc)">
+                preview: {{ rc.preview.buildState }}
+                @if (previewStale(rc)) { <em class="stale">stale</em> }
+              </span>
+            }
             <span class="badge" [attr.data-tone]="gateTone(rc.devGate.verdict)">
               dev gate: {{ rc.devGate.verdict }}
               @if (signoffStale(rc.devGate, rc.headSha)) { <em class="stale">stale</em> }

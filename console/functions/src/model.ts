@@ -120,6 +120,108 @@ export interface LastActivity {
   at?: number;
 }
 
+// --- Flutter native delivery (repoType 'flutter'; plan 2026-07-14-flutter-rollout-plan-v2) ------
+// Mirror of frontend release-candidate.model.ts. Flutter has NO web preview: a flutter candidate
+// carries `mobileDelivery` instead — per-platform build/distribution state + per-platform tester
+// sign-offs (the locked per-platform gate model). Console tracks up to DEV_MERGED only; there is
+// NO store-release state here (store release is manual, off-console).
+
+/** Build/distribution state for ONE (platform, env). android:SENT (App Dist) / UPLOADED (Play
+ *  internal); ios:UPLOADED (ad-hoc App Dist / TestFlight). */
+export type MobileDeliveryStatus = 'NONE' | 'BUILDING' | 'SENT' | 'UPLOADED' | 'FAILED';
+
+/** One (platform, environment) delivery. `env` = which Firebase project the build is wired to:
+ *  test = starlabs-test, prod = fir-sample-aae4a. */
+export interface MobileEnvDelivery {
+  status: MobileDeliveryStatus;
+  /** Firebase App Distribution install link (feature stage). */
+  distUrl?: string;
+  /** Dev-merge track ref: iOS TestFlight build no. / Android Play Internal version. */
+  trackRef?: string;
+  at?: number;
+}
+
+/** A per-platform tester sign-off (reuses GateVerdict; SHA-bound for freshness like GateFacet).
+ *  Sign-off is PER-PLATFORM (locked 2026-07-14), NOT per-env. */
+export interface MobileSignoff {
+  verdict: GateVerdict;
+  sha?: string;
+  by?: string;
+  at?: number;
+}
+
+/** One platform's per-env delivery + per-stage sign-off inside `mobileDelivery`. */
+export interface MobilePlatformFacet {
+  test?: MobileEnvDelivery;
+  prod?: MobileEnvDelivery;
+  /** Feature-stage "OK for dev" sign-off for THIS platform. */
+  devSignoff?: MobileSignoff;
+  /** Dev-merge "OK to promote" sign-off for THIS platform. */
+  prodSignoff?: MobileSignoff;
+}
+
+/** Native-delivery facet for flutter candidates (replaces the web `preview` facet). */
+export interface MobileDeliveryFacet {
+  android?: MobilePlatformFacet;
+  ios?: MobilePlatformFacet;
+}
+
+/** Platforms / envs the flutter delivery model tracks. */
+export type MobilePlatform = 'android' | 'ios';
+export type MobileEnv = 'test' | 'prod';
+
+/**
+ * Effective build lifecycle for a flutter candidate, derived from `mobileDelivery` so the projection
+ * can reuse the PREVIEW lane (LIVE→sign-off enabled) without a web preview URL. LIVE once ANY
+ * (platform,env) has been delivered; BUILDING while any is building; FAILED only if something failed
+ * and nothing delivered; else NONE.
+ */
+export function mobileBuildState(md?: MobileDeliveryFacet): BuildState {
+  if (!md) return 'NONE';
+  const envs: MobileEnvDelivery[] = [];
+  for (const p of ['android', 'ios'] as MobilePlatform[]) {
+    const pf = md[p];
+    if (pf?.test) envs.push(pf.test);
+    if (pf?.prod) envs.push(pf.prod);
+  }
+  if (envs.length === 0) return 'NONE';
+  if (envs.some((e) => e.status === 'SENT' || e.status === 'UPLOADED')) return 'LIVE';
+  if (envs.some((e) => e.status === 'BUILDING')) return 'BUILDING';
+  if (envs.some((e) => e.status === 'FAILED')) return 'FAILED';
+  return 'NONE';
+}
+
+/**
+ * Aggregate per-platform sign-offs into ONE gate verdict for a stage (locked per-platform gates,
+ * 2026-07-14). OK iff EVERY delivered platform has a fresh (sha===headSha) OK for that stage;
+ * REJECTED if any delivered platform rejected; else NONE. A platform counts as "delivered" if it has
+ * any env delivery that is not NONE — so during the android-only phase, android-OK alone advances.
+ */
+export function mobileAggregateVerdict(
+  md: MobileDeliveryFacet | undefined,
+  stage: 'dev' | 'prod',
+  headSha?: string,
+): GateVerdict {
+  if (!md) return 'NONE';
+  const delivered = (['android', 'ios'] as MobilePlatform[]).filter((p) => {
+    const pf = md[p];
+    const ok = (e?: MobileEnvDelivery) => !!e && e.status !== 'NONE';
+    return !!pf && (ok(pf.test) || ok(pf.prod));
+  });
+  if (delivered.length === 0) return 'NONE';
+  const key = stage === 'dev' ? 'devSignoff' : 'prodSignoff';
+  const verdicts = delivered.map((p) => {
+    const s = md[p]![key];
+    if (!s || s.verdict !== 'OK') return s?.verdict ?? 'NONE';
+    // Freshness: an OK only counts while it covers the current head.
+    if (headSha && s.sha && s.sha !== headSha) return 'NONE';
+    return 'OK';
+  });
+  if (verdicts.some((v) => v === 'REJECTED')) return 'REJECTED';
+  if (verdicts.every((v) => v === 'OK')) return 'OK';
+  return 'NONE';
+}
+
 /** Firestore `release-candidates/{repo__branch}` — facet model (plan §3.1). */
 export interface ReleaseCandidate {
   repo: string;
@@ -132,6 +234,12 @@ export interface ReleaseCandidate {
   prDev: PrFacet;
   prodGate: GateFacet;
   prProd: PrFacet;
+
+  /**
+   * Flutter native delivery (repoType 'flutter' only) — replaces the web `preview` facet. Holds the
+   * per-platform build/distribution state + per-platform tester sign-offs. Absent for web/CF repos.
+   */
+  mobileDelivery?: MobileDeliveryFacet;
 
   gateRun?: GateRunFacet;
   testSummary?: TestSummary;
@@ -177,7 +285,9 @@ export type ActivityType =
   // CF rollout + test orchestration (master plan 2026-07-02):
   | 'cf_deploy'        // a firebase deploy reported by the CF repo's postdeploy hook
   | 'test_dispatch'    // a console-triggered test run (Run tests… / Deploy with tests)
-  | 'suites_mirror';   // the suites manifest mirror was refreshed from hub@main
+  | 'suites_mirror'    // the suites manifest mirror was refreshed from hub@main
+  // Flutter native delivery (plan 2026-07-14):
+  | 'mobile_release';  // a per-platform build/distribution reported by recordMobileRelease
 
 export type ActivitySource = 'webhook' | 'console' | 'reconcile';
 

@@ -127,17 +127,37 @@
             </div>
           </div>
 
-          <!-- Preview link -->
+          <!-- Preview link (web) / native delivery (flutter) -->
           <div class="preview">
-            <span class="lbl">Preview channel</span>
-            @if (previewUrl(rc); as url) {
-              <a [href]="url" target="_blank" rel="noopener">{{ url }} ↗</a>
+            @if (isFlutter(rc)) {
+              <span class="lbl">App Distribution</span>
+              @for (p of mobilePlatforms(rc); track p) {
+                <span class="mplat">
+                  <strong>{{ p }}</strong>
+                  @for (env of MOBILE_ENVS; track env) {
+                    @if (mobileEnv(rc, p, env); as d) {
+                      <span class="menv">
+                        {{ env }}: {{ d.status }}
+                        @if (d.distUrl) { <a [href]="d.distUrl" target="_blank" rel="noopener">install ↗</a> }
+                        @if (d.trackRef) { · {{ d.trackRef }} }
+                      </span>
+                    }
+                  }
+                </span>
+              }
+              @if (mobilePlatforms(rc).length === 0) { <span class="muted">No build distributed yet.</span> }
+              <span class="pstate" [attr.data-tone]="buildTone(rc)">{{ buildStateLabel(rc) }}</span>
             } @else {
-              <span class="muted">No preview built yet.</span>
-            }
-            <span class="pstate" [attr.data-tone]="buildTone(rc)">{{ rc.preview.buildState }}</span>
-            @if (previewStale(rc)) {
-              <span class="warn">⚠ Preview built from an older commit than HEAD — redeploy before sign-off.</span>
+              <span class="lbl">Preview channel</span>
+              @if (previewUrl(rc); as url) {
+                <a [href]="url" target="_blank" rel="noopener">{{ url }} ↗</a>
+              } @else {
+                <span class="muted">No preview built yet.</span>
+              }
+              <span class="pstate" [attr.data-tone]="buildTone(rc)">{{ rc.preview.buildState }}</span>
+              @if (previewStale(rc)) {
+                <span class="warn">⚠ Preview built from an older commit than HEAD — redeploy before sign-off.</span>
+              }
             }
           </div>
 
@@ -207,14 +227,35 @@
                   [value]="devNote()"
                   (input)="devNote.set(asValue($event))"
                 ></textarea>
-                <div class="btns">
-                  <button class="primary" [disabled]="busy() === rc.id" (click)="signDev(rc, 'OK')">
-                    OK for dev
-                  </button>
-                  <button class="reject" [disabled]="busy() === rc.id" (click)="signDev(rc, 'REJECTED')">
-                    Has issues
-                  </button>
-                </div>
+                @if (isFlutter(rc)) {
+                  <!-- Per-platform sign-off (plan 2026-07-14): the aggregate dev gate turns OK only
+                       when EVERY delivered platform is signed off. -->
+                  @for (p of mobilePlatforms(rc); track p) {
+                    <div class="btns">
+                      <span class="mplat-lbl">
+                        <strong>{{ p }}</strong>
+                        <span class="verdict" [attr.data-tone]="gateTone(platformVerdict(rc, p, 'dev'))">
+                          {{ platformVerdict(rc, p, 'dev') }}
+                        </span>
+                      </span>
+                      <button class="primary" [disabled]="busy() === rc.id" (click)="signDev(rc, 'OK', p)">
+                        OK · {{ p }}
+                      </button>
+                      <button class="reject" [disabled]="busy() === rc.id" (click)="signDev(rc, 'REJECTED', p)">
+                        Has issues
+                      </button>
+                    </div>
+                  }
+                } @else {
+                  <div class="btns">
+                    <button class="primary" [disabled]="busy() === rc.id" (click)="signDev(rc, 'OK')">
+                      OK for dev
+                    </button>
+                    <button class="reject" [disabled]="busy() === rc.id" (click)="signDev(rc, 'REJECTED')">
+                      Has issues
+                    </button>
+                  </div>
+                }
               </div>
             }
           </section>

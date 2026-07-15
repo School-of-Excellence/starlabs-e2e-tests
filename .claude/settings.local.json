@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import yaml,sys; [yaml.safe_load\\(open\\(f\\)\\) and print\\('OK:',f\\) for f in ['/Users/m1/Documents/starlabs-e2e-tests/.github/workflows/web-e2e.yml','/Users/m1/Documents/Angular Projects/Version 19/Starlabs 19/.github/workflows/queue-e2e.yml']]\")",
+      "Bash(npm -v)",
+      "Bash(echo \"node: $\\(node -v \\) npm: $\\(npm -v \\)\")",
+      "Bash(java -version)",
+      "Bash(echo \"java: $\\(java -version 2>&1)",
+      "Bash(node -c scripts/history/record-run.cjs)",
+      "Bash(env -u STARLABS_CICD_SA -u GOOGLE_APPLICATION_CREDENTIALS node scripts/history/record-run.cjs)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(node -e \"require\\('firebase-admin'\\); console.log\\('firebase-admin OK'\\)\")",
+      "Read(//Users/m1/Documents/Firebase Functions/Starlabs Functions/**)",
+      "Read(//Users/m1/Documents/Firebase Functions/Starlabs Functions/functions/**)",
+      "Bash(MANAGED_FUNCTIONS=\"onQueueStageChange,inviteToStudio\" PROJECT=starlabs-test DRY_RUN=1 CF_DIR=\"/Users/m1/Documents/Firebase Functions/Starlabs Functions\" bash scripts/deploy/cf-reconcile.sh)",
+      "Bash(flutter --version)",
+      "Bash(echo \"flutter: $\\(flutter --version)",
+      "Read(//Users/m1/Documents/Flutter_Projects/Version_3.44.3/Breakthroughs-Achievement/**)",
+      "Bash(flutter pub *)",
+      "Bash(flutter analyze *)",
+      "Bash(flutter test *)",
+      "Bash(flutter build *)",
+      "Bash(gh run *)",
+      "Bash(gh api *)"
+    ]
+  }
+}

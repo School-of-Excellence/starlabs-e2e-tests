@@ -1,8 +1,14 @@
 # Flutter rollout plan (breakthroughs-flutter)
 
-> Status: **PARKED for a parallel session** (2026-07-02). Decisions locked in this session; not yet
+> Status: **SUPERSEDED (2026-07-14)** by `specs/plans/2026-07-14-flutter-rollout-plan-v2.md`.
+> Kept for history only — do NOT build from this doc. Several decisions here were changed on
+> 2026-07-14 (Android dev-merge → Play Internal testing not App Dist prod group; no production
+> branch; manual store release; per-platform sign-off; dual dev/prod flavors at feature stage).
+> See the v2 delta table for what changed and why.
+>
+> ~~Status: PARKED for a parallel session (2026-07-02). Decisions locked in this session; not yet
 > implemented. CF and Flutter are independent rollout tracks — this doc covers Flutter only.
-> WHY over WHAT: see the decision rationale inline.
+> WHY over WHAT: see the decision rationale inline.~~
 
 ---
 

@@ -101,7 +101,14 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     branch: 'feature/push-notifs',
     headSha: 'ddd4444',
     headCommit: { msg: 'Wire FCM tokens', author: 'mobile@soexcellence.com', at: '2026-06-21T12:00:00Z' },
-    preview: { sha: 'ddd4444', buildState: 'FAILED', builtAt: '2026-06-21T12:15:00Z' },
+    // Flutter native build failed (no web preview facet).
+    preview: { buildState: 'NONE' },
+    mobileDelivery: {
+      android: {
+        test: { status: 'FAILED', at: '2026-06-21T12:15:00Z' },
+        prod: { status: 'FAILED', at: '2026-06-21T12:15:00Z' },
+      },
+    },
     devGate: { verdict: 'NONE' },
     prDev: { state: 'NONE' },
     prodGate: { verdict: 'NONE' },
@@ -252,7 +259,16 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     branch: 'feature/flutter-onboarding',
     headSha: 'iii9999',
     headCommit: { msg: 'Onboarding GA', author: 'mobile@soexcellence.com', at: '2026-06-16T09:00:00Z' },
-    preview: { sha: 'iii9999', url: previewUrl('feature/flutter-onboarding'), buildState: 'LIVE', builtAt: '2026-06-16T09:20:00Z' },
+    // Flutter: NO web preview — native delivery instead (both envs → App Distribution). Per-platform
+    // sign-off (android OK here; iOS deferred so it's absent → android-OK alone advanced the gate).
+    preview: { buildState: 'NONE' },
+    mobileDelivery: {
+      android: {
+        test: { status: 'SENT', distUrl: 'https://appdistribution.firebase.dev/i/test-onboarding', at: '2026-06-16T09:20:00Z' },
+        prod: { status: 'SENT', distUrl: 'https://appdistribution.firebase.dev/i/prod-onboarding', at: '2026-06-16T09:20:00Z' },
+        devSignoff: { verdict: 'OK', sha: 'iii9999', by: 'tester@soexcellence.com', at: '2026-06-16T10:00:00Z' },
+      },
+    },
     devGate: { verdict: 'OK', sha: 'iii9999', by: 'tester@soexcellence.com', at: '2026-06-16T10:00:00Z' },
     prDev: {
       number: 77,
