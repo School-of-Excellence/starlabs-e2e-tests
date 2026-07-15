@@ -97,12 +97,23 @@ export class StudioPage {
   async load(profileId?: string): Promise<void> {
     const url = profileId ? `${ROUTE}?profileid=${encodeURIComponent(profileId)}` : ROUTE;
     await this.page.goto(url, { waitUntil: 'domcontentloaded' });
-    // The arena title always renders once the component mounts (even before a studio is selected);
-    // wait for it OR the no-studio empty-state so a guard bounce / blank surface fails fast.
+    // Wait until the studio has mounted in ANY of its terminal states so a guard bounce / blank surface
+    // still fails fast. Three accepted states:
+    //   • arena title  — the lobby heading (v1 always; dynamic-studio-v2 ONLY in the lobby state
+    //                    `liveAssignment==null && !selectedStudio.docid`, html:4-6).
+    //   • no-studio alert — the empty state.
+    //   • live participant name — dynamic-studio-v2 AUTO-ENTERS the live panel for a member who already
+    //     has an active live session (the seeded-live-assignment specialist), which renders the live
+    //     arena (`liveAssignment != null`, html:268-284) and HIDES the lobby → the arena title never
+    //     mounts. Accepting the live-panel name here keeps `load()` from timing out on that V2 path
+    //     (the walk specs seed the live assignment BEFORE load, so they auto-enter). On v1/lobby the
+    //     arena title still matches, so coverage stays live on BOTH branches.
     // `.first()` because a no-studio member renders BOTH the arena title AND the no-studio banner
     // (noStudioInAnyQueue is true while ongoingQueue still resolves to ongoingQueueList[0],
     // dynamic-studio.ts:205/349) — without it the `.or()` is a strict-mode violation (SS-16).
-    await expect(this.arenaTitle.or(this.noStudioAlert).first()).toBeVisible({ timeout: 30_000 });
+    await expect(
+      this.arenaTitle.or(this.noStudioAlert).or(this.liveParticipantName).first(),
+    ).toBeVisible({ timeout: 30_000 });
   }
 
   // ---------------------------------------------------------------------------------------------

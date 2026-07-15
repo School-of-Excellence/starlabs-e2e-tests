@@ -24,6 +24,11 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './queue',
   testMatch: '**/*.spec.ts',
+  // queue/mobile/mobile-walk.spec.ts drives a REAL Flutter app (`flutter drive walk_test.dart` +
+  // ensureSimBuildPrereqs boots an iOS sim, beforeAll) — it cannot run in the headless Chrome web-e2e
+  // CI, where its beforeAll throws at 0s and the whole file errors (skipping the rest). Flutter coverage
+  // belongs to the flutter-suite, not this Chromium emulator run — exclude the mobile dir here.
+  testIgnore: '**/mobile/**',
   globalSetup: require.resolve('./queue/support/emulator-global-setup.ts'),
   globalTeardown: require.resolve('./queue/support/emulator-global-teardown.ts'),
   timeout: 120_000,
