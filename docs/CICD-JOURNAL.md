@@ -4,17 +4,25 @@
 > in either repo, without opening anything else. The same journal is kept in both repos:
 > `starlabs-e2e-tests/docs/CICD-JOURNAL.md` (hub) and `starlabs-angular/Journal/2026-06-18-CICD-JOURNAL.md`.
 > Deeper design detail (optional) is in the hub's `docs/GOAL.md`, `docs/ARCHITECTURE.md`, `docs/CICD-ROLLOUT.md`.
-> Times are **UTC**. Last updated 2026-06-18.
+> Times are **UTC**. Last updated **2026-08-19**.
 
 ---
 
 ## 0. TL;DR — current state
-- **What:** a CI/CD pipeline where code goes `feature branch → preview → PR → tests → merge → auto-deploy`.
-- **Done:** the workflow is **built and PROVEN** on stand-in branches; a real test suite (`operator.spec`) is
-  **green in CI (13 passed / 0 failed)**.
-- **Next:** **Phase 1A — build the release console** (a web app so the team tracks previews + opens/approves PRs
-  without the CLI).
-- **Enforcement is OFF for now** (no push/merge restriction); it's an optional final layer.
+- **What:** a CI/CD pipeline where code goes `feature branch → preview → PR → tests → merge → auto-deploy`,
+  driven from the **release console** rather than the CLI.
+- **Live since July:** the console owns the flow — developer deploys a preview, tester signs off for dev,
+  developer opens the PR, an allow-list member merges on GitHub, `development` auto-deploys, tester signs off
+  for prod, an admin promotes. Roles + onboarding:
+  [`specs/journals/2026-07-04-console-rollout-roles-and-workflow.md`](../specs/journals/2026-07-04-console-rollout-roles-and-workflow.md).
+- **Everything runs on deliberate intent:** every e2e workflow is `workflow_dispatch`-only (2026-06-29) —
+  the console fires them, bare pushes never do.
+- **In flight (2026-08-19):** a **second, parallel flow**. On every feature push, publish TWO hosting channels
+  (dev + prod) and report whether the hub's suites actually cover the diff. It writes only new fields and
+  cannot move any status — see
+  [`specs/journals/2026-08-19-branch-channels-session.md`](../specs/journals/2026-08-19-branch-channels-session.md).
+- **Enforcement:** real GitHub branch protection with a merge allow-list on `starlabs-angular`; `branch-guard`
+  was dropped. CF + Flutter gates are still on the `cicd-*` stand-in branches.
 
 ## 1. The system (everything you need — no other doc required)
 
@@ -37,12 +45,13 @@ The pipeline logic is defined **once in the hub** and each app repo calls it wit
 | Development / Test | `starlabs-test` | merge → `development` deploys here |
 | Production / Live | `fir-sample-aae4a` | merge → `production` deploys here |
 
-**The three lanes (Angular files):**
+**The lanes (Angular files) — CORRECTED 2026-08-19:**
 | Lane | File | Trigger | Does |
 |---|---|---|---|
-| Preview | `preview.yml` | push to a feature branch | build + publish a Firebase Hosting **preview channel** |
-| Gate | `queue-e2e.yml` → hub `web-e2e.yml` | **PR** to a target branch | Playwright suite vs real CF triggers in the **emulator**; report archived to `cicd-audit` |
-| Deploy | `deploy_19.yml` | **merge** (push) to target branch | `firebase deploy --only hosting` to the env |
+| Preview | `preview.yml` | **workflow_dispatch** (console Deploy) — push trigger disabled 2026-06-23 | build + publish ONE Firebase Hosting preview channel on `starlabs-test` |
+| Gate | `preview-e2e.yml` / `<suite>-e2e.yml` → hub `web-e2e.yml` | **workflow_dispatch** (console) | Playwright suites vs real CF triggers in the **emulator**; report archived to `cicd-audit` |
+| Deploy | `deploy_19.yml` | **merge** (push) to `development` / `production` | `firebase deploy --only hosting` to the env |
+| Channels *(new, parallel)* | `branch-channels.yml` | **push** to a feature branch | TWO channels (dev + prod) + suite-alignment verdict → `previewStatus` / `testSuiteStatus`. Invisible to the console's workflow tracking, so it moves no status. |
 
 **How the gate runs:** it clones 3 repos (app + hub engine + cloud-functions) into a Firebase **emulator** and runs
 the suite against the **real** Cloud-Function triggers — hermetic, nothing touches the cloud.
@@ -50,9 +59,9 @@ the suite against the **real** Cloud-Function triggers — hermetic, nothing tou
 ## 2. Branch map (READ before any git)
 | Repo | Branch | Role |
 |---|---|---|
-| angular | **`feature/cicd-rollout`** | **CANONICAL** rollout branch — all proven workflows + this journal |
-| angular | `cicd-dev` / `cicd-prod` | sudo **TEST** stand-ins (both deploy to `starlabs-test`); decommission at cutover |
-| angular | `development` / `production` / `main` | **REAL** — untouched by the pipeline so far |
+| angular | `development` / `production` | **LIVE** — the pipeline runs here since the July cutover; branch protection + merge allow-list |
+| angular | `cicd-dev` / `cicd-prod` | sudo **TEST** stand-ins (both deploy to `starlabs-test`) — still used to rehearse changes; CF + Flutter gates still target them |
+| angular | `feature/cicd-rollout` | the original rollout branch — historical, superseded by the cutover |
 | hub | **`main`** | reusable workflows, `scripts/`, `console/` scaffold, `docs/` |
 > A duplicate `cicd-rollout` angular branch was created then **removed** — single flow on `feature/cicd-rollout`.
 
@@ -66,17 +75,30 @@ the suite against the **real** Cloud-Function triggers — hermetic, nothing tou
 | 2026-06-18 10:55–11:13 | **Phase B** on sudo branches: PR#3→cicd-dev gate 8/0 → deploy; deploy **403 → `--only hosting`**; PR#4→cicd-prod → deploy. Full cycle green. |
 | 2026-06-18 12:36 | **`operator.spec` green in CI 13/0** — project-id fix confirmed; gate widened to run operator on PRs. |
 | 2026-06-18 (later) | branch-guard dropped; consolidated to single branch `feature/cicd-rollout`; journals written. |
+| 2026-06-19 → 07-04 | Release console v2 built and live on `starlabs-cicd`; preview-time gate; suites manifest becomes the routing truth; roles + merge allow-list rolled out to the team. |
+| 2026-07-05 → 07-20 | CF board + local predeploy loop-guard; Flutter Android delivery wired to the console. |
+| 2026-08-19 | **NEW parallel flow**: `branch-channels.yml` — two hosting channels per push (dev + prod) + a suite-alignment checker. Writes only `previewStatus` / `testSuiteStatus`; the old flow is untouched. |
 
 ## 4. Planned / Implemented / Next
 **Implemented ✅** — preview lane, gate (caller → hub `web-e2e`), deploy (auto-on-merge, `--only hosting`),
 append-only history (`cicd-audit`); full cycle proven on sudo branches; `operator` 13/0 in CI; gate runs
 operator + self-tests on PRs.
 
+**Also implemented ✅** — release console v2 (board, report screen, CF board, roles/Settings); the suites
+manifest as single routing truth; Angular cut over to real `development`/`production` with branch protection.
+
+**Implemented 2026-08-19 ✅ (parallel flow, reports only)** — `branch-channels.yml` in the app repo:
+two hosting channels per push (dev → `starlabs-test`, prod → `fir-sample-aae4a`) + the suite-alignment
+checker (`scripts/readiness/`). Ingest = `recordBranchChannel` / `recordSuiteStatus` in
+`console/functions/src/readiness.ts`. New fields `previewStatus` + `testSuiteStatus`; nothing gated yet.
+
 **Next ▶**
-- **Phase 1A:** release console live — GitHub App + webhook receiver + board + Create-PR / Approve-Merge.
-- **Phase 1B:** migrate the proven workflow to real `development`/`production` (cutover) — fix prod-deploy perms first.
-- **Phase 2:** grow the queue suite green (operator → all specs), then cloud-function + flutter.
-- **Phase 3 (optional):** enforcement — GitHub Team branch protection + CODEOWNERS, or console-as-merge-authority.
+- Wire a green verdict to actually dispatch `preview-e2e.yml` (must use the GitHub App —
+  `GITHUB_TOKEN`-triggered dispatches are suppressed by GitHub).
+- Populate `testSuiteStatus.run` from the gate's `workflow_run`; wire the Recheck button.
+- Then let `canProceed` gate the tester's Approve.
+- Burn down the coverage backlog: **28 of 54** app folders have no suite (2 fenced, 24 covered).
+- CF + Flutter: cut their gates over from the `cicd-*` stand-ins to real `development`.
 
 **Dropped** — `branch-guard` (enforcement deferred to the optional final layer).
 
@@ -91,6 +113,17 @@ operator + self-tests on PRs.
 - CI must recreate `e2e/app` + `e2e/starlabs-cloud-function` **symlinks** (the hub scripts are hub-rooted); the
   overlay (`ci/setup-emulator-config.sh`) creates the **gitignored** `environment.development.ts`.
 - Reusable-workflow numeric fields can't use `${{ }}` expressions (keep `timeout-minutes` static).
+- **The console tracks workflows BY NAME**: `preview.yml`, `deploy_19.yml`, and any display name containing
+  `e2e`. Everything else is ignored ("not a tracked lane"). That is exactly why the new flow lives in
+  `branch-channels.yml` with no such word in its name — and why renaming it would silently hand it control of
+  the old flow's status fields.
+- **Channel URLs must never be reconstructed.** They carry a random hash; `previewUrlFor()` produces
+  `breakthroughs-test-<branch>.web.app` (single dash, no hash) which cannot resolve. Always read the URL back
+  from `firebase hosting:channel:deploy --json`, selecting YOUR site — not "the first web.app string".
+- **`git diff --name-status` is TAB-separated.** Splitting on whitespace shreds every folder name containing a
+  space, and this codebase is full of them ("queue system", "Business Dashboard", "Diagnostics Tool").
+- **`**/*.md` requires a directory** under the shared `globToRegex`, so root-level docs need a bare `*.md` too.
+  That glob function is copied in `scripts/readiness/lib.cjs` and must never diverge from `suites.ts`.
 - Tooling notes: when the auto-approval safety classifier model is down, `Bash`/`Write`/`Edit` are blocked
   (read-only still works). In this setup Claude can't run `git` directly → **edit files locally, the human commits/pushes**.
 

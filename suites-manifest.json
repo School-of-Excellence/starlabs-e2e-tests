@@ -13,6 +13,29 @@
     "ciReady": "false = local-only (no emulator config yet) — hidden from the console dialog",
     "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
   },
+  "neutral": {
+    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.)",
+    "appPaths": [
+      "*.md",
+      "**/*.md",
+      "*.txt",
+      "**/*.txt",
+      ".github/**",
+      "docs/**",
+      "specs/**",
+      "Journal/**",
+      ".gitignore",
+      ".editorconfig",
+      "LICENSE*"
+    ]
+  },
+  "fenced": {
+    "_why": "Areas that can NEVER be covered by an automated suite. ATC is a hard constraint — the emulator must never touch it — so a change here can only be validated by hand. The readiness check reports NO_COVERAGE_POSSIBLE rather than pretending a suite could exist. REVIEW: 'src/app/view-ai-generated-atc/**' looks ATC-related but has not been confirmed — add it here if it is.",
+    "appPaths": [
+      "src/app/ATC/**",
+      "src/app/ATC-Ops/**"
+    ]
+  },
   "crossCutting": {
     "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
     "appPaths": [

@@ -2089,3 +2089,12 @@ export const recordMobileRelease = onRequest(
     }
   },
 );
+
+// ===========================================================================
+// 12. readiness ingest — the NEW branch-channels flow (2026-08-19)
+// ===========================================================================
+//
+// recordBranchChannel + recordSuiteStatus. Same Firebase project, so ONE codebase (operator
+// directive 2026-08-19). They write only previewStatus / testSuiteStatus and never touch the
+// facets this file owns — see readiness.ts for the full contract.
+export * from './readiness';

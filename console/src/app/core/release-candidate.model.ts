@@ -57,6 +57,94 @@ export interface PreviewFacet {
   builtAt?: string;
 }
 
+// ── THE NEW BRANCH-CHANNELS FLOW (2026-08-19) ────────────────────────────────────────────────────
+// Written by branch-channels.yml through the `readiness` functions codebase. Read-only here, and
+// deliberately NOT read by the projection — neither field can move a status or change a button.
+// The OLD flow keeps sole ownership of `preview` above; the two must never fight over one field.
+
+export type ChannelStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
+
+/** One hosting channel built from a branch commit. */
+export interface ChannelFacet {
+  status: ChannelStatus;
+  /** The REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED. */
+  url?: string | null;
+  project?: string | null;
+  site?: string | null;
+  deployedAt?: number | null;
+  expiresAt?: number | null;
+}
+
+/** Both channels built from one commit, plus the git/run context they came from. */
+export interface PreviewStatusFacet {
+  dev?: ChannelFacet;
+  prod?: ChannelFacet;
+  sha?: string | null;
+  commitMsg?: string | null;
+  author?: string | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  updatedAt?: number | null;
+}
+
+/**
+ * One chip covering both phases — the alignment CHECK, then the suite RUN:
+ *   CHECKING → SUITES_MISSING | NEEDS_UPDATE | MISSING_TEST_CASES | NO_COVERAGE_POSSIBLE   stop
+ *   CHECKING → MATCHED | NOT_APPLICABLE → RUNNING → PASSED | FAILED                        go
+ */
+export type SuiteState =
+  | 'CHECKING'
+  | 'MATCHED'
+  | 'SUITES_MISSING'
+  | 'NEEDS_UPDATE'
+  | 'MISSING_TEST_CASES'
+  | 'NO_COVERAGE_POSSIBLE'
+  | 'NOT_APPLICABLE'
+  | 'RUNNING'
+  | 'PASSED'
+  | 'FAILED';
+
+export interface SuiteStatusDetails {
+  /** Changed files no suite covers at all. */
+  uncovered?: string[];
+  /** Changed files in a permanently untestable area (ATC). */
+  fenced?: string[];
+  /** Selectors a spec drives that the app no longer declares. */
+  drift?: { id: string; usedBy: string[] }[];
+  /** New elements this diff added that no spec references. */
+  missingTestCases?: { component: string; hooks: string[] }[];
+  /** New interactive elements with no data-testid — a test could not address them. */
+  unhookedElements?: { component: string; count: number }[];
+  /** Changed components where nothing at all is exercised by a spec. */
+  untestedComponents?: string[];
+  newComponents?: string[];
+}
+
+export interface TestSuiteStatusFacet {
+  state: SuiteState;
+  /** The single flag the future Approve button reads — the UI never re-derives the rules. */
+  canProceed: boolean;
+  sha?: string | null;
+  checkedAt?: number | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  suites?: string[];
+  crossCutting?: string | null;
+  details?: SuiteStatusDetails;
+  /** Populated only once the suites actually execute. */
+  run?: {
+    state: 'RUNNING' | 'PASSED' | 'FAILED';
+    passed?: number;
+    failed?: number;
+    skipped?: number;
+    startedAt?: number;
+    finishedAt?: number;
+    reportRunId?: string;
+  };
+  /** Set by the console's Recheck button; re-dispatches the workflow for this ref. */
+  recheck?: { requestedBy?: string; requestedAt?: number; count?: number };
+}
+
 /** A tester sign-off gate (dev gate or prod gate). */
 export interface GateFacet {
   verdict: GateVerdict;
@@ -250,6 +338,12 @@ export interface ReleaseCandidate {
   /** The e2e gate run on the open PR (running/passed/failed + report link). */
   gateRun?: GateRunFacet;
   testSummary?: TestSummary;
+
+  // --- NEW branch-channels flow (2026-08-19) — informational, never gates anything today ---
+  /** Both hosting channels (dev + prod) built from the last push, with the commit they came from. */
+  previewStatus?: PreviewStatusFacet;
+  /** Whether the hub's suites cover this diff, and — later — how the run went. */
+  testSuiteStatus?: TestSuiteStatusFacet;
 
   /** Latest deploy health (dev → starlabs-test, prod → fir-sample). */
   lastDeploymentState?: string;

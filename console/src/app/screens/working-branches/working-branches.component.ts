@@ -19,6 +19,10 @@ import {
   MobileEnvDelivery,
   mobileBuildState,
   deliveredPlatforms,
+  ChannelFacet,
+  PreviewStatusFacet,
+  SuiteState,
+  TestSuiteStatusFacet,
 } from '../../core/release-candidate.model';
 import { STATUS_META } from '../../core/status-meta';
 import {
@@ -309,6 +313,88 @@ export class WorkingBranchesComponent {
   }
   prTone(state: string): string {
     return state === 'OPEN' ? 'active' : state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'bad' : 'none';
+  }
+
+  // ── NEW branch-channels flow (2026-08-19) ─────────────────────────────────────────────────────
+  // Pure display helpers over previewStatus / testSuiteStatus. Nothing here feeds action-gating —
+  // the old flow's buttons are driven entirely by preview.buildState and the gates, as before.
+
+  readonly BC_ENVS: ('dev' | 'prod')[] = ['dev', 'prod'];
+
+  bcChannel(ps: PreviewStatusFacet, env: 'dev' | 'prod'): ChannelFacet | null {
+    return ps[env] ?? null;
+  }
+
+  bcChannelTone(ch: ChannelFacet): string {
+    return ch.status === 'SUCCESS' ? 'ok' : ch.status === 'FAILED' ? 'bad' : 'active';
+  }
+
+  /** The channels' commit if HEAD has moved past it — the links then show older code. */
+  bcStaleSha(rc: ReleaseCandidate): string | null {
+    const built = rc.previewStatus?.sha;
+    if (!built || !rc.headSha || built === rc.headSha) return null;
+    return built.slice(0, 7);
+  }
+
+  bcSuiteTone(state: SuiteState): string {
+    switch (state) {
+      case 'PASSED':
+      case 'MATCHED':
+        return 'ok';
+      case 'FAILED':
+      case 'SUITES_MISSING':
+      case 'NEEDS_UPDATE':
+      case 'MISSING_TEST_CASES':
+      case 'NO_COVERAGE_POSSIBLE':
+        return 'bad';
+      case 'CHECKING':
+      case 'RUNNING':
+        return 'active';
+      default:
+        return 'none';
+    }
+  }
+
+  bcSuiteLabel(state: SuiteState): string {
+    const LABELS: Record<SuiteState, string> = {
+      CHECKING: 'checking…',
+      MATCHED: 'matched',
+      SUITES_MISSING: 'missing',
+      NEEDS_UPDATE: 'need update',
+      MISSING_TEST_CASES: 'test cases missing',
+      NO_COVERAGE_POSSIBLE: 'not automatable',
+      NOT_APPLICABLE: 'n/a',
+      RUNNING: 'running…',
+      PASSED: 'passed',
+      FAILED: 'failed',
+    };
+    return LABELS[state] ?? state;
+  }
+
+  /** Tooltip: why the suites cannot run, in the fewest words that still name the culprit. */
+  bcSuiteDetail(ts: TestSuiteStatusFacet): string {
+    const d = ts.details;
+    if (!d) return '';
+    const parts: string[] = [];
+    if (d.uncovered?.length) parts.push(`No suite covers: ${d.uncovered.slice(0, 5).join(', ')}`);
+    if (d.fenced?.length) parts.push(`Fenced (never automatable): ${d.fenced.slice(0, 3).join(', ')}`);
+    if (d.drift?.length) parts.push(`Selectors gone from the app: ${d.drift.slice(0, 5).map((x) => x.id).join(', ')}`);
+    if (d.missingTestCases?.length) {
+      parts.push(
+        `New elements no spec references: ${d.missingTestCases
+          .slice(0, 3)
+          .map((m) => `${m.component} (${m.hooks.join(', ')})`)
+          .join(' · ')}`,
+      );
+    }
+    if (d.unhookedElements?.length) {
+      const n = d.unhookedElements.reduce((sum, u) => sum + u.count, 0);
+      parts.push(`${n} new interactive element(s) have no data-testid`);
+    }
+    if (d.untestedComponents?.length) {
+      parts.push(`Nothing exercises: ${d.untestedComponents.slice(0, 3).join(', ')}`);
+    }
+    return parts.join('\n') || 'All changed paths are covered and aligned.';
   }
 
   openPrUrl(rc: ReleaseCandidate): string | null {
