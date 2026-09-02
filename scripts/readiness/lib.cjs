@@ -29,14 +29,33 @@ function globToRegex(glob) {
   return new RegExp(`^${escaped}$`);
 }
 
-/** True when `file` matches any glob in `globs`. */
-function matchesAny(file, globs) {
-  return (globs || []).some((g) => globToRegex(g).test(file));
+/**
+ * Split a glob list into includes and `!`-prefixed excludes.
+ *
+ * WHY: the manifest globs are an OR — the first hit wins — so there was no way to say "this folder,
+ * but not the scaffolded Angular unit specs inside it". `Participants Profile Management/**` matches
+ * 37 `*.component.spec.ts` files that are all the CLI default (`it('should create')`), which made
+ * every profiles file count read higher than the real surface. An exclusion needs subtraction, not
+ * another OR term. Backward compatible: a list with no `!` entries behaves exactly as before.
+ * Mirrors suites.ts partitionGlobs exactly.
+ */
+function partitionGlobs(globs) {
+  const include = [];
+  const exclude = [];
+  for (const g of globs || []) (g.startsWith('!') ? exclude : include).push(g.replace(/^!/, ''));
+  return { include, exclude };
 }
 
-/** The first glob in `globs` that `file` matches, or null — used to explain a verdict. */
+/** True when `file` matches any include glob and no `!`-exclusion. */
+function matchesAny(file, globs) {
+  return whichGlob(file, globs) !== null;
+}
+
+/** The first include glob that `file` matches (and no exclusion vetoes), or null — explains a verdict. */
 function whichGlob(file, globs) {
-  for (const g of globs || []) if (globToRegex(g).test(file)) return g;
+  const { include, exclude } = partitionGlobs(globs);
+  if (exclude.some((g) => globToRegex(g).test(file))) return null;
+  for (const g of include) if (globToRegex(g).test(file)) return g;
   return null;
 }
 
@@ -394,6 +413,7 @@ module.exports = {
   parseNameStatus,
   matchesAny,
   whichGlob,
+  partitionGlobs,
   classifyChanges,
   selectorsUsedBySuites,
   findDriftedSelectors,

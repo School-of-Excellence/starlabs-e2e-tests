@@ -42,6 +42,23 @@ ok('**/*.md needs a directory (documented quirk)', !lib.globToRegex('**/*.md').t
 ok('bare *.md catches root files', lib.globToRegex('*.md').test('README.md'));
 ok('spaces in folder names are literal', lib.globToRegex('src/app/queue system/**').test('src/app/queue system/x.ts'));
 
+console.log('\nglob exclusions (! prefix)');
+{
+  const G = ['src/app/Participants Profile Management/**', '!**/*.component.spec.ts'];
+  const real = 'src/app/Participants Profile Management/profilelist/profilelist.component.ts';
+  const scaffold = 'src/app/Participants Profile Management/profilelist/profilelist.component.spec.ts';
+  const nested = 'src/app/Participants Profile Management/participants-analytics/wati-input/wati-input.component.spec.ts';
+  ok('real component still matches', lib.matchesAny(real, G));
+  ok('scaffolded karma spec is excluded', !lib.matchesAny(scaffold, G));
+  ok('nested karma spec is excluded too', !lib.matchesAny(nested, G));
+  eq('whichGlob reports the include, not the exclusion', lib.whichGlob(real, G), 'src/app/Participants Profile Management/**');
+  eq('whichGlob returns null for an excluded file', lib.whichGlob(scaffold, G), null);
+  eq('partitionGlobs strips the ! prefix', lib.partitionGlobs(G), { include: ['src/app/Participants Profile Management/**'], exclude: ['**/*.component.spec.ts'] });
+  ok('a list with no ! behaves exactly as before', lib.matchesAny(scaffold, ['src/app/Participants Profile Management/**']));
+  ok('an exclusion-only list matches nothing', !lib.matchesAny(real, ['!**/*.ts']));
+  ok('exclusion vetoes even when a later include would hit', !lib.matchesAny(scaffold, ['src/app/**', '!**/*.spec.ts', 'src/app/Participants Profile Management/**']));
+}
+
 console.log('\nparseNameStatus (regression: folder names with spaces)');
 {
   const out = [

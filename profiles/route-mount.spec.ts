@@ -20,6 +20,12 @@ test.describe('Profiles — route-mount smoke (guard admits super-role admin)', 
       '/view-participants-form',
       '/app-flow-breaks',
       '/ProfileScreen',
+      // granted by seed-profiles.js ROUTES; PA-EVO-01 reaches it via a localStorage payload, so the
+      // smoke is the only thing proving the grant itself admits.
+      '/participant-evolution-summary',
+      // render-only here: profilelist's Delete Profile pre-flights the firestore-atc named DB (never
+      // touched by this project) — the smoke asserts the guard admits, nothing more.
+      '/profilelist',
     ];
     const bounced: string[] = [];
     for (const route of ROUTES) {

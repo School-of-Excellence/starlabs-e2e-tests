@@ -117,7 +117,13 @@
       "capture": "all",
       "specDir": "journey",
       "ciReady": true,
-      "appPaths": ["src/app/Journey Onboarding/**", "src/app/journey-onboarding-detail/**"],
+      "appPaths": [
+        "src/app/Journey Onboarding/**",
+        "src/app/journey-onboarding-detail/**",
+        "src/app/Participants Profile Management/journey-product-purchase/**",
+        "src/app/Participants Profile Management/participant-product/**",
+        "src/app/Participants Profile Management/participant-delivery-sequence/**"
+      ],
       "cfPaths": ["functions/components/participantmetadata.js"],
       "reviewNote": "cfPaths guess — review"
     },
@@ -225,7 +231,15 @@
       "capture": "all",
       "specDir": "profiles",
       "ciReady": true,
-      "appPaths": ["src/app/Participants Profile Management/**", "src/app/ProfilePicture/**"],
+      "appPaths": [
+        "src/app/Participants Profile Management/**",
+        "src/app/ProfilePicture/**",
+        "!**/*.component.spec.ts",
+        "src/app/AppEngagement/app-action-pending/**",
+        "src/app/loading-progress/**",
+        "src/app/New-Workshop/workshop-dashboard/sendmessages/**",
+        "src/app/New-Workshop/whatsapp-progress-dialog.component.ts"
+      ],
       "cfPaths": ["functions/components/participantmetadata.js"]
     }
   },
