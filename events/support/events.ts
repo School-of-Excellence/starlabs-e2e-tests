@@ -23,6 +23,7 @@ export const evtActors = {
   participant3: `participant3+${RUN}@example.com`,    // initiate cohort (EVT-10/11)
   participant4: `participant4+${RUN}@example.com`,
   participant5: `participant5+${RUN}@example.com`,
+  participant6: `participant6+${RUN}@example.com`,    // EPC-01 — owns P1, no EPR, no auth chain/login
 };
 
 /** Seeded profileids (for asserting app-written refs / filtering rows by client name). */
@@ -34,6 +35,7 @@ export const evtProfileIds = {
   p3: `${RUN}_pf_p3`,
   p4: `${RUN}_pf_p4`,
   p5: `${RUN}_pf_p5`,
+  p6: `${RUN}_pf_p6`,
 };
 
 /** Seeded doc ids the specs assert against (must mirror seed-events.js ID). */
@@ -61,6 +63,10 @@ export const evtIds = {
   videoask1: `${RUN}_videoask_1`,
   pvideoask0: `${RUN}_pvideoask_0`,
   tag1: `${RUN}_tag_1`,
+  // ESD-01 / EPC-01 / LOC-01 ids (seed-events.js)
+  journey1: `${RUN}_journey_1`,
+  ppEpc: `${RUN}_pp_epc`,
+  loclog1: `${RUN}_loclog_1`,
 };
 
 /** Run-unique display strings the specs type into search/forms and assert against rendered rows. */
@@ -236,4 +242,23 @@ export async function cleanStageOpportunity(stagename: string): Promise<void> {
   const db = admin.firestore();
   const snap = await db.collection('stage opportunity count').where('stagename', '==', stagename).get();
   for (const d of snap.docs) await d.ref.delete();
+}
+
+/**
+ * Re-create the seeded LOCLOG1 doc if a prior run's delete test removed it (LOC-01 is destructive —
+ * the whole point of the test is to delete the seeded row). PRECONDITION write only; the spec asserts
+ * the doc's ABSENCE after the real UI delete, never this seed value.
+ */
+export async function ensureLocationLog(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const exists = (await db.collection('locationlogs').doc(evtIds.loclog1).get()).exists;
+  if (!exists) {
+    await db.collection('locationlogs').doc(evtIds.loclog1).set({
+      docid: evtIds.loclog1, profileid: evtProfileIds.p0,
+      geopoint: new admin.firestore.GeoPoint(13.0827, 80.2707),
+      created: T.now(), testrunid: RUN, _testdata: true,
+    });
+  }
 }

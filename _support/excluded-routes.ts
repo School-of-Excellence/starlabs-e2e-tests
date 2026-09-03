@@ -13,6 +13,14 @@ export const ATC_EXCLUDED_ROUTES: string[] = [
   '/participantAEL',
 ];
 
+// NOTE on '/live_event_dashboard_v3' (NOT route-excluded, unlike its v1/v2 siblings above): only three
+// functions in live-event-data.service.ts touch the firestore-atc database — subscribeToAtcAlpha(),
+// subscribeToAtcToValidate(), subscribeToDraftAtc() (all called exclusively from
+// subscribeToArenaOverview(), itself called only from selectEvent() and toggleQueue()). The route and
+// every OTHER read on it (registered count, attendance, video-ask tags, zones, customer support, arena
+// calling, …) is default-DB-only and fine to test. See events/live-event-dashboard-v3.spec.ts's header
+// for the exact guard a test MUST carry before calling selectEvent (never call toggleQueue at all).
+
 /** Throws if a test tries to navigate to an ATC-excluded route — a guardrail, not a UI assertion. */
 export function assertNotExcluded(route: string): void {
   const hit = ATC_EXCLUDED_ROUTES.find(r => route === r || route.startsWith(r + '/'));

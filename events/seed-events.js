@@ -81,6 +81,18 @@ const ID = {
   QUEUE1: `${TESTRUNID}_queue_1`,          // queue generation (selectable; queueenddate future)
   QTOK1: `${TESTRUNID}_qtok_1`,            // queue_token (Active, currentstage 'Stage A')
   QTOK2: `${TESTRUNID}_qtok_2`,            // queue_token (Active, currentstage 'Stage A')
+
+  // --- events-stage-data (ESD-01) ------------------------------------------------------------------
+  JOURNEY1: `${TESTRUNID}_journey_1`,      // journey doc — resolves p0/p1's activejourney id to a name
+
+  // --- event-participation-confirmation (EPC-01) ---------------------------------------------------
+  // A fresh owner of P1 with NO event participation request yet, so the funnel's "potential"/"eligible"
+  // buckets (participantsproduct where productref==P1 && status==null) have a non-zero row distinct
+  // from p0/p1 (who are already "approved" via EPR0/EPR1 and carry no participantsproduct doc at all).
+  PP_EPC: `${TESTRUNID}_pp_epc`,           // participantsproduct status:null (p6) → potential/eligible
+
+  // --- locationlog (LOC-01) -----------------------------------------------------------------------
+  LOCLOG1: `${TESTRUNID}_loclog_1`,        // locationlogs row for p0 (dashboard render + delete target)
 };
 
 const STAGE_A = 'Stage A';                 // EVT-15/16 single seeded queue stage
@@ -95,6 +107,9 @@ const PF = {
   p3: `${TESTRUNID}_pf_p3`,
   p4: `${TESTRUNID}_pf_p4`,
   p5: `${TESTRUNID}_pf_p5`,
+  // p6: EPC-01 only — owns P1 (participantsproduct status:null) with NO auth chain / EPR / login. Only
+  // needs a profileid + participant metadata doc so its name renders in the funnel table.
+  p6: `${TESTRUNID}_pf_p6`,
 };
 const EMAIL = {
   admin: `admin+${TESTRUNID}@example.com`,
@@ -104,6 +119,7 @@ const EMAIL = {
   p3: `participant3+${TESTRUNID}@example.com`,
   p4: `participant4+${TESTRUNID}@example.com`,
   p5: `participant5+${TESTRUNID}@example.com`,
+  p6: `participant6+${TESTRUNID}@example.com`,
 };
 
 function roster() {
@@ -135,6 +151,11 @@ const ROUTES = [
   { route: '/layers-screen', label: 'Layers Screen' },
   { route: '/eventopportunitydashboard', label: 'Event Opportunity Dashboard' },
   { route: '/initiateeventproduct', label: 'Initiate Event Product' },
+  { route: '/events-stage-data', label: 'Events Stage Data' },
+  { route: '/event-participation-confirmation', label: 'Event Participation Confirmation' },
+  // NOTE: /locationlog is deliberately NOT granted here — app.routes.ts carries no canActivate guard
+  // at all for that route (confirmed 2026-09-03; looks like an accidental omission, flagged to app
+  // owners, not something a test should paper over by adding a grant that implies a guard exists).
 ];
 
 async function seedEvents() {
@@ -223,6 +244,45 @@ async function seedEvents() {
     docid: ID.LAYER1, title: `TEST Layer ${TESTRUNID}`,
     description: ['Layer detail one', 'Layer detail two'],
     sequence: 1, eventref: eventRef, delete: false, ...tag,
+  });
+
+  // 9b) JOURNEY — resolves p0/p1's `activejourney` id to a display name on events-stage-data's Journey
+  //     column (ESD-01). A full-collection scan (getJourneyMap), so any doc shape with `name` works.
+  await db.collection('journey').doc(ID.JOURNEY1).set({
+    docid: ID.JOURNEY1, name: `TEST Journey ${TESTRUNID}`, ...tag,
+  });
+
+  // 9c) PARTICIPANT METADATA — events-stage-data (ESD-01) does a per-profile getDoc for every row it
+  //     builds; without this doc every row renders metaMissing:true (blank name/email/journey/customer
+  //     status). Seed it for p0 + p1 (both carry the approved EPR0/EPR1 the cohort-summary cards count)
+  //     so the "Approved" card's Active/Non-active legend + Journey column have real data to render.
+  const mkMeta = (pf, custStatus) => ({
+    profileid: PF[pf], name: EMAIL[pf], email: EMAIL[pf], phonenumber: '+10000000000',
+    customerstatus: custStatus, activejourney: ID.JOURNEY1, lastcompletedjourney: ID.JOURNEY1,
+    lastsubscribedjourney: ID.JOURNEY1, ...tag,
+  });
+  await db.collection('participant metadata').doc(PF.p0).set(mkMeta('p0', 'active'), { merge: true });
+  await db.collection('participant metadata').doc(PF.p1).set(mkMeta('p1', 'active'), { merge: true });
+
+  // 9d) PARTICIPANTSPRODUCT (PP_EPC) — event-participation-confirmation (EPC-01) computes its funnel's
+  //     "potential"/"eligible" buckets from `participantsproduct` where productref==P1 && status==null.
+  //     p0/p1 carry no participantsproduct doc at all (they only have an EPR), so without this the
+  //     funnel's potential/eligible counts for arenaEvent1 would be structurally zero — seed a THIRD,
+  //     fresh owner (p6) with no EPR of their own so "potential"/"eligible" have a real, isolated row to
+  //     assert against (distinct from p0/p1's "approved" bucket).
+  await db.collection('participantsproduct').doc(ID.PP_EPC).set({
+    docid: ID.PP_EPC, profileid: PF.p6, productref: productRef(ID.P1), status: null,
+    name: EMAIL.p6, email: EMAIL.p6, ...tag,
+  });
+  await db.collection('participant metadata').doc(PF.p6).set(mkMeta('p6', 'active'), { merge: true });
+
+  // 9e) LOCATIONLOGS — locationlog (LOC-01). Doc shape per locationlog.service.ts: created (Timestamp),
+  //     geopoint (GeoPoint), profileid. p0 already has a participant metadata doc (9c) so the dashboard
+  //     renders a real name instead of the "Unknown (xxxxxx)" fallback.
+  await db.collection('locationlogs').doc(ID.LOCLOG1).set({
+    docid: ID.LOCLOG1, profileid: PF.p0,
+    geopoint: new admin.firestore.GeoPoint(13.0827, 80.2707), // Chennai — matches the app's own placeholder search example
+    created: T.now(), ...tag,
   });
 
   // =================================================================================================
@@ -377,8 +437,9 @@ async function seedEvents() {
     TESTRUNID, ID, PF, EMAIL,
     counts: {
       events: 2, arenaEvents: 2, epr: 2, deliverables: 1, eticketLog: 2, layers: 1,
-      products: 2, ptds: 2, eticket: 1, participantsproduct: 3, spaces: 1, spacetypes: 1,
+      products: 2, ptds: 2, eticket: 1, participantsproduct: 4, spaces: 1, spacetypes: 1,
       videoask: 1, participantvideoask: 1, tags: 1, queues: 1, queueTokens: 2, venues: 1,
+      journeys: 1, locationlogs: 1,
     },
   };
 }
@@ -397,7 +458,7 @@ const SEEDED = [
   // `stage opportunity count`. The APP writes some of these with NO testrunid → the spec resets/cleans
   // them by natural key (see support/events.ts); teardown still sweeps the testrunid-tagged ones.
   'events_profiles', 'arena e-ticket', 'arenaspace', 'stage opportunity count',
-  'participant tag logs', 'participant metadata',
+  'participant tag logs', 'participant metadata', 'journey', 'locationlogs',
   // auth-chain + dashboard (shared shape; testrunid-scoped so the queue 'run1' seed is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
