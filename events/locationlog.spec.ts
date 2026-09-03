@@ -2,6 +2,8 @@
 // ANTI-CIRCULAR). Closes the "never opened" gap flagged in the StarLabs route-coverage map
 // (2026-09-03) for `/locationlog`.
 //
+// Recon: recon-allcomp/events-arena.md (LOC-01 / LOC-03)
+//
 // NOTE (flagged, not "fixed"): `/locationlog` carries NO `canActivate` guard in app.routes.ts — every
 // neighbouring Events route has `[authGuard]`, this one doesn't. That reads as an accidental omission
 // (it means the `dashboard` route-grant system is bypassed entirely for this screen), not a deliberate
@@ -25,14 +27,14 @@ import { evtIds, installEvtStubs, loginAsEvtAdmin, ensureLocationLog } from './s
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc } from '../queue/support/firestore-admin';
 
-test.describe('Location Log — live tracking render + All-logs delete (real UI, anti-circular)', () => {
+// ===========================================================================================
+// READ-PATH (LOC-01) — no dialog handling needed, fastest path to a first green run.
+// ===========================================================================================
+test.describe('Location Log — live tracking render (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
   test.beforeEach(async ({ page }) => {
     guard = attachConsoleGuard(page);
     await installEvtStubs(page);
-    // Precondition (anti-circular, re-runnable): LOC-03 deletes the seeded row for real — restore it
-    // before every test in this file so each test starts from the same known state.
-    await ensureLocationLog();
   });
   test.afterEach(() => assertNoFatal(guard, 'locationlog: no fatal console errors / pageerrors'));
 
@@ -51,6 +53,30 @@ test.describe('Location Log — live tracking render + All-logs delete (real UI,
     const row = page.locator('table[mat-table] tr.ll-row', { hasText: 'participant0+' });
     await expect(row, 'LOC-01: the seeded participant\'s row must render with its resolved name').toBeVisible({ timeout: 30_000 });
   });
+});
+
+// ===========================================================================================
+// WRITE-PATH (LOC-03) — delete. Written only after LOC-01 (the read-path harness) is known-good.
+//
+// DIALOG NOTE: ConfirmDeleteDialogComponent (location-logs.component.ts's confirmAndDelete()) opens
+// via `this.dialog.open(ConfirmDeleteDialogComponent, ...)` — an Angular Material dialog (real DOM,
+// `MatDialogRef<..., boolean>`), NOT a native `window.confirm()`. Verified by grepping the whole
+// locationlog/ folder for `window.confirm`/`window.prompt` — zero matches. So there is no Playwright
+// `page.on('dialog')` auto-dismiss trap here (contrast live-event-dashboard-v3's Mark Attendance,
+// which DOES use a native confirm — see live-event-dashboard-v3.spec.ts LED3-02); the plain
+// `dialog.getByRole('button', ...).click()` below on the rendered `mat-dialog-actions` button is
+// correct and sufficient.
+// ===========================================================================================
+test.describe('Location Log — All-logs delete (real UI, write-path, anti-circular)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installEvtStubs(page);
+    // Precondition (anti-circular, re-runnable): LOC-03 deletes the seeded row for real — restore it
+    // before every test in this describe so it starts from the same known state.
+    await ensureLocationLog();
+  });
+  test.afterEach(() => assertNoFatal(guard, 'locationlog (delete): no fatal console errors / pageerrors'));
 
   // ===========================================================================================
   // LOC-03 — "All logs" tab: delete the seeded row through the real confirm-dialog flow, then assert

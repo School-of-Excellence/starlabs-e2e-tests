@@ -85,14 +85,33 @@ const ID = {
   // --- events-stage-data (ESD-01) ------------------------------------------------------------------
   JOURNEY1: `${TESTRUNID}_journey_1`,      // journey doc — resolves p0/p1's activejourney id to a name
 
-  // --- event-participation-confirmation (EPC-01) ---------------------------------------------------
+  // --- shared "prove the filter" doc (ESD-01 / EPC-01 / LED3-01) ------------------------------------
+  // A THIRD event participation request for ARENAEVT1/EVENT1, status:'requested' (never approved or
+  // attended). Every "Approved"/"registered" count these three screens render is a status-filtered
+  // COUNT (status=='approved' for ESD/EPC's cohort card & funnel segment; status IN
+  // [approved,attended] for LED3's hero number) — without a same-event doc that fails the filter, a
+  // test asserting "== 2" can't tell "the app filtered correctly" from "the app returns every EPR it
+  // sees." Mirrors comms' delete:true channeltemplates proof doc.
+  EPR2: `${TESTRUNID}_epr_2`,              // event participation request, status:'requested' (p2)
+
+  // --- event-participation-confirmation (EPC-01/02) -------------------------------------------------
   // A fresh owner of P1 with NO event participation request yet, so the funnel's "potential"/"eligible"
   // buckets (participantsproduct where productref==P1 && status==null) have a non-zero row distinct
   // from p0/p1 (who are already "approved" via EPR0/EPR1 and carry no participantsproduct doc at all).
   PP_EPC: `${TESTRUNID}_pp_epc`,           // participantsproduct status:null (p6) → potential/eligible
+  PTDS_EPC: `${TESTRUNID}_ptds_epc`,       // productToDeliverySequence for P1 — EPC-02's Approve action
+                                            // bar needs a real "Delivery sequence" option to pick.
 
   // --- locationlog (LOC-01) -----------------------------------------------------------------------
   LOCLOG1: `${TESTRUNID}_loclog_1`,        // locationlogs row for p0 (dashboard render + delete target)
+
+  // --- live-event-dashboard-v3 (LED3-02) -------------------------------------------------------------
+  // A DEDICATED participant for the "Mark attendance" write path: approved (registered) + an ACTIVE
+  // arena e-ticket eligible for P1, distinct from p0 (whose ticket ETICKET_P0 is a shared precondition
+  // for the QR-scan deep-suite cases and gets flipped active:false/back by that suite's own resets —
+  // reusing it here would make the two suites fight over the same doc).
+  EPR7: `${TESTRUNID}_epr_7`,              // event participation request, status:'approved' (p7)
+  ETICKET_P7: `${TESTRUNID}_eticket_p7`,   // arena e-ticket (active:true, eligible P1) for p7
 };
 
 const STAGE_A = 'Stage A';                 // EVT-15/16 single seeded queue stage
@@ -107,9 +126,12 @@ const PF = {
   p3: `${TESTRUNID}_pf_p3`,
   p4: `${TESTRUNID}_pf_p4`,
   p5: `${TESTRUNID}_pf_p5`,
-  // p6: EPC-01 only — owns P1 (participantsproduct status:null) with NO auth chain / EPR / login. Only
-  // needs a profileid + participant metadata doc so its name renders in the funnel table.
+  // p6: EPC-01/02 only — owns P1 (participantsproduct status:null) with NO auth chain / EPR / login.
+  // Only needs a profileid + participant metadata doc so its name renders in the funnel table.
   p6: `${TESTRUNID}_pf_p6`,
+  // p7: LED3-02 only — a dedicated registered+ticketed participant for the "Mark attendance" write
+  // path, kept separate from p0's ETICKET_P0 (owned by the QR-scan deep-suite cases).
+  p7: `${TESTRUNID}_pf_p7`,
 };
 const EMAIL = {
   admin: `admin+${TESTRUNID}@example.com`,
@@ -120,6 +142,7 @@ const EMAIL = {
   p4: `participant4+${TESTRUNID}@example.com`,
   p5: `participant5+${TESTRUNID}@example.com`,
   p6: `participant6+${TESTRUNID}@example.com`,
+  p7: `participant7+${TESTRUNID}@example.com`,
 };
 
 function roster() {
@@ -153,6 +176,7 @@ const ROUTES = [
   { route: '/initiateeventproduct', label: 'Initiate Event Product' },
   { route: '/events-stage-data', label: 'Events Stage Data' },
   { route: '/event-participation-confirmation', label: 'Event Participation Confirmation' },
+  { route: '/live_event_dashboard_v3', label: 'Live Event Dashboard v3' },
   // NOTE: /locationlog is deliberately NOT granted here — app.routes.ts carries no canActivate guard
   // at all for that route (confirmed 2026-09-03; looks like an accidental omission, flagged to app
   // owners, not something a test should paper over by adding a grant that implies a guard exists).
@@ -275,6 +299,43 @@ async function seedEvents() {
     name: EMAIL.p6, email: EMAIL.p6, ...tag,
   });
   await db.collection('participant metadata').doc(PF.p6).set(mkMeta('p6', 'active'), { merge: true });
+
+  // 9d-ii) PRODUCTTODELIVERYSEQUENCE (PTDS_EPC) — the funnel's Approve action bar (EPC-02) requires a
+  //        real "Delivery sequence" mat-option; loadDeliverySets() reads the FIRST doc matching
+  //        product==P1 and takes its deliveryoptions[] verbatim (no activity resolution needed here,
+  //        unlike the create-event dialog's PTDS_INST/PTDS_INIT).
+  await db.collection('productToDeliverySequence').doc(ID.PTDS_EPC).set({
+    docid: ID.PTDS_EPC, product: productRef(ID.P1),
+    deliveryoptions: [{ deliverytype: `TEST Delivery Set ${TESTRUNID}` }],
+    ...tag,
+  });
+
+  // 9d-iii) EPR2 — "prove the filter" doc shared by ESD-01/EPC-01/LED3-01 (see ID.EPR2 comment above).
+  //         Same arenaeventid/eventref as EPR0/EPR1 but status:'requested' — every "Approved"/
+  //         "registered" count on those three screens must stay at 2, not 3, once this exists.
+  await eprRef(ID.EPR2).set({
+    docid: ID.EPR2, profileid: PF.p2, eventref: eventRef, productref: productRef(ID.P1),
+    arenaeventid: ID.ARENAEVT1, participantproductid: null, status: 'requested',
+    initiatedfrom: 'web', ...tag,
+  });
+
+  // 9d-iv) LED3-02 precondition — p7 is registered (approved EPR) AND carries an ACTIVE arena e-ticket
+  //        eligible for P1, so live-event-dashboard-v3's openMarkPicker() finds a ticket to mark against.
+  //        Kept separate from p0/ETICKET_P0 (owned by the QR-scan deep-suite cases — see ID.EPR7 comment).
+  //        arenaeventid is deliberately null (NOT ARENAEVT1): live-event-dashboard-v3's registered-count
+  //        query filters by `eventref` only, but ESD-01/EPC-01 filter by `arenaeventid==ARENAEVT1` — an
+  //        approved EPR7 with arenaeventid:ARENAEVT1 would silently bump THEIR oracles from 2 to 3.
+  await eprRef(ID.EPR7).set({
+    docid: ID.EPR7, profileid: PF.p7, eventref: eventRef, productref: productRef(ID.P1),
+    arenaeventid: null, participantproductid: null, status: 'approved',
+    initiatedfrom: 'web', ...tag,
+  });
+  await db.collection('arena e-ticket').doc(ID.ETICKET_P7).set({
+    docid: ID.ETICKET_P7, profileid: PF.p7, eventref: eventRef,
+    eventparticipationref: eprRef(ID.EPR7), producteligible: [ID.P1], active: true,
+    eventstartdate: daysFromNow(-2), eventenddate: daysFromNow(7), ...tag,
+  });
+  await db.collection('participant metadata').doc(PF.p7).set(mkMeta('p7', 'active'), { merge: true });
 
   // 9e) LOCATIONLOGS — locationlog (LOC-01). Doc shape per locationlog.service.ts: created (Timestamp),
   //     geopoint (GeoPoint), profileid. p0 already has a participant metadata doc (9c) so the dashboard
@@ -436,8 +497,8 @@ async function seedEvents() {
   return {
     TESTRUNID, ID, PF, EMAIL,
     counts: {
-      events: 2, arenaEvents: 2, epr: 2, deliverables: 1, eticketLog: 2, layers: 1,
-      products: 2, ptds: 2, eticket: 1, participantsproduct: 4, spaces: 1, spacetypes: 1,
+      events: 2, arenaEvents: 2, epr: 4, deliverables: 1, eticketLog: 2, layers: 1,
+      products: 2, ptds: 3, eticket: 2, participantsproduct: 4, spaces: 1, spacetypes: 1,
       videoask: 1, participantvideoask: 1, tags: 1, queues: 1, queueTokens: 2, venues: 1,
       journeys: 1, locationlogs: 1,
     },

@@ -2,6 +2,8 @@
 // (real screen, ANTI-CIRCULAR). Closes the "never opened" gap flagged in the StarLabs route-coverage
 // map (2026-09-03) for `/events-stage-data` — the events suite had zero specs touching this route.
 //
+// Recon: recon-allcomp/events-arena.md (ESD-01)
+//
 // Anti-circularity: the "Approved" cohort card is not a stored field anywhere — it's computed client-
 // side by computeCohortSummary() over the `event participation request` rows it streamed for the
 // selected arena event. We assert it against an INDEPENDENT server-side count of the same predicate
@@ -10,6 +12,11 @@
 // Selectors were derived from static source review of events-stage-data.component.ts/.html (no Angular
 // unit test exists for this screen to cross-check against, and this suite has never opened the route
 // before), not from a live DOM — expect to true these up against the emulator on first run.
+//
+// NO WRITE-PATH TESTS IN THIS FILE: events-stage-data.component.ts contains zero addDoc/setDoc/
+// updateDoc/deleteDoc calls (verified by reading the whole file) — journey-group/ready-stage/stage-def/
+// eligibility config persists to `localStorage` only (`esd_journeygroups_<arenaeventid>`), never to
+// Firestore. This is a genuinely read-only screen; there is no write-path tier to add.
 import { test, expect } from '@playwright/test';
 import { evtIds, installEvtStubs, loginAsEvtAdmin } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -39,7 +46,15 @@ test.describe('Events Stage Data — wizard mount + app-computed cohort summary 
       ['arenaeventid', '==', evtIds.arenaEvent1],
       ['status', '==', 'approved'],
     ]);
-    expect(approvedOracle, 'ESD-01: seeded precondition — 2 approved EPRs for ARENAEVT1').toBe(2);
+    // Floor, not exact equality: event-participation-confirmation.spec.ts's EPC-02 (same seeded world in
+    // a full-suite run) approves p6 for real, writing an EXTRA approved EPR with a fresh auto-id and NO
+    // testrunid — reseeding can't sweep it, so it can persist across runs. The UI-vs-oracle comparison
+    // below stays exact against WHATEVER this count is at run time.
+    expect(approvedOracle, 'ESD-01: seeded precondition — at least EPR0 + EPR1 are approved for ARENAEVT1').toBeGreaterThanOrEqual(2);
+    // "Prove the filter" doc (mirrors comms' delete:true channeltemplates row): EPR2 shares
+    // ARENAEVT1 but is status:'requested' — a same-arena EPR that must never count as "Approved".
+    const totalEprForArena = await countWhere('event participation request', [['arenaeventid', '==', evtIds.arenaEvent1]]);
+    expect(totalEprForArena, 'ESD-01: EPR2 (requested) must not be counted as approved').toBe(approvedOracle + 1);
 
     await loginAsEvtAdmin(page);
     await page.goto('/events-stage-data', { waitUntil: 'domcontentloaded' });
