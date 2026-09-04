@@ -179,6 +179,11 @@ const DRIVEN_ROUTES = [
   { route: '/zoommeeting_bigparticipants', label: 'Zoom Meeting (BIG)' },
   { route: '/joinroom', label: 'Join Room (OpenVidu)' },
   { route: '/web-studio-invitation', label: 'Web Studio Invitation' },
+  // Queue-system screens added by the 2026-09-04 coverage pass (OP-14 / OP-15). Both are flat routes the
+  // authGuard gates by first path segment; without these docs the guard shows
+  // "No roles or profiles configured for screen: X" and the component never mounts.
+  { route: '/queuevenue', label: 'Queue Venue' },
+  { route: '/zoomaccount', label: 'Zoom Account' },
   // /queue-web (QueueWebVersion1Component, app.routes.ts:319) is the PARTICIPANT landing route
   // (LANDING_ROUTES.bigParticipant) that hosts the <app-web-studio-invitation> accept/deny overlay
   // (studio SS-05/06/08). It is the ONLY driven participant screen with no dashboard grant — the
