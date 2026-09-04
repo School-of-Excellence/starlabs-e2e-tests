@@ -32,6 +32,23 @@ export const ATC_EXCLUDED_ROUTES: string[] = [
   '/evolution-prep-participants', '/evolution-prep-participants-v2',
 ];
 
+/**
+ * ADJACENT-BUT-IN-SCOPE (2026-09-04). `scripts/check-atc-coupling.mjs` flags these as "presents as ATC"
+ * in its WEAK tier. They were reviewed and are NOT excluded — recorded here so the review is not repeated:
+ *
+ *  /openmeeting/:id/:collectiontype — the Zoom client view. Reads NO ATC collection. It renders a
+ *      host-only "Prescribe ATC" bubble which does `window.open('/dynamicstudio?step=prescribe-atc')`
+ *      (zoom-clientview.component.ts:1204). The SCREEN is testable; the BUTTON is not — /dynamicstudio is
+ *      denylisted above, and clicking it opens that route in a second window where assertNotExcluded()
+ *      cannot see it. Any spec for this route MUST leave the prescribe bubble alone.
+ *
+ *  /atcmodel, /modellevelconfig — "ATC Model" reference config, which the app CLAUDE.md explicitly calls
+ *      safe ("Reference-only config (atc taxonomy, atc model, atcmodel level config) is safe").
+ *      /modellevelconfig is already covered by BIG-09b.
+ *
+ *  /eiflixdiscoverpage — heading text only ("ATC — Head"); no ATC collection read.
+ */
+
 /** Throws if a test tries to navigate to an ATC-excluded route — a guardrail, not a UI assertion. */
 export function assertNotExcluded(route: string): void {
   const hit = ATC_EXCLUDED_ROUTES.find(r => route === r || route.startsWith(r + '/'));

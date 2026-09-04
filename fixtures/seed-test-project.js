@@ -184,6 +184,12 @@ const DRIVEN_ROUTES = [
   // "No roles or profiles configured for screen: X" and the component never mounts.
   { route: '/queuevenue', label: 'Queue Venue' },
   { route: '/zoomaccount', label: 'Zoom Account' },
+  // OP-18 / OP-19 — the planner pair. Between them they read ~20 collections, but only the ones the
+  // shared queue seed already writes (`queue generation`, `queue variation`, `queue planning`,
+  // `queue_token`, `arena events`) are needed for the queue picker each screen builds on load; the rest
+  // drive panels that stay empty and render fine that way.
+  { route: '/queue-planner', label: 'Queue Planner' },
+  { route: '/queue-planner-review', label: 'Queue Planner Review' },
   // DELIBERATELY ABSENT: /evolution-prep-participants and /evolution-prep-participants-v2. Both are ATC
   // READERS and are on the D-001 denylist (_support/excluded-routes.ts). Granting a test actor access to
   // them here would defeat the exclusion — the point is that no spec ever reaches those screens.
