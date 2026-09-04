@@ -98,6 +98,16 @@ for (const f of specFiles) {
   const src = fs.readFileSync(f, 'utf8');
   const rel = path.relative(HUB, f).replace(/\\/g, '/');
 
+  // Page objects drive routes by NAME, not by path: queue/pages/big-misc.page.ts holds a route union and
+  // navigates with goto(`/${route}${qs}`), so specs open a screen as `.open('biglevel')`. Those visits are
+  // invisible to the slash-literal scan below and made queue look 6 routes worse than it is. Harvest
+  // `.open('<token>')` where the token exactly matches a declared route path — narrow enough to keep false
+  // positives near zero, unlike accepting every bare quoted word.
+  for (const m of src.matchAll(/\bopen\(\s*['"]([A-Za-z0-9_\-]+)['"]/g)) {
+    const r = '/' + m[1];
+    if (declared.has(r)) (visited.get(r) ?? visited.set(r, new Set()).get(r)).add(rel);
+  }
+
   for (const m of src.matchAll(/[`'"](\/[A-Za-z0-9_\-/:$.{}]*)[`'"]/g)) {
     let r = m[1].split('?')[0].replace(/\/+$/, '');
     if (!r || r === '/') continue;
