@@ -191,6 +191,7 @@ const DRIVEN_ROUTES = [
   { route: '/queue-planner', label: 'Queue Planner' },
   { route: '/queue-planner-review', label: 'Queue Planner Review' },
   { route: '/queuetransfer', label: 'Queue Transfer' },   // OP-20
+  { route: '/bigchatscreen', label: 'BIG Chat Screen' },  // BIG-15
   // DELIBERATELY ABSENT: /evolution-prep-participants and /evolution-prep-participants-v2. Both are ATC
   // READERS and are on the D-001 denylist (_support/excluded-routes.ts). Granting a test actor access to
   // them here would defeat the exclusion — the point is that no spec ever reaches those screens.
