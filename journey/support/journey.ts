@@ -58,6 +58,8 @@ export const journeyIds = {
   // deep
   PJP_ONB: `${RUN}_PJP_ONB`, SL1: `${RUN}_SL1`,
   DF1: `${RUN}_DF1`, APT1: `${RUN}_APT1`, EMT1: `${RUN}_EMT1`,
+  // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks). Mirrors seed-journey.js.
+  JOD1: `${RUN}_JOD1`, JOD2: `${RUN}_JOD2`,
 };
 export const journeyNames = {
   journey1: `Test Journey ${RUN}`,

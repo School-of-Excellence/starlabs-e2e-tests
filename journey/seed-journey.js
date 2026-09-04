@@ -60,6 +60,13 @@ const ID = {
   PKG1: `${TESTRUNID}_PKG1`,    // package "Test Package <run>"
   J2P1: `${TESTRUNID}_J2P1`,    // journey-to-product mapping (J1 -> [P1]) — seeded baseline (JP-17 render)
   PDS1: `${TESTRUNID}_PDS1`,    // productToDeliverySequence (P1)
+  // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks).
+  //   JOD1 carries ONLY a journeyref -> journey/J1, so the rendered title can only come from the app
+  //        dereferencing it (the title string is not on this doc at all).
+  //   JOD2 is deliberately BARE — no journeyref, no lastUpdated/updatedBy — so every value on its row is a
+  //        default the COMPONENT chose (docid as title; '—' for the audit fields).
+  JOD1: `${TESTRUNID}_JOD1`,
+  JOD2: `${TESTRUNID}_JOD2`,
   // participant runtime (the :pid participant's purchase/support/delivery preconditions)
   PJP1: `${TESTRUNID}_PJP1`,    // participantjourneyproduct (journeyref J1, initiated, NOT onboarded)
   PJP2: `${TESTRUNID}_PJP2`,    // participantjourneyproduct (journeyref J1, initiated) — 2nd row for count
@@ -129,6 +136,7 @@ const ROUTES = [
   // DEEP routes
   { route: '/salesleads', label: 'Sales Leads' },             // JP-10 reject
   { route: '/productdelivery', label: 'Product Delivery' },   // product-delivery render + entry to deliverysequence authoring
+  { route: '/journeyonboardingdetail', label: 'Journey Onboarding Detail' },  // JP-18 / JP-19
 ];
 
 async function seedJourney() {
@@ -183,6 +191,22 @@ async function seedJourney() {
     docid: ID.PDS1, product: productRef(ID.P1),
     deliveryoptions: [{ deliverytype: 'Standard Delivery' }], ...tag,
   });
+
+  //    journeyonboardingdetail (JP-18 / JP-19) — the /journeyonboardingdetail table is driven by an
+  //    UNFILTERED collectionData stream (component ts:1218), so assertions scope to these docids, never to
+  //    a row count.
+  //
+  //    JOD1: journeyref is a REAL DocumentReference (not a path string) — the component branches on
+  //    `rawRef?.path` FIRST (ts:1232) and only falls back to string handling, so the ref object exercises
+  //    the primary path. Nothing on this doc carries the journey's title: the app can only render
+  //    "Test Journey <run>" by following the ref into journey/J1 and reading `journey` off it.
+  await db.collection('journeyonboardingdetail').doc(ID.JOD1).set({
+    docid: ID.JOD1, journeyref: journeyRef(ID.J1),
+    lastUpdated: '2026-09-04', updatedBy: `seed+${TESTRUNID}@example.com`, ...tag,
+  });
+  //    JOD2: deliberately BARE — no journeyref, no lastUpdated, no updatedBy. Every value the row renders
+  //    is then a fallback the COMPONENT chose (docid as the title, '—' for the audit cells).
+  await db.collection('journeyonboardingdetail').doc(ID.JOD2).set({ docid: ID.JOD2, ...tag });
 
   // 4) PARTICIPANT runtime preconditions for the :pid participant ----------------------------------
   //    participant metadata/{pid} — REQUIRED by journeyplan (journeyplan.ts:97-101 reads this doc and
@@ -309,6 +333,10 @@ async function seedJourney() {
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
 const SEEDED = [
   'journey', 'products', 'package', 'journey-to-product', 'productToDeliverySequence',
+  // journeyonboardingdetail (JP-18/19). MUST be here: the component's stream is UNFILTERED, so any doc
+  // left behind by an earlier run still renders and pollutes later assertions. Omitting a new collection
+  // from this list is what made comms CN-18 fail on its second consecutive run.
+  'journeyonboardingdetail',
   'participant metadata', 'participantjourneyproduct', 'participantsproduct', 'participantdeliverysequence',
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',

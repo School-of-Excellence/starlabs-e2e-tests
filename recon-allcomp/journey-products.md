@@ -285,6 +285,45 @@ The `authGuard` (`AuthguardService.getRoles()`) authenticates the user; individu
 | JP-16 | Formtemplate (formtemplate): loading a form for a seeded `queue_token` pre-fills the participant name from the token doc | REAL-UI | App reads `queue_token` (ts:363) and renders participant name in the form header; assert the rendered name matches the seeded token's participant name — value the app computed from its Firestore read | P2 |
 | JP-17 | Package design list renders all seeded `package design` docs; filter narrows correctly | REAL-UI | `collectionData('package design')` drives the table; rendered row count matches `countWhere('package design', [])` (app-computed vs oracle count) | P2 |
 
+### `/journeyonboardingdetail` — JP-18..JP-19 (added 2026-09-04, coverage-gap pass)
+
+> WHY THESE EXIST: the journey suite's `appPaths` glob already claimed `src/app/journey-onboarding-detail/**`,
+> so a change there made the journey gate MANDATORY — but no spec ever opened the module's only route.
+> The gate ran green while testing none of it. Third and last of the false-green modules found by
+> `scripts/check-route-coverage.mjs` (after comms `/channel-templates` and content `/content-upload-v2`).
+
+**Route:** `/journeyonboardingdetail` → `journey-onboarding-detail/journey-onboarding-detail.component.ts:1`,
+`authGuard`, selector `app-journey-onboarding-detail`. The screen has no in-app nav link — it is reachable
+by URL only, which is why it went unnoticed.
+
+**Firestore surface** — the table is driven by a LIVE stream,
+`collectionData(collection('journeyonboardingdetail'), { idField: 'docid' })` (ts:1218). Note it is
+UNFILTERED — every doc in the collection renders, so assertions must scope to the seeded docids rather than
+to a row count. Writes: `setDoc('journeyonboardingdetail/{docid}', …, {merge:true})` (ts:1396) and a bulk
+backfill (ts:1422-1425). The screen also reads `journey`, `series`, `content_urls`,
+`solar voice playlist`, `profile_data` and two `classify` docs for its authoring forms.
+
+| ID | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|
+| JP-18 | The list resolves each row's journey title by DEREFERENCING `journeyref` | REAL-UI | The strongest signal on this screen: the title is NOT stored on the onboarding doc. `loadTable()` follows the doc's `journeyref` DocumentReference into `journey/{id}` and reads `journey ?? name ?? title ?? type ?? id` (ts:1222-1230). Seed an onboarding doc carrying ONLY a ref to the seeded `journey/J1`; the row must render `Test Journey <run>` — a string the test never wrote into that doc, and which the app can only produce by performing the lookup. | P1 |
+| JP-19 | A row with no `journeyref` falls back to the docid, and empty audit fields render the app's `—` | REAL-UI | Two app-decided fallbacks in one row: `let journeyTitle = d.docid` when no ref resolves (ts:1220), and `lastUpdated ?? '—'` / `updatedBy ?? '—'` (ts:1244-1245). Seed a bare doc with NO journeyref and NO audit fields; every rendered value on that row is then a default the COMPONENT chose, not data the test supplied. | P2 |
+
+**Implementation notes:**
+
+1. **`/journeyonboardingdetail` needs a `dashboard` route grant.** `seed-journey.js` has an explicit
+   `ROUTES` array (ts:117-132) and this route is NOT in it — the third suite in a row with this gap.
+   Without it `authGuard` denies with "No roles or profiles configured for screen: X" and the component
+   never mounts on a URL that looks correct.
+2. **`journeyonboardingdetail` must be added to the `SEEDED` teardown list** (ts:310). It is currently
+   absent, so seeded docs would survive between runs — the same defect that bit comms CN-18 on its second
+   run. The stream is unfiltered, so leftovers from an earlier run WOULD render and pollute later
+   assertions.
+3. **`journeyref` must be seeded as a real DocumentReference**, not a path string. The component branches
+   on `rawRef?.path` first and only falls back to treating a string as a path (ts:1232). Seeding
+   `db.collection('journey').doc(ID.J1)` (the admin DocumentReference itself) exercises the primary branch.
+4. **Do not assert a row COUNT.** The stream reads the collection unfiltered, so any other run's docs render
+   too. Scope every assertion to the seeded docid / title.
+
 ---
 
 ## ATC exclusions within this group
