@@ -18,6 +18,7 @@
 | `/group-chat` | `src/app/Events/Chat/chat-screen/chat-screen.component.ts:155` | `authGuard` | `roles['chatxadmin']` and `roles['admin']` checked at line 157–158; chatxadmin enables extra moderation actions | No ATC references |
 | `/bigchatscreen` | `src/app/big/big-chat-screen/big-chat-screen.component.ts:105` | `authGuard` | `roles['mentor']` at line 108 → `mentorRole`; `bigAdminAccess` determined via adminsCheck. Route params: `assignemtnId`, `profileId`, `assignmentprofileId`, `admins` | No ATC references |
 | `/onewaytemplates` | `src/app/OneWayAppCommunication/onewaytemplates/oneway-templates.component.ts:1` | `authGuard` | No in-component role check | No ATC references |
+| `/channel-templates` | `src/app/Channel Communication/channeltemplates/channeltemplates.component.ts:1` | `authGuard` | No in-component role check; uses `this.authguard.uid` for `createdby`/`approvedby`/`actionby` | No ATC references |
 
 **Route config source:** All routes declared in `src/app/app.routes.ts:230,248,249,252,255–257,307` with `canActivate:[authGuard]`. The `authGuard` resolves allowed roles from the `dashboard` Firestore collection (`authguard.service.ts:325`).
 
@@ -38,6 +39,8 @@
 | `notifications/{uid}/logs` | read (web), write (CF) | Per-user notification delivery log. Written by `notifyMobileApp` CF (line 673). Read by `/notificationlog` via collectionGroup query on `logs` (line 159). |
 | `notifications` | read | Top-level per-user read-status doc (`read: bool`). Read by `/notificationlog` (line 70). |
 | `inapp templates` | both | In-app message template CRUD. Written at `communication.component.ts:996`. |
+| `channeltemplates` | both | Channel template CRUD + approval lifecycle for `/channel-templates`. Read as `getDocs(query(ref, orderBy('createddate','desc')))` (`channeltemplates.component.ts:299-300`) then filtered IN THE APP by `!t.delete` (ts:302). Written by approve (ts:420), rework (ts:442), soft-delete (ts:461), duplicate (ts:472) and submit (ts:531/557/578). `status` is one of `pending`\|`approved`\|`rework`; `timeline[]` grows by `arrayUnion`; deletion is SOFT (`delete: true`). |
+| `classify/channelcategories` | both | Single doc holding the `categories[]` array that drives the category dropdown on `/channel-templates` (read ts:284, written ts:804/822). Sibling of the existing `classify/onewaycategories` doc. |
 | `wati templates` | read | WhatsApp template metadata read at `/communication` line 1300. |
 | `wati archive` | read | WhatsApp send history read by date range (`communication.component.ts:830`). |
 | `myoperator calls` | read | Call log records read by date range (`communication.component.ts:808`). |
@@ -277,10 +280,39 @@
 | CN-13 | `createPostMarkEmailTemplate` CF: validating an email template writes `postmarkstatus:'approved'` to the doc | CF-SIDEEFFECT | Seed: `email templates` doc with `postmarkstatus:'pending'`, `templatevalidated:false`, `templatestatus:'created'`, `type:'email'`. Update doc to set `templatevalidated:true` via admin (simulating the approve step). CF fires. `pollUntil` checks `getDoc('email templates', docid).postmarkstatus === 'approved'`. CF called Postmark externally (stubbed in test env) and wrote back that field. | P1 |
 | CN-14 | One-way template creation writes to `onewaytemplates` with correct fields | REAL-UI | Actor navigates to `/onewaytemplates`, creates a template with unique name. Admin reads `onewaytemplates` and asserts doc exists with matching `templatename` and `htmlbody`. App decided the doc structure. | P1 |
 | CN-15 | One-way broadcast: sending creates `channelarchive` doc and updates `supportchat` members | REAL-UI | Actor opens the send-broadcast wizard from `/onewaytemplates`, selects the seeded channel, selects the seeded template, selects one participant, confirms. Admin asserts: (a) `channelarchive` doc created with `channelid==seededChannelId` and `profileid` contains participant; (b) `supportchat/{channelid}.members` arrayUnion includes participant. App computed both writes. | P1 |
+| CN-16 | Notification log renders a row from its own `collectionGroup('logs')` query | REAL-UI | BACK-FILLED 2026-09-03 — case was implemented but never recorded here. Implemented at `comms/comms-deep.spec.ts:246`. Seeds `notifications/{uid}/logs/{logid}`; the row asserted is one the APP rendered from its own collectionGroup read after a today date-range filter, not a value the test wrote to the table. | P1 |
+| CN-17 | chatxadmin sees the create-group moderation control | REAL-UI | BACK-FILLED 2026-09-03 — case was implemented but never recorded here. Implemented at `comms/chat.spec.ts:95`. Asserts a role-gated affordance: the chatxadmin actor sees the create/restore control the component gates on `chatAdmin`/`adminRole` (`chat-screen.component.ts:157-158`). The gate decision is the app's. | P1 |
 | CN-16 | Notification log: collectionGroup on `notifications/{uid}/logs` populates table after date selection | REAL-UI | Seed `notifications/{uid}/logs/{logid}` doc with known `date` within today's range. Navigate to `/notificationlog`, set date range to today. Assert table has at least one row. App executed the collectionGroup query and rendered the result. | P2 |
 | CN-17 | Chat-admin access: chatxadmin role enables group editing button visibility | REAL-UI | Login as chatxadmin actor. Navigate to `/group-chat`, select the seeded group. Assert the edit-group button is visible (it is gated on `chatAdmin` being true). Login as non-chatxadmin actor and assert the same button is absent. App checks `this.chatAdmin` at render time. | P2 |
 
 ---
+
+### `/channel-templates` — CN-18..CN-23 (added 2026-09-03, coverage-gap pass)
+
+> WHY THESE EXIST: the comms suite's `appPaths` glob already claimed `src/app/Channel Communication/**`,
+> so a change there made the comms gate MANDATORY — but no spec ever opened the module's only route.
+> The gate ran green while testing none of it. These cases make the existing claim true.
+
+| ID | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|
+| CN-18 | `/channel-templates` list renders the seeded templates | REAL-UI | Rows are built by the app's own `getDocs(orderBy('createddate','desc'))` stream (ts:299). Assert the seeded names render AS ROWS, and that the `testrunid==RUN` doc count read back by admin matches the number of non-deleted seeds — never a value the test wrote into the table. | P1 |
+| CN-19 | A soft-deleted template is hidden from the list | REAL-UI | Seed a `delete:true` doc as a PRECONDITION, then assert its `templatename` renders NOWHERE on the page. This proves the app's own `.filter(t => !t.delete)` (ts:302) executed — a plain "row is absent" assertion could not distinguish that from the doc never existing, which is why the doc must exist in Firestore and be asserted present by admin. | P1 |
+| CN-20 | Status pills show app-computed pending/approved/rework tallies | REAL-UI | `statusCounts` is derived in `loadTemplates()` (ts:305-309) and rendered at `channeltemplates.component.html:93-95`. Assert the rendered pill numbers equal the tallies the APP derived from the seeded mix — the test seeds docs, never a count. | P1 |
+| CN-21 | Approving a pending template writes `status:'approved'` + a timeline entry | REAL-UI | Accept the native `confirm()` (ts:418), then admin-read the doc and assert `status==='approved'`, `approvedby===<uid>` and a `timeline` entry with `action:'Approved'` — every one of those values is written BY THE APP (ts:421-429), not supplied by the test. Also assert the re-rendered status chip reads "Approved". | P0 |
+| CN-22 | Sending a template for rework writes `status:'rework'` + the typed note | REAL-UI | Accept the native `prompt()` (ts:438) with a unique note string. Admin asserts the app's `arrayUnion` timeline entry (ts:445-448) carries `action:'Rework'` and the note. The note is the ONLY test-supplied value; the surrounding doc shape is the app's. | P0 |
+| CN-23 | Duplicating a template creates exactly one new pending `(Copy)` doc | REAL-UI | `countWhere('channeltemplates', [['templatename','==', '<name> (Copy)']])` before vs after the action. The new doc, its `' (Copy)'` name, its `'_copy'` templateid and its `status:'pending'` reset are all decided by `duplicateTemplate()` (ts:471-489) — the test asserts a count of the APP's own write. | P0 |
+
+**Implementation notes for CN-21/22/23 (read before writing):**
+
+1. **Native dialogs are the trap.** Approve and delete call `confirm()`; rework calls `prompt()`. Playwright
+   AUTO-DISMISSES dialogs when no handler is registered — the action then silently no-ops and the test still
+   PASSES. Every one of these cases MUST register `page.on('dialog', d => d.accept(...))` before the click,
+   and must assert the resulting Firestore write, not just a snackbar.
+2. **Deletion is soft.** `deleteTemplate()` sets `delete: true` (ts:461); it never removes the doc. A cleanup
+   helper must therefore reset by doc id, not by absence.
+3. **`duplicateTemplate()` copies the source doc wholesale** (`...t`), so the new doc INHERITS `testrunid`
+   and `_testdata` from the seed. Convenient for cleanup — but it means a `testrunid==RUN` count is NOT a
+   stable assertion after CN-23 runs; scope CN-23's count to the `' (Copy)'` name instead.
 
 ## ATC exclusions within this group
 
@@ -314,3 +346,19 @@ No exclusions within this group are required beyond the global ATC constraint.
 9. **`wati archive` and `myoperator calls` data** will be empty in the test project — the counts shown in the Communication dashboard sidebar will be 0 for those channels. Tests should not rely on those counts being non-zero unless the seed explicitly adds docs.
 
 10. **`channelarchive` has no CF trigger in the deployed code.** The `onSend()` function in `/onewaychannel` writes to `channelarchive` (line 404), but no CF in the main `starlabs-cloud-function` responds to it. This means the broadcast delivery to participants is either (a) a planned but undeployed CF, or (b) handled by a separate mechanism. Test CN-15 can only assert the Firestore writes the app made — it cannot assert delivery side-effects for this flow.
+
+11. **`/channel-templates` DIVERGES BY APP BRANCH — verified 2026-09-03.** The route is declared on
+    `origin/development` and `origin/cicd-dev`, but is ABSENT from `origin/cicd`:
+
+    | branch | `/channel-templates` |
+    |---|---|
+    | `origin/development` | present (`app.routes.ts:325`) |
+    | `origin/cicd-dev` | present |
+    | `origin/cicd` | **absent** |
+
+    This is the CN-14 failure mode inverted (CN-14's `/onewaytemplates` is present on `cicd`, absent on
+    `cicd-dev`), and the fourth recorded instance of app-branch route divergence in this repo after CN-14,
+    PA-09 and EVT-15/16. CN-18..23 MUST therefore carry the same self-skip guard `templates.spec.ts:67-85`
+    uses: assert the route is genuinely absent (the app redirected / did not mount) and `test.skip()` with a
+    message naming the branch — never fail, and never force-click through. Chasing the wrong layer here is
+    exactly what cost time on EVT-15/16.

@@ -55,6 +55,26 @@ export const commsIds = {
   EMAIL_CF: `${RUN}_email_cf`,
   EMAIL_ARCHIVE_CF: `${RUN}_email_archive_cf`,
   NOTIF_LOG: `${RUN}_notif_log`,
+  // /channel-templates — CN-18..CN-23. Mirrors the ID block in seed-comms.js.
+  CT_APPROVED: `${RUN}_chan_tmpl_approved`,
+  CT_PENDING: `${RUN}_chan_tmpl_pending`,
+  CT_REWORK: `${RUN}_chan_tmpl_rework`,
+  CT_DELETED: `${RUN}_chan_tmpl_deleted`,
+  CT_REWORK_TARGET: `${RUN}_chan_tmpl_rework_target`,
+};
+
+/**
+ * The seeded channel-template names, exactly as seed-comms.js writes them. Specs assert against THESE
+ * rather than hardcoding strings, so a seed rename can never silently turn an assertion into a no-op.
+ */
+export const channelTemplateNames = {
+  approved: `Approved Channel ${RUN}`,
+  pending: `Pending Channel ${RUN}`,
+  rework: `Rework Channel ${RUN}`,
+  reworkTarget: `Rework Target Channel ${RUN}`,
+  deleted: `Deleted Channel ${RUN}`,
+  /** What duplicateTemplate() names the copy it creates from `pending` (component ts:475). */
+  pendingCopy: `Pending Channel ${RUN} (Copy)`,
 };
 
 /** Install the prod firewall + all external stubs. Call in beforeEach BEFORE navigating. */
@@ -140,4 +160,37 @@ export async function resetEmailTemplateCf(): Promise<void> {
     { postmarkstatus: 'pending', templatevalidated: false, templatestatus: 'created', active: false },
     { merge: true },
   );
+}
+
+/**
+ * Reset the /channel-templates write-path PRECONDITIONS (CN-21/22/23) so those cases are re-runnable.
+ *
+ * Three jobs, and each exists for a reason the component forced:
+ *  1. Put CT_PENDING and CT_REWORK_TARGET back to `status:'pending'` with an EMPTY timeline. CN-21 asserts
+ *     the app WROTE status 'approved' + an 'Approved' timeline entry, and CN-22 asserts an arrayUnion
+ *     'Rework' entry — both are meaningless if a prior run left those values already in place.
+ *  2. Clear `delete` back to false. deleteTemplate() is SOFT (component ts:461), so a doc "deleted" by an
+ *     earlier run stays in Firestore and would silently vanish from CN-18's list.
+ *  3. HARD-delete every ' (Copy)' doc CN-23 created. Those are written by the APP, and because
+ *     duplicateTemplate() spreads the source doc they carry our testrunid — so nothing else prunes them,
+ *     and CN-23's before/after count would drift upward on every run.
+ *
+ * PRECONDITION only: this never writes a value any case asserts.
+ */
+export async function resetChannelTemplates(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+
+  for (const id of [commsIds.CT_PENDING, commsIds.CT_REWORK_TARGET]) {
+    await db.collection('channeltemplates').doc(id).set(
+      { status: 'pending', timeline: [], approvedby: null, approveddate: null, delete: false },
+      { merge: true },
+    );
+  }
+
+  // Remove app-created copies from any prior CN-23 run (natural key: the ' (Copy)' name).
+  const copies = await db.collection('channeltemplates')
+    .where('templatename', '==', channelTemplateNames.pendingCopy)
+    .get().catch(() => ({ docs: [] as any[] }));
+  for (const d of copies.docs) await d.ref.delete().catch(() => {});
 }

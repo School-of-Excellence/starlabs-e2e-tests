@@ -13,6 +13,14 @@
     "ciReady": "false = local-only (no emulator config yet) — hidden from the console dialog",
     "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
   },
+  "excluded": {
+    "_why": "DELIBERATELY out of e2e scope — not a gap. The coverage checkers (scripts/check-suite-coverage.mjs, scripts/check-route-coverage.mjs) skip these instead of reporting them, so their exit code stays meaningful as a gate. Adding a path here is an operator decision: it means a change there routes NO suite and ships ungated, on purpose. Every entry needs a reason.",
+    "appPaths": {
+      "src/app/ATC/**": "Operator decision 2026-09-03: ATC authoring screens (15 routes — prescribe/edit/preview/view/Triple ATC) stay untested by e2e. Not to be given a suite.",
+      "src/app/ATC-Ops/**": "Operator decision 2026-09-03 (confirmed): follows src/app/ATC/** — ATC ops screens (2 routes) stay untested by e2e. Not to be given a suite."
+    },
+    "cfPaths": {}
+  },
   "crossCutting": {
     "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
     "appPaths": [
@@ -36,15 +44,12 @@
       "capture": "all",
       "specDir": "queue",
       "ciReady": true,
-      "appPaths": ["src/app/queue system/**"],
+      "appPaths": ["src/app/queue system/**", "src/app/big/**"],
       "cfPaths": [
         "functions/components/queuesystem.js",
-        "functions/components/queue_atc_generation.js",
         "functions/components/big-assignment.js",
         "functions/components/big-level-aggregate.js",
-        "functions/components/ATC.js",
-        "functions/components/atc_alerts.js",
-        "functions/components/atc_helpers.js"
+        "functions/components/queue-required-stage-aiatc-creation/**"
       ],
       "areas": {
         "_source": "migrated verbatim from starlabs-angular preview-e2e.yml (2026-06-29); each list embeds the selftest baseline",
@@ -81,7 +86,8 @@
           "appPaths": [
             "src/app/queue system/big-planner/**",
             "src/app/queue system/event-opportunity-dashboard/**",
-            "src/app/queue system/initiate-event-product/**"
+            "src/app/queue system/initiate-event-product/**",
+            "src/app/big/**"
           ],
           "only": "queue/big-analytics.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
         }
