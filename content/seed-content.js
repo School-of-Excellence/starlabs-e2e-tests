@@ -90,6 +90,7 @@ const ROUTES = [
   { route: '/viewparticipantstieraccess', label: 'View Participants Tier Access' }, // CN-17
   { route: '/learningmaterial', label: 'Learning Material' },
   { route: '/contentupload', label: 'Content Upload' },
+  { route: '/content-upload-v2', label: 'Content Upload V2' },   // CN-19 / CN-20
 ];
 
 async function seedContent() {

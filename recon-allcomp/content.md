@@ -266,6 +266,48 @@ includes `admin` in `roles[]`.
 | CN-17 | Viewparticipantstieraccess: renders `participant metadata` stream; participants with `tier[]` appear in the correct tier bucket on screen | REAL-UI | Seed 2 participant metadata docs with `tier: ['tier_id_1']`; rendered tier bucket for `tier_id_1` shows >= 2 names — app computed the grouping from stream | P2 |
 | CN-18 | `/ads` route loads without error (even though click-ads class is commented out — component shell renders) | REAL-UI | Navigate to `/ads`; no fatal console error; URL remains `/ads` (authGuard admitted); empty component renders — app computed the route admission | P2 |
 
+### `/content-upload-v2` — CN-19..CN-20 (added 2026-09-04, coverage-gap pass)
+
+> WHY THESE EXIST: the content suite's `appPaths` glob already claimed `src/app/content-upload-version2/**`,
+> so a change there made the content gate MANDATORY — but no spec ever opened the module's only route.
+> The gate ran green while testing none of it. Same false-green class as comms `/channel-templates`
+> (CN-18..23 there). Found by `scripts/check-route-coverage.mjs`.
+
+**Route:** `/content-upload-v2` → `content-upload-version2/content-upload-version2.component.ts:1`,
+`authGuard`, selector `app-content-upload-version2`. It is a SHELL: a sidebar of child links plus, when
+`isHome` (`router.url === '/content-upload-v2'`, ts:64), a "Content Status Overview" home of 5 cards.
+
+**Firestore surface** — `loadAll()` (ts:71-79) fires five `loadLast()` reads, each
+`getDocs(query(collection, orderBy(<field>,'desc'), limit(1)))` (ts:86-88). Single-field orderBy, no
+composite index:
+
+| Card key | Collection | orderBy field | Seeded by seed-content.js? |
+|---|---|---|---|
+| `solar` | `solar voice audios` | `date` | YES (3 audios, ID.AUD1..3) |
+| `episodes` | `episodes` | `date` | YES |
+| `ads` | `ads` | `startdate` | **NO** — the seed writes `adsplaylist`, a DIFFERENT collection |
+| `health` | `health stories` | `date` | YES |
+| `home` | `content_urls` | `added` | YES |
+
+| ID | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|
+| CN-19 | `/content-upload-v2` home renders a card whose last-item title came from the app's own `orderBy(date desc) limit(1)` read | REAL-UI | The Solar Voice `.card-item` text is `lastItemTitle`, resolved by the app as `title ?? name ?? subject` (ts:98-101) from the ONE doc its own query selected. The seed writes `name`, never a card value. Assert it matches the seeded audio-name pattern — see note 2 on why the exact doc is not pinned. | P1 |
+| CN-20 | The card's "ago" badge is COMPUTED by the app from the seeded timestamp | ORACLE | `daysAgoInfo()` (ts:143-157) derives `Today` / `1 day ago` / `N days ago` from the doc's date. The seed writes `date: now()`, so the app must compute exactly `Today` in `.ago-value`. The test supplies a timestamp, never the label — the label is the app's arithmetic. | P1 |
+
+**Implementation notes:**
+
+1. **`/content-upload-v2` needs a `dashboard` route grant.** `seed-content.js` has an explicit `ROUTES`
+   array (ts:80-93) and this route is NOT in it. Without the grant `authGuard` denies with
+   "No roles or profiles configured for screen: /content-upload-v2" and the component never mounts on a
+   URL that otherwise looks correct — the exact failure that cost a debugging cycle on comms CN-18.
+2. **Do NOT pin CN-19 to a specific audio doc.** All three seeded audios get `date: now()` in a loop, so
+   which one `limit(1)` returns depends on sub-millisecond write ordering. Assert the seeded NAME PATTERN
+   (`TEST_AUDIO_<run>_[123]`) instead — that still proves the app rendered a value from its own query,
+   without encoding a race into the assertion.
+3. **The `ads` card has no data** — the seed writes `adsplaylist`, not `ads`. Its `.card-item` is
+   `*ngIf="s.lastItemTitle"` so the element simply will not exist. Do not assert on the ads card, and do
+   not "fix" this by seeding `ads` — that collection belongs to CN-18's route, not this screen.
+
 ---
 
 ## ATC exclusions within this group
