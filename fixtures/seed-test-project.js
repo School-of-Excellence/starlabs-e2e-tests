@@ -184,6 +184,9 @@ const DRIVEN_ROUTES = [
   // "No roles or profiles configured for screen: X" and the component never mounts.
   { route: '/queuevenue', label: 'Queue Venue' },
   { route: '/zoomaccount', label: 'Zoom Account' },
+  // DELIBERATELY ABSENT: /evolution-prep-participants and /evolution-prep-participants-v2. Both are ATC
+  // READERS and are on the D-001 denylist (_support/excluded-routes.ts). Granting a test actor access to
+  // them here would defeat the exclusion — the point is that no spec ever reaches those screens.
   // /queue-web (QueueWebVersion1Component, app.routes.ts:319) is the PARTICIPANT landing route
   // (LANDING_ROUTES.bigParticipant) that hosts the <app-web-studio-invitation> accept/deny overlay
   // (studio SS-05/06/08). It is the ONLY driven participant screen with no dashboard grant — the
