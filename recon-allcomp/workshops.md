@@ -28,6 +28,14 @@
 | `/enrollment_config_view` | Workshop/enrollment-config-view/enrollment-config-view.component.ts | `authGuard` | None. Reads `eiflix enrolment` |
 | `/workshopchallengeparticipantdashboard` | Workshop/participant-enrollment-dashboard/participant-enrollment-dashboard.component.ts | `authGuard` | None. Reads `eiflix workshop`, `eiflix workshop challenges`, `eiflix participant workshop`, `eiflix participant enrolled` |
 | `/workshop_image_upload` | Workshop/workshop-image-upload/workshop-image-upload.component.ts | `authGuard` | Reads `atc taxonomy` (reference/config-only — SAFE); reads/writes `workshop images` |
+| `/eiflixhomeconfig` | New-Workshop/upcomingworkshops/upcomingworkshops.component.ts | **No guard** (app.routes.ts:286) | None. Reads `eiflixhomewidgets` (partitioned client-side by `widgettype`) + `eiflixhomeseries` |
+| `/newusersprofile` | New-Workshop/newusersprofile/newusersprofile.component.ts | **No guard** (app.routes.ts:287) | None. Reads `new_user_data`, `newusertags` (type==newusersegments), `workshopconfiguration`, `workshop participant enrolled`; writes `new_user_data` tags via writeBatch |
+| `/eiflixdiscoverpage` | New-Workshop/eiflixdiscoverpage/eiflixdiscoverpage.component.ts | **No guard** (app.routes.ts:288) | None. Manages the SINGLE doc `classify/eiflixdiscoverpage` (setDoc merge:true); reads `participant metadata` |
+| `/formtemplateworkshop` | New-Workshop/form-assignment/form-assignment.component.ts | **No guard** (app.routes.ts:290) | No ATC. **Named DB `firestore-forms`** for `temporary_forms`/`formsByClient` (ts:102-103) — client reads DENY on the emulator, see Risks #11 |
+| `/bigeventmentor` | New-Workshop/bigeventmentor/bigeventmentor.component.ts | `authGuard` (app.routes.ts:294) | None; reads `event collection`/`journey` where atcmodel==B!G, `biglevel` orderBy sequence, `participant metadata`; writes `bigeventmentor` + `bigeventparticipantsplan` |
+| `/eiflixoperationsdashboard` | New-Workshop/eiflixoperationsdashboard/eiflixoperationsdashboard.component.ts | `authGuard` (app.routes.ts:295) | None. Reads `new_user_data`, `participant metadata`, `journey`, `content analytics` (logdate window); writes the `eiflixdailywatchers` rollup cache |
+| `/campaigndashboard` | New-Workshop/campaigndashboard/campaigndashboard.component.ts | **No guard** (app.routes.ts:296) | None. Reads `eiflixcampaign` + `newusertags` (segment-name join); all status/percentage values are app-computed |
+| `/wccalendar` | New-Workshop/wccalendar/wccalendar.component.ts | **No guard** (app.routes.ts:297) | None. Reads `workshopcampaigncalendar` (soft-delete filter `deleted!==true`) + `newusertags` (type==wccalendar / type==location) |
 
 **authGuard mechanics** (auth.guard.ts:10-91): checks Firebase auth, then reads the `dashboard` collection to find `roles[]` and `profileid[]` for the route. Access = any role in the user's `users_roles` matches `roles[]`, OR user's profileid is in `profileid[]`. Role is stored in Firestore `users_roles` collection (not a JWT claim). The guard bounces to `/EISDashboard` on denial (no hard redirect to `/login` for role failures).
 
@@ -286,3 +294,161 @@ Re-use the existing `seed-test-project.js` pattern: export deterministic IDs via
 9. **`generalContentUpdate` CF**: listed in the task prompt as a candidate CF but is NOT relevant to this group. It triggers on `/content_urls/{id}` writes; workshop components do not write to `content_urls`. No test should rely on this CF for workshop assertions.
 
 10. **Legacy eiflix-workshop routes (`createworkshop`, `workshopchallengecreation`, `enrollment_config_view`, `workshopchallengeparticipantdashboard`)**: these use a separate `eiflix workshop` / `eiflix enrolment` collection family. They are largely superseded by the New-Workshop flow. Tests for these routes should be P2 and limited to "route loads without error" smoke tests unless the legacy path is actively maintained.
+
+---
+
+# Addendum — 2026-09-04: the nine routes with no functional coverage
+
+> Evidence base: source read of all nine components on branch `manoja-development`
+> (`organization-starlabs-angular/starlabs-angular`) + a deterministic route-coverage re-derivation
+> (`page.goto` targets across every spec in this repo, NOT route strings — dashboard route *grants* in
+> `seed-*.js` are permission seeding and do not constitute coverage).
+>
+> Scope note: `src/app/Scheduling/**` is claimed by the workshops manifest globs but is **out of scope
+> for this addendum by operator instruction** — its screens are driven by the `appointments` suite.
+> The manifest-vs-suite ownership mismatch is recorded as Risk #13 below, not fixed here.
+
+## Coverage baseline this addendum closes
+
+| | Routes |
+|---|---|
+| Owned by the `workshops` globs | 36 (`Workshop/**` 5, `New-Workshop/**` 17, `Scheduling/**` 14) |
+| Opened by a `workshops` spec before this addendum | 11 |
+| Opened by the `appointments` suite (Scheduling — out of scope) | 9 |
+| **Never opened, in scope for this addendum** | **9** |
+
+The nine: `/createworkshop`, `/eiflixhomeconfig`, `/newusersprofile`, `/eiflixdiscoverpage`,
+`/formtemplateworkshop`, `/bigeventmentor`, `/eiflixoperationsdashboard`, `/campaigndashboard`,
+`/wccalendar`.
+
+## Additional Firestore collections (not in the 2026-06-10 table)
+
+| Collection name | Read/Write | Purpose | Named DB |
+|---|---|---|---|
+| `eiflix workshop` | Read + **Delete** | Legacy eiflix workshop catalog rendered by `/createworkshop`; row delete is a hard `deleteDoc` behind `confirm()` | default |
+| `eiflixhomewidgets` | Read + **Delete** + Update | Participant-app home widgets. ONE collection, partitioned client-side by `widgettype` ('comingsoon' or 'ads'); `order` drives row sequence and the drag-reorder writes it back via `writeBatch` | default |
+| `eiflixhomeseries` | Read + **Delete** | Home-page series rows (tab 3 of `/eiflixhomeconfig`), sorted by `created` desc | default |
+| `newusertags` | Read | Tag/segment dictionary keyed by `type`: `newusersegments` (→ `/newusersprofile`), `wccalendar` + `location` (→ `/wccalendar`), untyped (→ `/campaigndashboard` segment join) | default |
+| `new_user_data` | Read + Write | eiflix new-user records; `/newusersprofile` renders them created-desc and writes `tags[]` via `writeBatch` | default |
+| `classify` (doc: `eiflixdiscoverpage`) | Read + Write | The SINGLE document `/eiflixdiscoverpage` manages; every save is `setDoc(..., {merge:true})` | default |
+| `eiflixcampaign` | Read | Campaign records; `/campaigndashboard` computes status + progress % from them | default |
+| `workshopcampaigncalendar` | Read | Calendar events; **soft delete only** (`deleted:true` docs stay in Firestore and are filtered client-side at wccalendar.component.ts:181) | default |
+| `eiflixdailywatchers` | Read + Write | Daily watcher rollup cache written by `/eiflixoperationsdashboard` (`setDoc` keyed by day) | default |
+| `bigeventmentor` | Read + Write | Per-event participant status buckets (`reached`/`registered`/`notregistered`/`noteligible` arrays) | default |
+| `bigeventparticipantsplan` | Read + Write | Per-participant level actions (`actions[]` via `arrayUnion`) | default |
+| `temporary_forms`, `formsByClient`, `formsByClient log` | Read + Write | `/formtemplateworkshop` draft + submitted forms | **firestore-forms** |
+
+## Guard finding — six of the nine routes ship with no `canActivate`
+
+`/eiflixhomeconfig` (286), `/newusersprofile` (287), `/eiflixdiscoverpage` (288),
+`/formtemplateworkshop` (290), `/campaigndashboard` (296) and `/wccalendar` (297) are declared in
+`app.routes.ts` **without a guard**. Any authenticated Firebase user reaches them; two of them
+(`/newusersprofile`, `/eiflixdiscoverpage`) expose bulk participant data and a write path.
+
+Only `/createworkshop`, `/bigeventmentor` and `/eiflixoperationsdashboard` carry `authGuard`
+(186 / 294 / 295).
+
+Two separate consequences for specs — they are easy to conflate, and an earlier revision of this
+addendum did conflate them:
+
+1. **The positive direction is vacuous here.** A "guard admits the role / no `/login` bounce" mount
+   smoke on an unguarded route passes just as happily with the guard deleted, because there is nothing
+   to delete. So WS-18…WS-25 and WS-31…WS-33 assert rendered *data* the app computed, not reachability.
+2. **The negative direction is NOT vacuous, and is the one that matters.** An authenticated user
+   *without* the grant must not reach an operator screen. That is a real, falsifiable property and it is
+   covered by **WS-34 / WS-35** — do not treat (1) as a reason to skip it.
+
+Measured behaviour (participant actor, roles `['participant']`, granted none of these routes):
+
+| Route | Declares `canActivate` | Participant lands on | Verdict |
+|---|---|---|---|
+| `/createworkshop` | yes (186) | `/` | bounced |
+| `/bigeventmentor` | yes (294) | `/` | bounced |
+| `/eiflixoperationsdashboard` | yes (295) | `/` | bounced |
+| `/eiflixhomeconfig` | **no** (286) | `/eiflixhomeconfig` | **reached** |
+| `/newusersprofile` | **no** (287) | `/newusersprofile` | **reached** |
+| `/eiflixdiscoverpage` | **no** (288) | `/eiflixdiscoverpage` | **reached** |
+| `/formtemplateworkshop` | **no** (290) | `/formtemplateworkshop` | **reached** |
+| `/campaigndashboard` | **no** (296) | `/campaigndashboard` | **reached** |
+| `/wccalendar` | **no** (297) | `/wccalendar` | **reached** |
+
+The three guarded routes double as the positive control: they prove the actor really is unprivileged and
+that this assertion style detects a guard that works.
+
+**Scope limit — do not overstate this.** The table measures ROUTE-level access only. It says nothing
+about whether Firestore security rules independently protect the underlying documents in production. The
+emulator runs deliberately permissive rules (`allow read, write: if true`), so data a participant can see
+there proves only that the route let them in. Whether prod rules give defence-in-depth for
+`new_user_data` / `participant metadata` is **UNVERIFIED** — it needs someone with access to the
+production ruleset and is not answerable from this repo.
+
+## Candidate test cases
+
+| ID | Route | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|---|
+| WS-16 | `/createworkshop` | Legacy eiflix workshop list renders every `eiflix workshop` doc the app streamed | REAL-UI | `onSnapshot` renders one MatTable row per doc; assert rendered rows >= an INDEPENDENT `countWhere('eiflix workshop', testrunid)`. Never assert a row the test wrote in the same action | P1 |
+| WS-17 | `/createworkshop` | Row delete accepts `confirm()` and HARD-deletes the doc from Firestore | REAL-UI (write) | Seeded doc exists (`getDoc` != null) → click delete → accept dialog → poll `getDoc` until null. The post-state is what the APP deleted; the test only created the precondition | P1 |
+| WS-18 | `/eiflixhomeconfig` | The `widgettype` partition is real: 'comingsoon' docs render in tab 1 and 'ads' docs do NOT | REAL-UI | ONE collection, two tabs. Seed both types; assert the comingsoon title is visible AND the ads title has count 0 in tab 1. Without an 'ads' doc seeded, "filter works" is indistinguishable from "doc absent" | P0 |
+| WS-19 | `/eiflixhomeconfig` | Rows render in `order` sequence; a doc with no `order` sorts last (`MAX_SAFE_INTEGER`) | REAL-UI | Seed order:2, order:1 and an order-less doc. Assert the app's rendered row sequence is [order1, order2, orderless] — a sequence the app computed, compared to the known seeded orders | P1 |
+| WS-20 | `/eiflixhomeconfig` | Widget delete accepts `confirm()` and removes the `eiflixhomewidgets` doc | REAL-UI (write) | Same delete-post-state basis as WS-17, on the disposable ads widget | P1 |
+| WS-21 | `/newusersprofile` | `new_user_data` table renders newest-first (`created` desc) | REAL-UI | Seed three users with known distinct `created` stamps; assert the app's rendered row order matches the descending stamp order. The ordering is the app's, the stamps are the known input | P1 |
+| WS-22 | `/newusersprofile` | Segment-tag filter narrows to only users carrying that `newusertags` id | REAL-UI | Seed 2 tagged + 1 untagged user. Apply the tag chip; assert the tagged names are visible and the untagged name has count 0. The untagged user is the negative control that proves the filter runs | P0 |
+| WS-23 | `/newusersprofile` | Assigning a segment writes `tags[]` onto the selected `new_user_data` docs (writeBatch) | REAL-UI (write) | Precondition: user has no tag (reset helper). Drive the real select+assign; poll `getDoc('new_user_data', id).tags` until it contains the seeded tag id. App output vs KNOWN tag id | P0 |
+| WS-24 | `/eiflixdiscoverpage` | The form is patched from `classify/eiflixdiscoverpage` (app read → rendered input values) | REAL-UI | Seed a KNOWN scalar field on the doc; assert the corresponding input renders that exact value. Known seed input vs app-rendered output | P1 |
+| WS-25 | `/eiflixdiscoverpage` | Save merges the edited field into `classify/eiflixdiscoverpage` WITHOUT clobbering a sibling field | REAL-UI (write) | Seed field A (untouched sentinel) + field B. Edit B in the UI, save; poll until B === typed value AND assert A is STILL the sentinel — this is what proves `merge:true` (ts:1196), not a blind overwrite | P0 |
+| WS-26 | `/formtemplateworkshop` | `?id=<delivery forms docid>` renders that form's name + formarray from the DEFAULT db | REAL-UI | The route is ENTIRELY query-param driven — bare `/formtemplateworkshop` renders nothing (`showcontent` stays false) and ngAfterViewInit:260 throws on `participantformtemplateid.formid`. The `?id=` path (ts:260-290) is default-db only, so it runs everywhere. `showcontent` only flips after the getDoc resolves AND formarray is walked, so a rendered header proves the whole read+parse path | P2 |
+| WS-27 | `/formtemplateworkshop` | Draft save writes a `temporary_forms` doc in the `firestore-forms` named DB | REAL-UI (write) | **EMULATOR-SKIPPED** (Risk #11) — mirrors profiles PA-13/14. Cloud-config only | P2 |
+| WS-28 | `/bigeventmentor` | The event picker offers only `atcmodel=='B!G'` events, and status buckets render the seeded arrays | REAL-UI | Seed one B!G event and one NON-B!G event; assert the B!G title is offered and the non-B!G title is NOT. The negative event is what proves the `where` clause runs | P0 |
+| WS-29 | `/bigeventmentor` | Moving a participant between status buckets accepts `confirm()` and writes BOTH arrays | REAL-UI (write) | Precondition: pid in `registered`, absent from `reached` (reset helper). Drive select+move+accept; poll `bigeventmentor/<id>` until `reached` contains the pid AND `registered` does not. Both sides are app-written | P0 |
+| WS-30 | `/eiflixoperationsdashboard` | The funnel counts equal an INDEPENDENT Firestore count of the same `new_user_data` population | REAL-UI + ORACLE | App aggregates its own reads into a headline count; compare to `countWhere('new_user_data', testrunid)` computed separately by the test. Two independent computations over the same seed | P1 |
+| WS-31 | `/campaigndashboard` | Status chip, progress % and segment name are app-computed from the raw campaign doc | REAL-UI | Seed live/scheduled/ended by DATE only (never by storing a status string) and expected=200000/achieved=150000. Assert the app renders Live / Scheduled / Ended and 75% — values NOT present in the seed, derived by the app (ts:162,188) | P0 |
+| WS-32 | `/wccalendar` | A `deleted:true` event never renders, and a multi-day event appears on every day it spans | REAL-UI | The soft-deleted doc is the negative control for the `deleted!==true` filter (ts:181); the 3-day event proves the `start<=t<=end` span logic (ts:321). Without the deleted doc the filter is untestable | P0 |
+| WS-33 | `/wccalendar` | A day with more than `MAX_CHIPS` (3) events collapses the overflow into "+N more" | REAL-UI | Seed exactly 5 events on one day; the app renders 3 chips and "+2 more" (ts:327,346). 2 is app-computed from 5-3, never seeded | P1 |
+| WS-34 | all guarded | A participant with no grant is bounced off every route that declares `authGuard` | REAL-UI (access control) | POSITIVE CONTROL for WS-35: proves the actor is genuinely unprivileged, that the seed withheld the grant, and that this assertion style can detect a guard that works. Without it a WS-35 failure is indistinguishable from a broken test | P0 |
+| WS-35 | all unguarded | The same participant must be bounced off the six routes declared without `canActivate` | REAL-UI (access control) | **EXPECTED TO FAIL** (`test.fail()`) — pins an open defect executably. Asserting the DESIRED behaviour, not the current one: while the routes stay unguarded the run stays green, and the moment guards are added Playwright reports "Expected to fail, but passed" — the signal to delete the `test.fail()`. Pinning current behaviour instead would go red when the app is FIXED | P0 |
+
+## Additional seed requirements
+
+| What to seed | Why |
+|---|---|
+| 2 `eiflix workshop` docs, each with `docid`, `title`, `description` and **all three Timestamps** (`startdate`, `enddate`, `lastregistrationdate`) | The template calls `row.startdate.toDate()` **unconditionally** (view-workshop.component.html:22,27,32) — a doc missing any of the three throws on render and trips the console guard. One doc is the delete target for WS-17 |
+| 3 `eiflixhomewidgets`: comingsoon order:1, comingsoon order:2, ads (no `order`) | WS-18 partition + WS-19 ordering; the ads doc doubles as the WS-20 delete target |
+| 1 `eiflixhomeseries` doc with a `homeseries[]` array | Tab 3 renders `seriesCount()` from the array length |
+| 3 `new_user_data` docs with distinct `created` stamps; 2 carrying a `newusertags` segment id, 1 untagged | WS-21 ordering, WS-22 filter (the untagged doc is the negative control), WS-23 write target |
+| 1 `newusertags` doc `type:'newusersegments'` | Segment name resolution + the WS-23 assign target |
+| `classify/eiflixdiscoverpage` with a sentinel field + an editable field | WS-24 patch, WS-25 merge-safety |
+| 2 `event collection` docs — one `atcmodel:'B!G'`, one NOT, plus a B!G `journey` doc | WS-28; the non-B!G doc is the negative control, the journey doc keeps the `in` filter non-empty (Risk #12) |
+| 1 `bigeventmentor` doc with `registered:[pid]`, `reached:[]` | WS-29 move target |
+| 2 `newusertags` `type:'wccalendar'` + 1 `type:'location'` | wccalendar type palette + location resolution |
+| 8 `workshopcampaigncalendar` docs: 1 single-day, 1 spanning 3 days, **1 `deleted:true`**, 5 stacked on one day | WS-32 (soft delete + span) and WS-33 (+N more). All-day dates MUST be written at **UTC midnight** — the app reads them back through UTC accessors (ts:57-61) and a local-midnight stamp shifts the calendar day |
+| 3 `eiflixcampaign` docs — live / scheduled / ended by DATE, with known expected+achieved | WS-31; status and % must be derivable, never stored |
+
+## Additional risks / unknowns
+
+11. **`firestore-forms` named DB is unusable from the client on the emulator.** `firebase.emulator.json`
+    records it: the Firestore emulator does not support multiple databases or per-named-db rules, so
+    client reads/writes to `firestore-forms` default to DENY (Admin-SDK seeds still land, rules-bypassed).
+    `/formtemplateworkshop` reads `temporary_forms` and `formsByClient` through
+    `getFirestore('firestore-forms')` (form-assignment.component.ts:102-103). WS-27 therefore
+    `test.skip`s on `FIRESTORE_EMULATOR_HOST`, mirroring the identical, already-established handling in
+    `profiles/analytics.spec.ts:98` and `profiles/view-form-deep.spec.ts:33`. WS-26 is scoped to the
+    default-db read so it runs everywhere.
+
+12. **`/bigeventmentor` issues `where('activejourney','in', this.bigjourney)`** (ts:167). Firestore
+    throws on an `in` filter with an EMPTY array, so the seed must guarantee at least one
+    `journey` doc with `atcmodel=='B!G'` — otherwise the screen errors before rendering and the failure
+    looks like a UI bug rather than a seed gap.
+
+13. **Manifest ownership mismatch (recorded, not fixed).** `suites-manifest.json → suites.workshops.appPaths`
+    claims `src/app/Scheduling/**`, but every covered Scheduling screen is driven by the `appointments`
+    suite, whose own `appPaths` is only `src/app/appointment-dashboard/**`. A change under `Scheduling/`
+    routes CI to a suite that never opens those screens. Out of scope by operator instruction.
+
+14. **`/eiflixoperationsdashboard` WRITES a rollup cache** (`eiflixdailywatchers`, ts:1227/1247) as a
+    side-effect of rendering. The doc id is a day key, so a test run mutates a shared, non-run-tagged
+    document. WS-30 asserts only on read-side counts and the teardown removes any `eiflixdailywatchers`
+    doc the run created.
+
+15. **`/campaigndashboard` and `/wccalendar` compute "today" from the client clock** (ts:189, ts:295).
+    Seeds must express live/scheduled/ended and today-relative calendar days as OFFSETS from `new Date()`
+    at seed time, never as fixed calendar dates, or the suite rots the day it is written.

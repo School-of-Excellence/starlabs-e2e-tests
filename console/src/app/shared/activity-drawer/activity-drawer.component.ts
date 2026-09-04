@@ -21,6 +21,7 @@ export const ACTIVITY_LABEL: Record<ActivityType, string> = {
   gate_run: 'e2e gate',
   reconcile_decision: 'Reconcile decision',
   member_change: 'Member change',
+  mobile_release: 'Mobile delivery',
 };
 
 /**

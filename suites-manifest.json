@@ -13,13 +13,30 @@
     "ciReady": "false = local-only (no emulator config yet) — hidden from the console dialog",
     "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
   },
-  "excluded": {
-    "_why": "DELIBERATELY out of e2e scope — not a gap. The coverage checkers (scripts/check-suite-coverage.mjs, scripts/check-route-coverage.mjs) skip these instead of reporting them, so their exit code stays meaningful as a gate. Adding a path here is an operator decision: it means a change there routes NO suite and ships ungated, on purpose. Every entry needs a reason.",
-    "appPaths": {
-      "src/app/ATC/**": "Operator decision 2026-09-03: ATC authoring screens (15 routes — prescribe/edit/preview/view/Triple ATC) stay untested by e2e. Not to be given a suite.",
-      "src/app/ATC-Ops/**": "Operator decision 2026-09-03 (confirmed): follows src/app/ATC/** — ATC ops screens (2 routes) stay untested by e2e. Not to be given a suite."
-    },
-    "cfPaths": {}
+  "neutral": {
+    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.)",
+    "appPaths": [
+      "*.md",
+      "**/*.md",
+      "*.txt",
+      "**/*.txt",
+      ".github/**",
+      "docs/**",
+      "specs/**",
+      "Journal/**",
+      ".gitignore",
+      ".editorconfig",
+      "LICENSE*"
+    ]
+  },
+  "fenced": {
+    "_why": "Areas that can NEVER be covered by an automated suite. ATC is a hard constraint — the emulator must never touch it — so a change here can only be validated by hand. The readiness check reports NO_COVERAGE_POSSIBLE rather than pretending a suite could exist. ALSO consumed by the three coverage checkers in scripts/ (check-suite-coverage, check-route-coverage, check-atc-coupling), which drop these paths from the denominator so a fenced area never reads as an unclosed gap — one key, both toolchains. Operator decisions 2026-09-03/04: src/app/ATC/** is the 15 authoring routes (prescribe/edit/preview/view/Triple ATC); src/app/ATC-Ops/** follows it. The route-level twin of this list is _support/excluded-routes.ts, which stops a spec NAVIGATING to an ATC screen — both layers are needed and neither replaces the other.",
+    "appPaths": [
+      "src/app/ATC/**",
+      "src/app/ATC-Ops/**",
+      "src/app/view-ai-generated-atc/**"
+    ],
+    "_resolvedReview": "The 'view-ai-generated-atc' REVIEW note is settled (2026-09-04): it IS ATC. Its route /viewaigeneratedatc has been on the D-001 denylist in _support/excluded-routes.ts since that file was written, and scripts/check-atc-coupling.mjs classes it ATC-coupled. Added to appPaths above."
   },
   "crossCutting": {
     "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
@@ -100,7 +117,13 @@
       "capture": "all",
       "specDir": "journey",
       "ciReady": true,
-      "appPaths": ["src/app/Journey Onboarding/**", "src/app/journey-onboarding-detail/**"],
+      "appPaths": [
+        "src/app/Journey Onboarding/**",
+        "src/app/journey-onboarding-detail/**",
+        "src/app/Participants Profile Management/journey-product-purchase/**",
+        "src/app/Participants Profile Management/participant-product/**",
+        "src/app/Participants Profile Management/participant-delivery-sequence/**"
+      ],
       "cfPaths": ["functions/components/participantmetadata.js"],
       "reviewNote": "cfPaths guess — review"
     },
@@ -208,7 +231,15 @@
       "capture": "all",
       "specDir": "profiles",
       "ciReady": true,
-      "appPaths": ["src/app/Participants Profile Management/**", "src/app/ProfilePicture/**"],
+      "appPaths": [
+        "src/app/Participants Profile Management/**",
+        "src/app/ProfilePicture/**",
+        "!**/*.component.spec.ts",
+        "src/app/AppEngagement/app-action-pending/**",
+        "src/app/loading-progress/**",
+        "src/app/New-Workshop/workshop-dashboard/sendmessages/**",
+        "src/app/New-Workshop/whatsapp-progress-dialog.component.ts"
+      ],
       "cfPaths": ["functions/components/participantmetadata.js"]
     }
   },

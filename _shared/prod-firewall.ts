@@ -23,6 +23,24 @@ const PROD_PATTERNS = [
   /salesleadcrm/i,
   // a bare cloud-functions host pinned to any project that is NOT the test project
   /https?:\/\/[a-z0-9-]*-(?!slabs-queue-e2e-exdcz)[a-z0-9-]+\.cloudfunctions\.net/i,
+  // 2nd-GEN Cloud Functions are served from Cloud Run, NOT *.cloudfunctions.net — every pattern above
+  // misses them and the request used to fall through to the real endpoint. Found 2026-09-02 in the
+  // profiles glob: Participants Profile Management/participants-analytics/wati-input:161-162 pins
+  // `sendwhatsappbroadcast-{rhdwzw46ya,kakybqnyrq}-uc.a.run.app` — driving that dialog's onSubmit
+  // would have sent a REAL WhatsApp broadcast to production recipients.
+  /https?:\/\/[a-z0-9-]+\.a\.run\.app/i,
+  /https?:\/\/[a-z0-9-]+\.run\.app/i,
+];
+
+/** Hosts the harness legitimately talks to. Only consulted when `denyUnknownHosts` is on. */
+const ALLOWED_HOST_PATTERNS = [
+  /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i,   // the app under test + emulators
+  /^https?:\/\/[a-z0-9.-]*slabs-queue-e2e-exdcz[a-z0-9.-]*\//i,      // the disposable test project
+  /\.googleapis\.com\//i,                                            // Firestore / Auth / Storage SDK
+  /\.gstatic\.com\//i,
+  /\.google\.com\/recaptcha\//i,
+  /fonts\.googleapis\.com\//i,
+  /^data:|^blob:/i,
 ];
 
 export interface ProdFirewallOptions {
@@ -31,6 +49,13 @@ export interface ProdFirewallOptions {
   blockAllFunctions?: boolean;
   /** Record blocked URLs for assertions ("no prod email was attempted"). */
   onBlock?: (url: string) => void;
+  /**
+   * FENCE (default OFF): block every host that is not on ALLOWED_HOST_PATTERNS, instead of only the
+   * hosts someone remembered to enumerate in PROD_PATTERNS. The allowlist-of-known-bad-hosts above
+   * fails OPEN on every host nobody thought of — which is exactly how the *.a.run.app broadcast
+   * endpoints got through. Turn this on per-suite once that suite has been run green with it.
+   */
+  denyUnknownHosts?: boolean;
 }
 
 /**
@@ -44,7 +69,9 @@ export async function installProdFirewall(page: Page, opts: ProdFirewallOptions 
     const url = route.request().url();
     const isProd = PROD_PATTERNS.some((re) => re.test(url));
     const isFn = /cloudfunctions\.net/i.test(url);
-    if (isProd || (opts.blockAllFunctions && isFn)) {
+    const isUnknown =
+      !!opts.denyUnknownHosts && !ALLOWED_HOST_PATTERNS.some((re) => re.test(url));
+    if (isProd || isUnknown || (opts.blockAllFunctions && isFn)) {
       blocked.push(url);
       opts.onBlock?.(url);
       // Empty JSON 200 — app code that does `fetch(url).then(r=>r.json())` gets {} instead of a real

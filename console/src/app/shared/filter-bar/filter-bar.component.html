@@ -7,12 +7,26 @@
         (input)="patch({ search: asValue($event) })"
       />
 
-      <select [value]="f().repo" (change)="patch({ repo: asValue($event) })">
-        <option value="">All repos</option>
+      <div class="repo-chips" role="group" aria-label="Filter by repo">
+        <button
+          type="button"
+          class="chip"
+          [class.active]="f().repo === ''"
+          (click)="patch({ repo: '' })"
+        >
+          All repos
+        </button>
         @for (r of repos(); track r) {
-          <option [value]="r">{{ r }}</option>
+          <button
+            type="button"
+            class="chip"
+            [class.active]="f().repo === r"
+            (click)="patch({ repo: r })"
+          >
+            {{ r }}
+          </button>
         }
-      </select>
+      </div>
 
       <select [value]="f().status" (change)="patch({ status: asValue($event) })">
         <option value="">All statuses</option>

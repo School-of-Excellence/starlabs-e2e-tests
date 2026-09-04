@@ -62,13 +62,24 @@ test.describe('Queue — transfer screen (real UI, anti-circular)', () => {
     // is offered — the component put it there from its own getDocs('queue generation') read.
     const select = host.locator('mat-select').first();
     await expect(select, 'OP-20: the source-queue select must render').toBeVisible({ timeout: 30_000 });
-    await select.click();
 
-    await expect(
-      page.locator('mat-option').filter({ hasText: QUEUE_NAME }).first(),
-      `OP-20: the seeded queue "${QUEUE_NAME}" must be offered as a transfer source, from the app's own ` +
-      'queue-generation read',
-    ).toBeVisible({ timeout: 30_000 });
+    // A SINGLE click is not enough on this screen, and the first version of this case shipped that way:
+    // it passed twice in isolation and then failed in a batch run with the panel shut (the mount and the
+    // select were both fine — see the failure screenshot). This component subscribes to ELEVEN
+    // collections, and a subscription that lands just after the click re-renders the form and closes the
+    // freshly-opened overlay. Retrying the open until an option is actually present makes the case
+    // deterministic without weakening what it asserts.
+    //
+    // NOTE for whoever revisits TODO(BIG-13b) in big-activity-screens.spec.ts: this pattern is the likely
+    // fix there too. The earlier conclusion that mat-select "works fine on other screens, so BIG-13 is
+    // layout-specific" was WRONG — it is a re-render race, and it is not screen-specific.
+    const wantedOption = page.locator('mat-option').filter({ hasText: QUEUE_NAME }).first();
+    await expect(async () => {
+      const anyOptionOpen = await page.locator('mat-option').first().isVisible().catch(() => false);
+      if (!anyOptionOpen) await select.click();
+      await expect(wantedOption).toBeVisible({ timeout: 3_000 });
+    }, `OP-20: the seeded queue "${QUEUE_NAME}" must be offered as a transfer source, from the app's own ` +
+       'queue-generation read').toPass({ timeout: 45_000 });
 
     // Close the overlay so a stray open panel cannot affect teardown or the console guard.
     await page.keyboard.press('Escape');

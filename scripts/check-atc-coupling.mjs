@@ -70,7 +70,9 @@ routesSrc.split('\n').forEach((raw) => {
 
 // ---------------------------------------------------------------- already-excluded knowledge
 const manifest = JSON.parse(fs.readFileSync(path.join(HUB, 'suites-manifest.json'), 'utf8'));
-const exGlobs = Object.keys(manifest.excluded?.appPaths ?? {}).map((g) => g.replace(/\/\*+$/, ''));
+// manifest.FENCED — an array of globs, shared with scripts/readiness. (Reconciled from a duplicate
+// `excluded` key at the manoja merge; do not reintroduce it.)
+const exGlobs = (manifest.fenced?.appPaths ?? []).map((g) => g.replace(/\/\*+$/, ''));
 
 const DENY_FILE = path.join(HUB, '_support/excluded-routes.ts');
 let deny = [];

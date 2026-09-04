@@ -163,8 +163,9 @@ const claimedBy = (module) => {
   return owners;
 };
 
-// Deliberately out of scope (manifest.excluded) — reported apart from real gaps.
-const exGlobs = Object.keys(manifest.excluded?.appPaths ?? {}).map((g) => g.replace(/\/\*+$/, ''));
+// Deliberately out of scope (manifest.FENCED, an array of globs — the same key scripts/readiness reads).
+// Reconciled from a short-lived duplicate `excluded` key at the manoja merge; do not reintroduce that.
+const exGlobs = (manifest.fenced?.appPaths ?? []).map((g) => g.replace(/\/\*+$/, ''));
 // A module is out of scope if the manifest excludes it OR every route it serves is on
 // the _support/excluded-routes.ts denylist.
 const isExcluded = (module) =>

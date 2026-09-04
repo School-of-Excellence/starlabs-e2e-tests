@@ -33,8 +33,10 @@ export const ATC_EXCLUDED_ROUTES: string[] = [
 ];
 
 /**
- * ADJACENT-BUT-IN-SCOPE (2026-09-04). `scripts/check-atc-coupling.mjs` flags these as "presents as ATC"
- * in its WEAK tier. They were reviewed and are NOT excluded — recorded here so the review is not repeated:
+ * ADJACENT-BUT-IN-SCOPE (2026-09-04). Routes that look ATC-ish but were REVIEWED and deliberately left
+ * testable. Recorded so the review is not repeated. Several were surfaced by
+ * `scripts/check-atc-coupling.mjs`'s WEAK tier ("presents as ATC in its own headings"); the
+ * live_event_dashboard_v3 entry came from the events coverage pass on the `manoja` line of work.
  *
  *  /openmeeting/:id/:collectiontype — the Zoom client view. Reads NO ATC collection. It renders a
  *      host-only "Prescribe ATC" bubble which does `window.open('/dynamicstudio?step=prescribe-atc')`
@@ -47,6 +49,20 @@ export const ATC_EXCLUDED_ROUTES: string[] = [
  *      /modellevelconfig is already covered by BIG-09b.
  *
  *  /eiflixdiscoverpage — heading text only ("ATC — Head"); no ATC collection read.
+ *
+ *  /live_event_dashboard_v3 — NOT route-excluded, unlike its v1/v2 siblings in the list above. Only three
+ *      functions in live-event-data.service.ts touch the firestore-atc database — subscribeToAtcAlpha(),
+ *      subscribeToAtcToValidate(), subscribeToDraftAtc() — all called exclusively from
+ *      subscribeToArenaOverview(), itself called only from selectEvent() and toggleQueue(). The route and
+ *      every OTHER read on it (registered count, attendance, video-ask tags, zones, customer support,
+ *      arena calling, …) is default-DB-only and fine to test. See events/live-event-dashboard-v3.spec.ts's
+ *      header for the exact guard a test MUST carry before calling selectEvent — and never call
+ *      toggleQueue at all.
+ *
+ * The shape of these two is the same and worth naming: a screen can be testable while a specific CONTROL
+ * or CODE PATH on it is not. /openmeeting must not have its button clicked; live_event_dashboard_v3 must
+ * not reach toggleQueue. Excluding the whole route in either case would give up real coverage; ignoring
+ * the constraint would touch ATC. The guard belongs in the spec, and the reason belongs here.
  */
 
 /** Throws if a test tries to navigate to an ATC-excluded route — a guardrail, not a UI assertion. */

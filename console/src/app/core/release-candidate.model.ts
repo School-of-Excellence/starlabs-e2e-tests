@@ -57,6 +57,94 @@ export interface PreviewFacet {
   builtAt?: string;
 }
 
+// ── THE NEW BRANCH-CHANNELS FLOW (2026-08-19) ────────────────────────────────────────────────────
+// Written by branch-channels.yml through the `readiness` functions codebase. Read-only here, and
+// deliberately NOT read by the projection — neither field can move a status or change a button.
+// The OLD flow keeps sole ownership of `preview` above; the two must never fight over one field.
+
+export type ChannelStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
+
+/** One hosting channel built from a branch commit. */
+export interface ChannelFacet {
+  status: ChannelStatus;
+  /** The REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED. */
+  url?: string | null;
+  project?: string | null;
+  site?: string | null;
+  deployedAt?: number | null;
+  expiresAt?: number | null;
+}
+
+/** Both channels built from one commit, plus the git/run context they came from. */
+export interface PreviewStatusFacet {
+  dev?: ChannelFacet;
+  prod?: ChannelFacet;
+  sha?: string | null;
+  commitMsg?: string | null;
+  author?: string | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  updatedAt?: number | null;
+}
+
+/**
+ * One chip covering both phases — the alignment CHECK, then the suite RUN:
+ *   CHECKING → SUITES_MISSING | NEEDS_UPDATE | MISSING_TEST_CASES | NO_COVERAGE_POSSIBLE   stop
+ *   CHECKING → MATCHED | NOT_APPLICABLE → RUNNING → PASSED | FAILED                        go
+ */
+export type SuiteState =
+  | 'CHECKING'
+  | 'MATCHED'
+  | 'SUITES_MISSING'
+  | 'NEEDS_UPDATE'
+  | 'MISSING_TEST_CASES'
+  | 'NO_COVERAGE_POSSIBLE'
+  | 'NOT_APPLICABLE'
+  | 'RUNNING'
+  | 'PASSED'
+  | 'FAILED';
+
+export interface SuiteStatusDetails {
+  /** Changed files no suite covers at all. */
+  uncovered?: string[];
+  /** Changed files in a permanently untestable area (ATC). */
+  fenced?: string[];
+  /** Selectors a spec drives that the app no longer declares. */
+  drift?: { id: string; usedBy: string[] }[];
+  /** New elements this diff added that no spec references. */
+  missingTestCases?: { component: string; hooks: string[] }[];
+  /** New interactive elements with no data-testid — a test could not address them. */
+  unhookedElements?: { component: string; count: number }[];
+  /** Changed components where nothing at all is exercised by a spec. */
+  untestedComponents?: string[];
+  newComponents?: string[];
+}
+
+export interface TestSuiteStatusFacet {
+  state: SuiteState;
+  /** The single flag the future Approve button reads — the UI never re-derives the rules. */
+  canProceed: boolean;
+  sha?: string | null;
+  checkedAt?: number | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  suites?: string[];
+  crossCutting?: string | null;
+  details?: SuiteStatusDetails;
+  /** Populated only once the suites actually execute. */
+  run?: {
+    state: 'RUNNING' | 'PASSED' | 'FAILED';
+    passed?: number;
+    failed?: number;
+    skipped?: number;
+    startedAt?: number;
+    finishedAt?: number;
+    reportRunId?: string;
+  };
+  /** Set by the console's Recheck button; re-dispatches the workflow for this ref. */
+  recheck?: { requestedBy?: string; requestedAt?: number; count?: number };
+}
+
 /** A tester sign-off gate (dev gate or prod gate). */
 export interface GateFacet {
   verdict: GateVerdict;
@@ -121,6 +209,107 @@ export interface LastActivity {
   at?: string | number;
 }
 
+// --- Flutter native delivery (repoType 'flutter'; plan 2026-07-14-flutter-rollout-plan-v2) ------
+//
+// Flutter has NO web preview. A flutter candidate carries a `mobileDelivery` facet instead: the
+// per-platform build/upload/distribution state PLUS the per-platform tester sign-offs (the locked
+// per-platform gate model). Sign-offs are colocated with each platform so the UI reads iOS/Android
+// independently and the stage gate advances only when BOTH platforms are OK. The console tracks up
+// to DEV_MERGED only — there is NO store-release state here (store release is manual, off-console).
+
+/** Build/distribution state for ONE (platform, env). android:SENT (App Dist) / UPLOADED (Play
+ *  internal); ios:UPLOADED (ad-hoc App Dist / TestFlight). */
+export type MobileDeliveryStatus = 'NONE' | 'BUILDING' | 'SENT' | 'UPLOADED' | 'FAILED';
+
+/** One (platform, environment) delivery. `env` = which Firebase project the build is wired to:
+ *  test = starlabs-test, prod = fir-sample-aae4a. Feature stage delivers BOTH envs to App
+ *  Distribution; dev-merge delivers prod-env to the store track (trackRef). */
+export interface MobileEnvDelivery {
+  status: MobileDeliveryStatus;
+  /** Firebase App Distribution install link (feature stage). */
+  distUrl?: string;
+  /** Dev-merge track ref: iOS TestFlight build no. / Android Play Internal version. */
+  trackRef?: string;
+  at?: string | number;
+}
+
+/** A per-platform tester sign-off (reuses GateVerdict; SHA-bound for freshness like GateFacet).
+ *  Sign-off is PER-PLATFORM (locked 2026-07-14), NOT per-env — a tester OKs android / ios once. */
+export interface MobileSignoff {
+  verdict: GateVerdict;
+  /** The SHA the verdict was made against (drift = sha ≠ headSha). */
+  sha?: string;
+  by?: string;
+  at?: string | number;
+}
+
+/** One platform's per-env delivery + per-stage sign-off inside `mobileDelivery`. */
+export interface MobilePlatformFacet {
+  test?: MobileEnvDelivery;
+  prod?: MobileEnvDelivery;
+  /** Feature-stage "OK for dev" sign-off for THIS platform. */
+  devSignoff?: MobileSignoff;
+  /** Dev-merge "OK to promote" sign-off for THIS platform. */
+  prodSignoff?: MobileSignoff;
+}
+
+/** Native-delivery facet for flutter candidates (replaces the web `preview` facet). */
+export interface MobileDeliveryFacet {
+  android?: MobilePlatformFacet;
+  ios?: MobilePlatformFacet;
+}
+
+export type MobilePlatform = 'android' | 'ios';
+export type MobileEnv = 'test' | 'prod';
+
+/** Effective build lifecycle for a flutter candidate, derived from `mobileDelivery` (mirror of the
+ *  backend). LIVE once any (platform,env) delivered; BUILDING while any building; else FAILED/NONE. */
+export function mobileBuildState(md?: MobileDeliveryFacet): BuildState {
+  if (!md) return 'NONE';
+  const envs: MobileEnvDelivery[] = [];
+  for (const p of ['android', 'ios'] as MobilePlatform[]) {
+    const pf = md[p];
+    if (pf?.test) envs.push(pf.test);
+    if (pf?.prod) envs.push(pf.prod);
+  }
+  if (envs.length === 0) return 'NONE';
+  if (envs.some((e) => e.status === 'SENT' || e.status === 'UPLOADED')) return 'LIVE';
+  if (envs.some((e) => e.status === 'BUILDING')) return 'BUILDING';
+  if (envs.some((e) => e.status === 'FAILED')) return 'FAILED';
+  return 'NONE';
+}
+
+/** Platforms with at least one non-NONE delivery (used by the per-platform gate + UI). */
+export function deliveredPlatforms(md?: MobileDeliveryFacet): MobilePlatform[] {
+  if (!md) return [];
+  return (['android', 'ios'] as MobilePlatform[]).filter((p) => {
+    const pf = md[p];
+    const ok = (e?: MobileEnvDelivery) => !!e && e.status !== 'NONE';
+    return !!pf && (ok(pf.test) || ok(pf.prod));
+  });
+}
+
+/** Aggregate per-platform sign-offs into ONE stage verdict (mirror of the backend): OK iff EVERY
+ *  delivered platform has a fresh OK for the stage; REJECTED if any rejected; else NONE. */
+export function mobileAggregateVerdict(
+  md: MobileDeliveryFacet | undefined,
+  stage: 'dev' | 'prod',
+  headSha?: string,
+): GateVerdict {
+  const delivered = deliveredPlatforms(md);
+  if (delivered.length === 0) return 'NONE';
+  const key = stage === 'dev' ? 'devSignoff' : 'prodSignoff';
+  const verdicts = delivered.map((p) => {
+    const s = md![p]![key];
+    if (!s || s.verdict !== 'OK') return s?.verdict ?? 'NONE';
+    if (headSha && s.sha && s.sha !== headSha) return 'NONE';
+    return 'OK' as GateVerdict;
+  });
+  if (verdicts.some((v) => v === 'REJECTED')) return 'REJECTED';
+  if (verdicts.every((v) => v === 'OK')) return 'OK';
+  return 'NONE';
+}
+
 /**
  * `release-candidates/{repo__branch}` — the facet model (plan §3.1).
  */
@@ -140,9 +329,21 @@ export interface ReleaseCandidate {
   prodGate: GateFacet;
   prProd: PrFacet;
 
+  /**
+   * Flutter native delivery (repoType 'flutter' only) — replaces the web `preview` facet. Holds the
+   * per-platform build/distribution state + per-platform tester sign-offs. Absent for web/CF repos.
+   */
+  mobileDelivery?: MobileDeliveryFacet;
+
   /** The e2e gate run on the open PR (running/passed/failed + report link). */
   gateRun?: GateRunFacet;
   testSummary?: TestSummary;
+
+  // --- NEW branch-channels flow (2026-08-19) — informational, never gates anything today ---
+  /** Both hosting channels (dev + prod) built from the last push, with the commit they came from. */
+  previewStatus?: PreviewStatusFacet;
+  /** Whether the hub's suites cover this diff, and — later — how the run went. */
+  testSuiteStatus?: TestSuiteStatusFacet;
 
   /** Latest deploy health (dev → starlabs-test, prod → fir-sample). */
   lastDeploymentState?: string;
@@ -201,7 +402,8 @@ export type ActivityType =
   | 'deploy_status'
   | 'gate_run'
   | 'reconcile_decision'
-  | 'member_change';
+  | 'member_change'
+  | 'mobile_release';  // flutter native delivery reported by recordMobileRelease (plan 2026-07-14)
 
 /** Where an event originated. GitHub-confirmed (webhook) events win over intents (D8/D9). */
 export type ActivitySource = 'webhook' | 'console' | 'reconcile';

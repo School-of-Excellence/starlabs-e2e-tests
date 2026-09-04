@@ -10,13 +10,23 @@
 // them; gateReason() produces the human "why disabled" string for (3)+(4).
 
 import { Capability } from './roles';
+import { repoTypeOf } from './repos';
 import {
   ReleaseCandidate,
   RcStatus,
+  BuildState,
   previewStale,
   signoffStale,
   prHasUnreviewed,
+  mobileBuildState,
 } from './release-candidate.model';
+
+/** The build lane state, from the web preview facet OR (flutter) the mobileDelivery facet. */
+function effectiveBuildState(rc: ReleaseCandidate): BuildState {
+  return rc.preview.buildState !== 'NONE'
+    ? rc.preview.buildState
+    : mobileBuildState(rc.mobileDelivery);
+}
 
 /** The five gated actions a developer/tester can fire from the board. */
 export type RcAction =
@@ -90,17 +100,24 @@ export function allowedByStatus(action: RcAction, status: RcStatus): boolean {
  */
 export function isFresh(action: RcAction, rc: ReleaseCandidate): boolean {
   switch (action) {
-    case 'deployPreview':
+    case 'deployPreview': {
       // Deploy is only useful when there's something new to publish:
       //  • building  → disabled (a build is already in flight)
       //  • live      → only if a newer commit landed (previewStale) — "new preview available"
       //  • none/failed → enabled (deploy / retry)
-      if (rc.preview.buildState === 'BUILDING') return false;
-      if (rc.preview.buildState === 'LIVE') return previewStale(rc);
+      const bs = effectiveBuildState(rc);
+      if (bs === 'BUILDING') return false;
+      // Flutter has no per-env delivered-sha to compute staleness — allow redeploy whenever idle.
+      if (repoTypeOf(rc.repo) === 'flutter') return true;
+      if (bs === 'LIVE') return previewStale(rc);
       return true;
+    }
     case 'signoffDev':
-      // Need a CURRENT live preview to sign off (a redeployed preview re-opens sign-off).
-      return rc.preview.buildState === 'LIVE' && !previewStale(rc);
+      // Need a CURRENT live build to sign off (a redeploy re-opens sign-off). Flutter: LIVE once any
+      // platform/env is distributed (no web-preview staleness to check).
+      return repoTypeOf(rc.repo) === 'flutter'
+        ? effectiveBuildState(rc) === 'LIVE'
+        : rc.preview.buildState === 'LIVE' && !previewStale(rc);
     case 'signoffProd':
       return !signoffStale(rc.devGate, rc.headSha);
     case 'createPrToDev':
