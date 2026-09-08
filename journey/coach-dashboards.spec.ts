@@ -42,8 +42,12 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
   // the defect stands, and the day someone adds @Optional (or drops the route) this reports "expected to
   // fail, but passed" and forces the annotation off. The oracle below is written in full DELIBERATELY —
   // it is the assertion that should hold once the screen can mount, so the fix arrives with its test.
-  test.fail();
   test('JP-20 opportunities dashboard totals match an independent count of the source docs', async ({ page }) => {
+    // Scoped INSIDE the test body on purpose. A bare `test.fail()` at describe scope applies to EVERY test
+    // in the block — it marked JP-21 expected-to-fail too, and JP-21 passing was then reported as a
+    // failure. Inside the body it annotates only this case.
+    test.fail();
+
     // [ORACLE] The component sums `opportunities.length` over every row it renders, and buckets each entry
     // by name (journeycoach-opportunities.component.ts:181-194). Derive the same figures here from the
     // documents themselves — the test supplies neither the tally nor anything in the view.
