@@ -83,6 +83,13 @@ if (fs.existsSync(DENYLIST_FILE)) {
 }
 const isDenied = (route) => denyRoutes.some((d) => route === d || route.startsWith(d + '/'));
 
+// manifest.RETIRED — dead routes still registered in app.routes.ts but superseded and unreferenced. They
+// leave the denominator for a DIFFERENT reason than `fenced`: fenced may never be tested (ATC), retired
+// could be but should not exist. Kept separate so "delete this route" stays a visible piece of work rather
+// than being quietly absorbed into the ATC constraint.
+const retiredRoutes = Object.keys(manifest.retired?.routes ?? {});
+const isRetired = (route) => retiredRoutes.some((d) => route === d || route.startsWith(d + '/'));
+
 const visited = new Map(); // normalized route -> Set(spec files)
 const dynamic = new Map(); // raw unresolvable goto -> Set(spec files)
 
@@ -143,8 +150,8 @@ const isVisited = (r) => visited.has(r) || visitedBases.has(baseOf(r));
 // -------------------------------------------------------------- 3. join
 // Denylisted routes leave the denominator entirely: no one is permitted to test them,
 // so counting them as unmet coverage would be measuring against an unreachable target.
-const deniedRoutes = routes.filter((r) => isDenied(r.route));
-const scopedRoutes = routes.filter((r) => !isDenied(r.route));
+const deniedRoutes = routes.filter((r) => isDenied(r.route) || isRetired(r.route));
+const scopedRoutes = routes.filter((r) => !isDenied(r.route) && !isRetired(r.route));
 
 const byModule = new Map();
 for (const r of scopedRoutes) {
