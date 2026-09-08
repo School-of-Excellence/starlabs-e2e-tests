@@ -184,10 +184,17 @@ for (const r of scopedRoutes) {
 }
 
 // Which suite (if any) claims this module, per the manifest globs?
+// A module is claimed either by a FOLDER glob ("src/app/LiveKit/**") or by a FILE glob
+// ("src/app/tv-auth.component.ts"). The folder form was the only one handled, so a route served by a
+// bare component file at the app root read as unclaimed no matter what the manifest said — `moduleOf`
+// derives "src/app/tv-auth.component" from the path, which no folder glob can prefix-match.
 const claimedBy = (module) => {
   const owners = [];
   for (const [key, s] of Object.entries(manifest.suites)) {
-    if ((s.appPaths ?? []).some((g) => g.startsWith(module + '/'))) owners.push(key);
+    const claims = (s.appPaths ?? []).some(
+      (g) => g.startsWith(module + '/') || g === module || g.startsWith(module + '.'),
+    );
+    if (claims) owners.push(key);
   }
   return owners;
 };
