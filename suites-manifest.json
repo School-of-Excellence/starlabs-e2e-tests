@@ -207,7 +207,7 @@
       "capture": "failure-only",
       "specDir": "workshops",
       "ciReady": true,
-      "appPaths": ["src/app/Workshop/**", "src/app/New-Workshop/**", "src/app/Scheduling/**"],
+      "appPaths": ["src/app/Workshop/**", "src/app/New-Workshop/**"],
       "cfPaths": ["functions/components/workshop.js"]
     },
     "appointments": {
@@ -217,7 +217,7 @@
       "capture": "all",
       "specDir": "appointments",
       "ciReady": true,
-      "appPaths": ["src/app/appointment-dashboard/**"],
+      "appPaths": ["src/app/appointment-dashboard/**", "src/app/Scheduling/**"],
       "cfPaths": ["functions/components/appointment.js", "functions/components/appointmentZoomIntegraion.js"]
     },
     "events": {
