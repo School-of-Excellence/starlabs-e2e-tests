@@ -67,6 +67,11 @@ const ID = {
   //        default the COMPONENT chose (docid as title; '—' for the audit fields).
   JOD1: `${TESTRUNID}_JOD1`,
   JOD2: `${TESTRUNID}_JOD2`,
+  // sales_teams rows (JP-23 roster render / JP-24 by-team grouping). The ONLY collection the five
+  // 2026-09-08 journey screens need that this seed did not already write — everything else they read
+  // (journey / salesleads / users_roles / participantjourneyproduct / appointmenttype) is above.
+  ST1: `${TESTRUNID}_ST1`,
+  ST2: `${TESTRUNID}_ST2`,
   // participant runtime (the :pid participant's purchase/support/delivery preconditions)
   PJP1: `${TESTRUNID}_PJP1`,    // participantjourneyproduct (journeyref J1, initiated, NOT onboarded)
   PJP2: `${TESTRUNID}_PJP2`,    // participantjourneyproduct (journeyref J1, initiated) — 2nd row for count
@@ -142,6 +147,11 @@ const ROUTES = [
   // so they need a grant and no new fixture data.
   { route: '/opportunities', label: 'Opportunities Dashboard' },              // JP-20
   { route: '/sales-report', label: 'Sales Report' },                          // JP-21
+  { route: '/onboardingremarks', label: 'Onboarding Remarks' },               // JP-22 (routed dialog — cannot load)
+  { route: '/sales-teams', label: 'Sales Teams' },                            // JP-23
+  { route: '/sales-numbers', label: 'Sales Numbers' },                        // JP-24
+  { route: '/delivery-dashboard', label: 'Delivery Dashboard' },              // JP-25
+  { route: '/journey-coach-health', label: 'Journey Coach Health' },          // JP-26
 ];
 
 async function seedJourney() {
@@ -212,6 +222,17 @@ async function seedJourney() {
   //    JOD2: deliberately BARE — no journeyref, no lastUpdated, no updatedBy. Every value the row renders
   //    is then a fallback the COMPONENT chose (docid as the title, '—' for the audit cells).
   await db.collection('journeyonboardingdetail').doc(ID.JOD2).set({ docid: ID.JOD2, ...tag });
+
+  //    sales_teams (JP-23 / JP-24) — SalesNumbersService.loadTeams() maps each doc to
+  //    { id, team: v.team ?? d.id, members: Array.isArray(v.members) ? v.members : [] }
+  //    (sales-numbers.service.ts:54-60). ST2 deliberately omits `members` so the service's own
+  //    Array.isArray fallback to [] is exercised rather than assumed.
+  await db.collection('sales_teams').doc(ID.ST1).set({
+    docid: ID.ST1, team: `TEST Team Alpha ${TESTRUNID}`, members: [PID], ...tag,
+  });
+  await db.collection('sales_teams').doc(ID.ST2).set({
+    docid: ID.ST2, team: `TEST Team Beta ${TESTRUNID}`, ...tag,
+  });
 
   // 4) PARTICIPANT runtime preconditions for the :pid participant ----------------------------------
   //    participant metadata/{pid} — REQUIRED by journeyplan (journeyplan.ts:97-101 reads this doc and
@@ -342,6 +363,9 @@ const SEEDED = [
   // left behind by an earlier run still renders and pollutes later assertions. Omitting a new collection
   // from this list is what made comms CN-18 fail on its second consecutive run.
   'journeyonboardingdetail',
+  // sales_teams (JP-23/24) — MUST be here or the seeded teams survive between runs and the roster
+  // assertions drift as rows accumulate.
+  'sales_teams',
   'participant metadata', 'participantjourneyproduct', 'participantsproduct', 'participantdeliverysequence',
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',
