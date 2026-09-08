@@ -120,6 +120,7 @@ const ROUTES = [
   { route: '/atctaxonomy', label: 'ATC Taxonomy (reference-only config)' },
   { route: '/ahcrm', label: 'A&H CRM' },
   { route: '/profilelist', label: 'Profile List' },
+  { route: '/participantvideoask', label: 'Participant VideoAsk' },   // PA-47 (assigned 2026-09-08)
 ];
 
 async function seedProfiles() {

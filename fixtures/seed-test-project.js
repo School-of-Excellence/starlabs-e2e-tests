@@ -196,6 +196,7 @@ const DRIVEN_ROUTES = [
   // only (auth.guard.ts:35), so the grant is the bare '/arena'.
   { route: '/arena', label: 'Arena Board' },
   { route: '/openmeeting', label: 'Open Meeting (Zoom client view)' },   // OP-22 (first segment only)
+  { route: '/joinlivekit', label: 'Join LiveKit Call' },                  // OP-24 (first segment only)
   // DELIBERATELY ABSENT: /evolution-prep-participants and /evolution-prep-participants-v2. Both are ATC
   // READERS and are on the D-001 denylist (_support/excluded-routes.ts). Granting a test actor access to
   // them here would defeat the exclusion — the point is that no spec ever reaches those screens.
