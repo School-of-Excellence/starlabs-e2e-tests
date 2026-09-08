@@ -23,6 +23,8 @@ export const evtActors = {
   participant3: `participant3+${RUN}@example.com`,    // initiate cohort (EVT-10/11)
   participant4: `participant4+${RUN}@example.com`,
   participant5: `participant5+${RUN}@example.com`,
+  participant6: `participant6+${RUN}@example.com`,    // EPC-01 — owns P1, no EPR, no auth chain/login
+  participant7: `participant7+${RUN}@example.com`,    // LED3-02 — registered + ticketed, no auth chain/login
 };
 
 /** Seeded profileids (for asserting app-written refs / filtering rows by client name). */
@@ -34,6 +36,8 @@ export const evtProfileIds = {
   p3: `${RUN}_pf_p3`,
   p4: `${RUN}_pf_p4`,
   p5: `${RUN}_pf_p5`,
+  p6: `${RUN}_pf_p6`,
+  p7: `${RUN}_pf_p7`,
 };
 
 /** Seeded doc ids the specs assert against (must mirror seed-events.js ID). */
@@ -61,6 +65,16 @@ export const evtIds = {
   videoask1: `${RUN}_videoask_1`,
   pvideoask0: `${RUN}_pvideoask_0`,
   tag1: `${RUN}_tag_1`,
+  // ESD-01 / EPC-01 / LOC-01 ids (seed-events.js)
+  journey1: `${RUN}_journey_1`,
+  ppEpc: `${RUN}_pp_epc`,
+  ptdsEpc: `${RUN}_ptds_epc`,
+  loclog1: `${RUN}_loclog_1`,
+  // shared "prove the filter" doc (ESD-01 / EPC-01 / LED3-01)
+  epr2: `${RUN}_epr_2`,
+  // LED3-02 (Mark attendance write path)
+  epr7: `${RUN}_epr_7`,
+  eticketP7: `${RUN}_eticket_p7`,
 };
 
 /** Run-unique display strings the specs type into search/forms and assert against rendered rows. */
@@ -235,5 +249,57 @@ export async function cleanStageOpportunity(stagename: string): Promise<void> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   const snap = await db.collection('stage opportunity count').where('stagename', '==', stagename).get();
+  for (const d of snap.docs) await d.ref.delete();
+}
+
+/**
+ * Re-create the seeded LOCLOG1 doc if a prior run's delete test removed it (LOC-01 is destructive —
+ * the whole point of the test is to delete the seeded row). PRECONDITION write only; the spec asserts
+ * the doc's ABSENCE after the real UI delete, never this seed value.
+ */
+export async function ensureLocationLog(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const exists = (await db.collection('locationlogs').doc(evtIds.loclog1).get()).exists;
+  if (!exists) {
+    await db.collection('locationlogs').doc(evtIds.loclog1).set({
+      docid: evtIds.loclog1, profileid: evtProfileIds.p0,
+      geopoint: new admin.firestore.GeoPoint(13.0827, 80.2707),
+      created: T.now(), testrunid: RUN, _testdata: true,
+    });
+  }
+}
+
+/**
+ * Reset the EPC-02 (Approve p6) precondition: PP_EPC back to status:null (owned, uninitiated) and
+ * delete any `event participation request` the app created for p6 (auto-id, no testrunid — approveSelected
+ * creates a fresh doc when `row.requestData` is absent, so it can't be swept by testrunid teardown).
+ * PRECONDITION write only — the spec asserts the status/doc the APP writes on the real Approve click.
+ */
+export async function resetPpEpc(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('participantsproduct').doc(evtIds.ppEpc).set({
+    status: null, eventref: admin.firestore.FieldValue.delete(), arenaeventid: admin.firestore.FieldValue.delete(),
+    eventparticipationid: admin.firestore.FieldValue.delete(), deliverytype: admin.firestore.FieldValue.delete(),
+    'statusdate.initiated': admin.firestore.FieldValue.delete(),
+  }, { merge: true });
+  const eprs = await db.collection('event participation request').where('profileid', '==', evtProfileIds.p6).get();
+  for (const d of eprs.docs) await d.ref.delete();
+}
+
+/**
+ * Delete any `arena e-ticket log` the app wrote for p7's manual "Mark attendance" click (LED3-02) —
+ * app-written with an auto-id and NO testrunid (`markedmanually:true` is the audit flag, not a sweep
+ * key), so re-runs must clean it explicitly by profileid. PRECONDITION cleanup only.
+ */
+export async function resetLed3MarkForP7(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const snap = await db.collection('arena e-ticket log')
+    .where('profileid', '==', evtProfileIds.p7)
+    .where('markedmanually', '==', true)
+    .get();
   for (const d of snap.docs) await d.ref.delete();
 }

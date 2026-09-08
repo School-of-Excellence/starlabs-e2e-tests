@@ -5,6 +5,11 @@
 > Source folders: `src/app/Events/` · `src/app/big/create-arena-space/` · `src/app/queue system/initiate-event-product/` · `src/app/queue system/event-opportunity-dashboard/`
 >
 > Routes analyzed: `create_event`, `event_participation_approve`, `arena_e_ticket_approve`, `qr-scanner`, `event_attendance_log`, `videoask-display`, `arena_space`, `layers-screen`, `createarenavideoasktemplate`, `eventopportunitydashboard`, `initiateeventproduct`
+>
+> **Addendum 2026-09-03** (Claude Sonnet 5, coverage-gap follow-up): 4 more Events-glob routes were
+> found never opened by any spec — `events-stage-data`, `event-participation-confirmation`,
+> `locationlog`, `live_event_dashboard_v3`. Analyzed and added below (ESD-*/EPC-*/LOC-*/LED3-* cases).
+> `live_event_dashboard_v3` is a partial exclusion — see its ATC-exclusions entry.
 
 ---
 
@@ -23,6 +28,10 @@
 | `createarenavideoasktemplate` | `src/app/content/arena-video-ask-input/arena-video-ask-input.component.ts` | `canActivate:[authGuard]` | **None** |
 | `eventopportunitydashboard` | `src/app/queue system/event-opportunity-dashboard/event-opportunity-dashboard-v2/event-opportunity-dashboard-v2.component.ts` (v2 is active route at app.routes.ts:31) | `canActivate:[authGuard]`; developer-role exposes extra controls (eod.component.ts:129) | **None** |
 | `initiateeventproduct` | `src/app/queue system/initiate-event-product/initiate-event-product.component.ts:67` | `canActivate:[authGuard]` | **None** |
+| `events-stage-data` | `src/app/Events/events-stage-data/events-stage-data.component.ts` | `canActivate:[authGuard]` | **None** — read-only, no writes at all (config persists to `localStorage`) |
+| `event-participation-confirmation` | `src/app/Events/event-participation-confirmations/event-participation-confirmations.component.ts` (+ child `product-funnel.component.ts`) | `canActivate:[authGuard]` | **None** |
+| `locationlog` | `src/app/Events/locationlog/locationlog.component.ts` | **NO GUARD** — flagged as a likely-accidental omission; every neighbouring route in this file has `[authGuard]`. Do not seed a `dashboard` grant for it (implies a guard exists). | **None** |
+| `live_event_dashboard_v3` | `src/app/Events/live-event-dashboard-v3/live-event-dashboard-v3.component.ts` (+ `live-event-data.service.ts`) | `canActivate:[authGuard]` | **PARTIAL** — see ATC exclusions below. The route itself is testable; three specific service functions are not. |
 
 `authGuard` implementation (auth.guard.ts:10): requires Firebase Auth user; then reads `dashboard` Firestore collection for per-route `roles[]` and `profileid[]` arrays. Guard is **route-config-driven**, not code-hardcoded. Guard gate file:line: auth.guard.ts:36–44.
 
@@ -66,6 +75,15 @@ Note: `eventopportunitydashboard` loads `EventOpportunityDashboardV2Component` (
 | `email archive` | write | Email send archive (set by `initiateeventproduct.ts:1063`) | External comms — stub in tests |
 | `dashboard` | read | route-config roles/profiles (authGuard reads this) | auth.guard.ts:36 |
 | `atc model` | read | ATC model list read by `update-event-detail.ts:360` for the atcmodel dropdown | **Reference-only config; safe per CLAUDE.md "reference-only config is safe"** |
+| `locationlogs` | **both** | participant location pings (created, geopoint, profileid) | Read (paginated) + deleted by `locationlog.service.ts`; written by the mobile app, not this dashboard — this admin screen is render + delete only |
+| `journey` | read | journey id→name map | Full-collection scan by `events-stage-data.ts` (`getJourneyMap`) and `live-event-data.service.ts:236` (`init()`) |
+| `segments`, `participant list` | read | reference data for the ESD "Segment" filter/column | Full-collection scan by `events-stage-data.ts` (`loadRefData`) |
+| `queue stage log`, `queue variation` | read | per-selected-queue stage-completion + ATC-model lookups for ESD's plan table | `where('queueref','==',q.ref)` — `events-stage-data.ts` |
+| `event_caller_log` | **both** | Arena Calling outcome per participant/day | The one write live-event-dashboard-v3 makes on its DEFAULT database (`setCallOutcome`, upsert-by-query) — **not ATC** |
+| `event zones`, `event participant zones`, `big cohorts` | read | Zones view | live-event-dashboard-v3, scoped `where('eventref','==',selectedEvent)` |
+| `clientissue`, `chat config` | read | Customer Support backend view | live-event-dashboard-v3; `chat config` doc id is hardcoded (`0jqtiq3sxtbLVcEGMDhW`) |
+| `livechangework` | read | event-wide changework (LIVE + completed) drill-downs | live-event-dashboard-v3 |
+| `temporary_ATC`, `atc_to_validate`, `atc_alpha` | read | **ATC bucket card / draft count / adjustment sums** | On the **`firestore-atc` named database**, NOT default — see ATC exclusions. Read only by `subscribeToDraftAtc`/`subscribeToAtcToValidate`/`subscribeToAtcAlpha` in `live-event-data.service.ts`, all three called only from `subscribeToArenaOverview()` |
 
 ---
 
@@ -114,6 +132,8 @@ The candidate CFs listed in the brief were checked. No CF source repo is present
 | Firebase Storage (image upload) | `initiateeventproduct.ts:1137` (`uploadBytes` for notification image) | Stub storage upload |
 | ZXing QR scanner camera | `qr-scanner.component.html:28` (`<zxing-scanner (scanSuccess)="onCodeResult($event)">`) | Camera access unavailable in headless Playwright; call `onCodeResult()` directly via `page.evaluate` to inject a synthetic QR payload |
 | VideoAsk content URLs | `arena-video-ask-input.ts:148` (`content_urls` setDoc + external URL embed) | VideoAsk is a third-party embed; no external HTTP call in Angular code — only the `content_urls` collection write. No stub needed at network level; just verify the Firestore write. |
+| Nominatim (OpenStreetMap geocoding) | `locationlog/geocoding.service.ts:57` — `GET nominatim.openstreetmap.org/search`, real HTTP, no key, ~1req/s policy | **No existing stub in `queue/stubs/`.** Only fires when the operator opens the reference-point picker and types a place. LOC-01/LOC-03 never open the picker (see locationlog.spec.ts header), so this is deliberately out of scope for this pass — a `page.route('**/nominatim.openstreetmap.org/**', ...)` stub is a separate follow-up before any picker-driven test is written. |
+| OpenStreetMap raster tiles | `locationlog/map-picker.component.ts:TILE_URL` — real image fetches, Leaflet, lazy-loaded only when the picker panel opens | Same as above — out of scope until the picker is tested. `page.route('**/tile.openstreetmap.org/**', ...)` returning a 1×1 PNG is the pattern to use. |
 
 ---
 
@@ -209,6 +229,35 @@ Note: `updateStatus()` method (ts:372) has its `batch.commit()` **commented out*
 2. On tag add/remove: `updateDoc("participantvideoask", row.docid, {tags: arrayUnion/Remove(tagId)})` (videoask-display.ts:364); then `updateDoc("participant metadata", profileid, {profiletags: ...})` (ts:368); `setDoc("participant tag logs", logId, {...})` (ts:373).
 3. **Observable write:** `participantvideoask/{docid}.tags` contains/excludes `tagId`; `participant tag logs/{logId}` exists.
 
+### Flow 9: Events Stage Data (read-only 4-step wizard)
+
+1. Operator navigates to `/events-stage-data`, picks an event (step 1, plain `<table>`), an arena event (step 2), one or more queues (step 3).
+2. Step 4 ("plan") streams `event participation request` (by `arenaeventid`), `participant metadata` (per-profile `getDoc`), `queue_token`/`queue stage log`/`queue variation` (per selected queue) and computes cohort-summary cards (`computeCohortSummary()`) — Requested/Approved/In queue/Ready/DFU Ongoing — entirely client-side.
+3. **No Firestore write anywhere in this component.** Journey-group/ready-stage/stage-def/eligibility config the operator edits in the "Filters" panel persists to `localStorage['esd_journeygroups_<arenaeventid>']` only.
+4. **Observable read:** the "Approved" cohort card total equals an independent `countWhere('event participation request', [arenaeventid==X, status=='approved'])`.
+
+### Flow 10: Event Participation Confirmations — Overview + Approve/Revoke/Finalize
+
+1. Operator navigates to `/event-participation-confirmation`; the overview table streams `event collection`/`arena events` and (per-row, on open) `event_stats/{arena.docid}` (preferred rollup) or falls back to live `event participation request`/`participantsproduct`/`queue_token` counts.
+2. Clicking a row opens that arena's **product funnel** in its own tab: computes Potential (`participantsproduct` where `productref==X && status==null`), Requested/Approved/Attended/No-show/Unattended/Revoked (from `event participation request`), Eligible/Not-requested/No-product/In-queue (derived set operations over the above).
+3. **Approve** (segment `eligible`/`notRequested` only): pick a Delivery sequence (`productToDeliverySequence` where `product==X`, required) → confirm (mat-dialog, NOT native) → `writeBatch`: `event participation request` set (merge) `{status:'approved', profileid, productref, arenaeventid, participantproductid, initiatedfrom:'web', ...}`; `participantsproduct/{row.participantproductid}` update `{status:'initiated', deliverytype, eventparticipationid, 'statusdate.initiated':serverTimestamp()}`.
+4. **Revoke**/**Finalize attendance** follow the same mat-dialog-confirm pattern; Finalize also writes `arena events/{docid}.epc_snapshot` (a frozen rollup used by the "Of approved/Of potential" card after the event closes).
+5. **Observable write:** `participantsproduct/{docid}.status=='initiated'`; a NEW `event participation request` doc (auto-id, found by `profileid`) with `status=='approved'`.
+
+### Flow 11: Location Log (Live tracking + All-logs delete)
+
+1. Operator navigates to `/locationlog` (no guard — see Routes table). "Live tracking" tab: `locationlogs` read (`orderBy('created','desc')`, `limit(1000)`), one row per participant (latest ping), names resolved via chunked `participant metadata` `in`-queries.
+2. "All logs" tab (`app-location-logs`): cursor-paginated `locationlogs` list; select row(s) → "Delete" (or per-row trash icon) → `ConfirmDeleteDialogComponent` (mat-dialog, NOT native) → confirm → `deleteLogs()` batched `.delete()`.
+3. **No create/update path exists anywhere in this component tree** — location docs are written by the mobile app, not this admin dashboard.
+4. **Observable write:** the deleted `locationlogs/{docid}` no longer exists (admin SDK read returns `null`).
+
+### Flow 12: Live Event Dashboard v3 (ATC-partial — see exclusions)
+
+1. Operator navigates to `/live_event_dashboard_v3`; `ngOnInit()` → `init()` auto-selects `ongoingEvents[0]` if one exists (our seeded EVENT1 always is). `selectEvent()` streams the registered universe (`event participation request` where `eventref==X && status in [approved,attended]`) into the hero number, plus attendance/video-ask/zones/customer-support/arena-calling sections — all on the DEFAULT database.
+2. `selectEvent()` also auto-selects a queue (event-matching, else a **project-wide** fallback) and — only if a queue ends up selected — calls `subscribeToArenaOverview()`, which fires the three `firestore-atc` reads. **Cancelled per operator rule** — no test in this suite drives this path; `live-event-dashboard-v3.spec.ts` runs a project-wide "no ongoing queue" guard before every test specifically to keep it unreachable.
+3. **Mark attendance** (Unattended drill-down → per-row "Mark attendance" → pick product(s) → native `window.confirm(...)`) → `markAttendanceForProducts()`: one `setDoc` per selected product into `arena e-ticket log` with `markedmanually:true`.
+4. **Observable write:** `arena e-ticket log/{auto-id}` exists with `profileid`, `product`, `markedmanually:true` — found by query, never a known id (the app generates it).
+
 ---
 
 ## Seed requirements
@@ -228,6 +277,16 @@ Reuse patterns from `e2e/fixtures/seed-test-project.js`. New seeds needed:
 11. **`arenavideoask` template doc** — `{title:"Test VideoAsk <TESTRUNID>", docid, testrunid}` for `videoask-display` filter tests.
 12. **`participantvideoask` doc** — `{profileid, videoaskid:<arenavideoask docid>, uploaded:serverTimestamp(), testrunid}` for tag tests.
 13. **`participant tags` doc** — `{tagsfor:["video ask"], isActive:true, testrunid}` tag master.
+
+**Added 2026-09-03 (ESD/EPC/LOC/LED3):**
+
+14. **`participant metadata` docs (p0, p1, p6, p7)** — `{profileid, name, email, phonenumber, customerstatus:'active', activejourney, lastcompletedjourney, lastsubscribedjourney, testrunid}`. Without these, ESD's rows render `metaMissing:true` (the biggest gap flagged by static review).
+15. **`journey` doc** — `{docid, name:"TEST Journey <RUN>", testrunid}` — resolves the Journey column on ESD/LED3.
+16. **`participantsproduct` doc (PP_EPC, profile p6)** — `{profileid:p6, productref:P1, status:null, testrunid}` — the sole EPC "potential"/"eligible" row (p0/p1 own no participantsproduct doc, only an EPR).
+17. **`productToDeliverySequence` doc (PTDS_EPC)** — `{product:P1, deliveryoptions:[{deliverytype:"TEST Delivery Set <RUN>"}]}` — EPC-02's Approve action bar needs a real option in the "Delivery sequence" `mat-select`.
+18. **`event participation request` doc (EPR2, profile p2)** — same `arenaeventid`/`eventref` as EPR0/EPR1 but `status:'requested'`. The **"prove the filter" doc** (mirrors comms' `delete:true` channeltemplates row): every "Approved"/"registered" count ESD/EPC/LED3 render is a status-filtered COUNT; without a same-event doc that *fails* the filter, a test asserting "== 2" can't distinguish "the app filtered correctly" from "the app returns every EPR it sees."
+19. **`event participation request` doc (EPR7, profile p7) + `arena e-ticket` doc (ETICKET_P7)** — `status:'approved'`, `arenaeventid:null` (deliberately — see #18's oracle math), active ticket eligible for P1. Dedicated LED3-02 precondition, kept separate from p0's `ETICKET_P0` (owned by the QR-scan deep-suite cases, which flip its `active` flag).
+20. **`locationlogs` doc (LOCLOG1, profile p0)** — `{profileid:p0, geopoint:GeoPoint(13.0827,80.2707), created:Timestamp.now(), testrunid}`.
 
 ---
 
@@ -251,6 +310,13 @@ Reuse patterns from `e2e/fixtures/seed-test-project.js`. New seeds needed:
 | EVT-14 | VideoAsk tag add: `participantvideoask/{docid}.tags` contains the added tag after REAL UI tag click; `participant tag logs` doc created | REAL-UI | Read back `participantvideoask/{docid}.tags` (written by updateDoc); `countWhere("participant tag logs", [["profileid","==",seededProfileid],["type","==","added"]]) >= 1`. App output vs seeded profileid. | P1 |
 | EVT-15 | Event opportunity dashboard: custom stage count doc created with correct `queuelist` and `stagename` after REAL UI form submit | REAL-UI | `stage opportunity count/{docid}` written by `submitStageOpportunity`; read back `docid.queuelist` and assert == seeded `selectedQueueList`. App-set value vs seeded queue docid. | P2 |
 | EVT-16 | Event opportunity dashboard: total stage participant count rendered by the board matches Firestore `queue_token` count for the same stage | REAL-UI | Board calls `sumOfStageTokenCount` from its live `queue_token` stream; oracle = `countWhere("queue_token", [["queueref","==",seededQueueRef],["currentstage","==",stageName]])`. Two independent computations agree. | P1 |
+| ESD-01 | Events Stage Data plan step renders the app-computed "Approved" cohort card total | REAL-UI | `computeCohortSummary()` counts `event participation request` rows client-side; oracle = `countWhere(..., [arenaeventid==X, status=='approved'])`. EPR2 (status:'requested', same arena) proves the filter — total EPRs for the arena is 3, Approved must stay 2. | P0 |
+| EPC-01 | Event Participation Confirmations funnel renders the app-computed "Potential" + "Approved" segment counts | REAL-UI | `counts.potential`/`counts.approved` (product-funnel.component.ts) computed from joined `participantsproduct`/`event participation request` reads; oracles = independent `countWhere` of the same predicates. Same EPR2 filter-proof as ESD-01. | P0 |
+| EPC-02 | Approving the sole "Eligible" participant (p6) flips `participantsproduct.status` to "initiated" and creates a new approved `event participation request` | REAL-UI, WRITE-PATH | Confirm dialog is a **mat-dialog**, not native — no `page.on('dialog')` needed (verified: zero `window.confirm`/`window.prompt` hits in product-funnel.component.ts). Assert the app-written status + the NEW EPR (found by `profileid`, not a known id) against the admin SDK, never the UI's optimistic state. | P1 |
+| LOC-01 | Location Log "Live tracking" tab renders the seeded participant row with the app-resolved name (not the "Unknown (id)" fallback) | REAL-UI | `resolveNames()` reads `participant metadata/{profileid}.name`; assert the rendered row contains the seeded name, not the raw profileid. | P1 |
+| LOC-03 | Deleting a log in "All logs" removes the doc from Firestore | REAL-UI, WRITE-PATH | `ConfirmDeleteDialogComponent` is a **mat-dialog**, not native (zero `window.confirm`/`window.prompt` hits anywhere in `locationlog/`) — a plain button click, no dialog handler needed. Assert via admin SDK that the doc no longer exists — never the UI's own row-removal animation. | P1 |
+| LED3-01 | Live Event Dashboard v3 hero count renders the app-computed registered universe | REAL-UI, ATC-GUARDED | `eventParticipantProfileIds`/`registeredCount` computed from `event participation request` (`eventref==X`, `status in [approved,attended]`); oracle = independent `countWhere` of the same predicate. Must run behind `assertNoProjectWideOngoingQueue()` (see ATC exclusions). | P0 |
+| LED3-02 | Manually marking a registered-but-unattended participant (p7) "present" writes an `arena e-ticket log` row with `markedmanually:true` | REAL-UI, WRITE-PATH, ATC-GUARDED | `confirmMark()` gates the write behind a **NATIVE** `window.confirm(...)` — the ONE native dialog found across all four new screens (verified by grep). Requires `page.once('dialog', d => d.accept())` armed BEFORE the click, or the write silently no-ops and the test would read as a false green. Assert the new log row by query (`profileid` + `markedmanually`), never a known id. | P1 |
 
 ---
 
@@ -260,6 +326,13 @@ Reuse patterns from `e2e/fixtures/seed-test-project.js`. New seeds needed:
 2. **`event collection` → `atcmodel` write path** — the save path (ts:401, :738) writes `atcmodel: value.atcmodel ?? null`. This is unavoidable in the create/edit flow but can be set to null by submitting a form with no atcmodel selection. Test seed and test case EVT-02 must not select an atcmodel.
 3. No `src/app/ATC/**` component is involved in any of these 11 routes.
 4. No ATC Firestore collections (`atc_alpha`, `atc_initiated`, etc.) are read or written by any component in this group.
+
+**Added 2026-09-03 — `live_event_dashboard_v3` (partial exclusion, not a blanket route exclusion):**
+
+5. `live-event-data.service.ts:45` opens a SECOND named Firestore database, `getFirestore('firestore-atc')`, and reads exactly three collections from it: `temporary_ATC` (`subscribeToDraftAtc`), `atc_to_validate` (`subscribeToAtcToValidate`), `atc_alpha` (`subscribeToAtcAlpha`). All three functions are called EXCLUSIVELY from `subscribeToArenaOverview()`, which is itself called from exactly two places: `selectEvent()` (unconditionally, once a queue ends up selected — line ~449) and `toggleQueue()` (on a manual queue chip click — line ~472).
+6. Per the operator's `never-touch-firestore-atc` rule ("cancelled, not deferred — do not look for a workaround"), no test in this suite may reach this code path. **This is NOT the same as excluding the whole route** — the route and every other read on it (registered count, attendance, video-ask tags, zones, customer support, arena calling) is default-DB-only and IS tested (LED3-01/LED3-02).
+7. The catch: `selectEvent()` auto-selects a queue for whichever event it opens — first any queue sharing that event's `eventref`, and if none match, falls back to `ongoingQueues[0]`, the first "ongoing" queue **project-wide** (a full, unfiltered `queue generation` scan — no `eventref` filter, no `testrunid` scope — this is a shared disposable test project other suites seed into too). `init()` also auto-calls `selectEvent(ongoingEvents[0])` on mount whenever a seeded event is "ongoing" — and EVENT1 always is (by design, for `qr-scanner`). So merely navigating to this route already risks it, depending on ambient state this suite does not control.
+8. **Mitigation, not a workaround:** `live-event-dashboard-v3.spec.ts` runs `assertNoProjectWideOngoingQueue()` — an exact reproduction of the app's own "is this queue ongoing" predicate against the live project — before every test in the file, and **throws** (fails the test loudly) if any ongoing queue exists anywhere. No test in the file ever clicks a queue chip (`toggleQueue()` is never exercised). Only when the guard passes clean is it provably safe that day's LED3 run never touched `firestore-atc`.
 
 ---
 
@@ -276,3 +349,11 @@ Reuse patterns from `e2e/fixtures/seed-test-project.js`. New seeds needed:
 9. **`arena_space` bulk-upload uses Excel file input**: `create-arena-space.ts:194` reads a file via `FileReader`. Playwright can inject a file via `page.locator('input[type=file]').setInputFiles(...)`. The manual entry flow (createArenaManually) is the simpler test path.
 10. **`arena e-ticket log` uses `uniqueid` from QR payload as the Firestore docid**: if two scans use the same uniqueid, the second `setDoc` would silently overwrite the first (it's a setDoc, not addDoc). The duplicate guard (qr-scanner.ts:187) checks the in-memory `maplog` map, not a Firestore query, so it is only reliable within one component lifecycle. EVT-08 tests this correctly by asserting count remains 1.
 11. **`VideoAsk embedding`**: `videoask-display` renders participant video-ask thumbnails but the actual VideoAsk embed is a third-party `<iframe>`. This iframe is not accessible in Playwright without real URLs. Tests in this group test the tagging/filtering behavior only, not the video playback.
+
+**Added 2026-09-03:**
+
+12. **`locationlog` has NO `canActivate` guard** (see Routes table) — every neighbouring route in `app.routes.ts` carries `[authGuard]`; this one is a gap in the middle of a block where every other line has it. Reads as an accidental omission, not a design choice. Flagged for the app owners; the test suite deliberately does not seed a `dashboard` grant for it (that would imply a guard exists) and does not "fix" it by adding one client-side.
+13. **`live_event_dashboard_v3`'s ATC exposure is state-dependent, not code-dependent** (see ATC exclusions #7 above) — whether this suite's LED3 tests stay ATC-free depends on the SHARED test project having zero "ongoing" `queue generation` docs at run time, which this suite's own seed does not fully control. If `assertNoProjectWideOngoingQueue()` ever throws in CI, that's a real signal (another suite currently has a live queue), not a flaky test — investigate the shared project state, don't retry past it.
+14. **`live-event-dashboard-v3.component.ts` is 2600+ lines** with no Angular unit test and no prior E2E coverage. LED3-01/LED3-02 cover the hero count and the one native-dialog write path; the ATC-adjacent card, Customer Support, Arena Calling send actions, Zones view, and the CSV exports remain unopened by any test as of this addendum — a further gap, tracked but out of scope for this pass.
+15. **`events-stage-data.component.ts` is 1500+ lines, entirely read-only** (localStorage-only config, zero Firestore writes) — confirmed by reading the whole file, not inferred. ESD-01 is the one meaningful anti-circular assertion available on this screen; there is no write-path tier to add.
+16. **No `data-testid` attributes on any of the 4 new components either** — same brittleness note as risk #2 above extends to ESD/EPC/LOC/LED3. Selectors fall back to stable class names (`.cs-stat`, `.sx-bd-row`, `.day-card.today`, `.mark-picker`) and rendered text, none derived from a live DOM (see each spec file's own header note) — expect one round of selector truing-up against the emulator.

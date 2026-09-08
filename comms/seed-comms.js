@@ -42,6 +42,18 @@ const ID = {
   CHAT_CHANNEL: `${TESTRUNID}_chat_channel`,
   // onewaytemplates doc (CN-14 list render).
   OW_TEMPLATE: `${TESTRUNID}_oneway_tmpl`,
+  // channeltemplates docs (CN-18..CN-23, /channel-templates).
+  //   CT_APPROVED / CT_PENDING / CT_REWORK give CN-20 a known pending/approved/rework MIX so the
+  //   status pills assert an app-computed tally rather than a single seeded number.
+  //   CT_DELETED carries delete:true and MUST stay out of the rendered list — it is the only way to
+  //   prove the app's own `.filter(t => !t.delete)` (channeltemplates.component.ts:302) executed.
+  //   CT_PENDING is the doc CN-21 approves and CN-23 duplicates; CT_REWORK_TARGET is reworked by
+  //   CN-22 — kept distinct from CT_PENDING so a write-path case never disturbs CN-20's tally.
+  CT_APPROVED: `${TESTRUNID}_chan_tmpl_approved`,
+  CT_PENDING: `${TESTRUNID}_chan_tmpl_pending`,
+  CT_REWORK: `${TESTRUNID}_chan_tmpl_rework`,
+  CT_DELETED: `${TESTRUNID}_chan_tmpl_deleted`,
+  CT_REWORK_TARGET: `${TESTRUNID}_chan_tmpl_rework_target`,
   // email templates docs (CN-02 approved-vs-pending filter — render-only here).
   EMAIL_APPROVED: `${TESTRUNID}_email_approved`,
   EMAIL_PENDING: `${TESTRUNID}_email_pending`,
@@ -102,6 +114,7 @@ const ROUTES = [
   { route: '/notificationrecord', label: 'Notification Record' },
   { route: '/group-chat', label: 'Group Chat' },
   { route: '/onewaytemplates', label: 'One-Way Templates' },
+  { route: '/channel-templates', label: 'Channel Templates' },   // CN-18..CN-23
 ];
 
 async function seedComms() {
@@ -247,6 +260,55 @@ async function seedComms() {
   // clobber other runs' categories on the shared project.
   await db.collection('classify').doc('onewaycategories').set({ categories: ['Test'] }, { merge: true });
 
+  // 6b) CHANNELTEMPLATES — CN-18..CN-23 (/channel-templates). loadTemplates() queries
+  //     orderBy('createddate','desc') (channeltemplates.component.ts:299-300 — single-field, no composite)
+  //     and then filters delete:true OUT IN THE APP (ts:302). `createddate` MUST exist or the orderBy
+  //     drops the doc entirely. `status` drives both the chip (html:167) and the statusCounts pills
+  //     (ts:305-309 -> html:93-95).
+  //
+  //     NOTE for CN-23: duplicateTemplate() spreads the source doc (`...t`, ts:472), so the copy INHERITS
+  //     testrunid/_testdata from whichever doc it copied. A `testrunid==RUN` count is therefore NOT stable
+  //     after CN-23 runs — scope that assertion to the ' (Copy)' name instead.
+  const chanTmpl = (id, name, status, extra = {}) => ({
+    docid: id,
+    templatename: name,
+    templateid: name.replace(/\s+/g, '_'),
+    category: 'Test',
+    headertype: 'none',
+    headervalue: '',
+    htmlbody: '<p>Channel body</p>',
+    textbody: 'Channel body',
+    footer: '',
+    status,
+    createdby: UID.admin,
+    createddate: hoursAgo(3),
+    approvedby: status === 'approved' ? UID.admin : null,
+    approveddate: status === 'approved' ? hoursAgo(2) : null,
+    updatedby: null,
+    updateddate: null,
+    timeline: [],
+    active: true,
+    delete: false,
+    ...tag,
+    ...extra,
+  });
+
+  await db.collection('channeltemplates').doc(ID.CT_APPROVED)
+    .set(chanTmpl(ID.CT_APPROVED, `Approved Channel ${TESTRUNID}`, 'approved'));
+  await db.collection('channeltemplates').doc(ID.CT_PENDING)
+    .set(chanTmpl(ID.CT_PENDING, `Pending Channel ${TESTRUNID}`, 'pending'));
+  await db.collection('channeltemplates').doc(ID.CT_REWORK)
+    .set(chanTmpl(ID.CT_REWORK, `Rework Channel ${TESTRUNID}`, 'rework'));
+  await db.collection('channeltemplates').doc(ID.CT_REWORK_TARGET)
+    .set(chanTmpl(ID.CT_REWORK_TARGET, `Rework Target Channel ${TESTRUNID}`, 'pending'));
+  // The soft-deleted doc: EXISTS in Firestore, must NOT render. CN-19's whole point.
+  await db.collection('channeltemplates').doc(ID.CT_DELETED)
+    .set(chanTmpl(ID.CT_DELETED, `Deleted Channel ${TESTRUNID}`, 'pending', { delete: true }));
+
+  // classify/channelcategories — the category list the channel-template form reads (ts:284). Merge, same
+  // reason as onewaycategories above: never clobber another run's categories on the shared project.
+  await db.collection('classify').doc('channelcategories').set({ categories: ['Test'] }, { merge: true });
+
   // 7) EMAIL TEMPLATES — CN-02 render (approved-vs-pending). The /email-templates list queries
   //    orderBy('date','desc') (create-email-template.component.ts:590 — single-field, no composite) and
   //    renders a MatTable (cols templatename/category/subcategory/servername/status/validated/date). The
@@ -349,6 +411,12 @@ async function seedComms() {
 const SEEDED = [
   'notificationrecord', 'zoom recordings backup', 'supportchat', 'onewaytemplates',
   'email templates', 'notification templates', 'email archive', 'participant metadata', 'notifications',
+  // channeltemplates (CN-18..CN-23). MUST be here: without it the seeded docs survive between runs AND so
+  // does the ' (Copy)' doc CN-23 makes the app create — which inherits our testrunid via the `...t` spread
+  // (component ts:472), so nothing else prunes it. A leftover copy makes the next run's CN-18 name lookup
+  // ambiguous ("Pending Channel comm" also matches "Pending Channel comm (Copy)"). Found by running the
+  // suite twice back-to-back; a single green run does NOT catch it.
+  'channeltemplates',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched).
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];

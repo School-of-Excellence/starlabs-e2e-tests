@@ -179,6 +179,26 @@ const DRIVEN_ROUTES = [
   { route: '/zoommeeting_bigparticipants', label: 'Zoom Meeting (BIG)' },
   { route: '/joinroom', label: 'Join Room (OpenVidu)' },
   { route: '/web-studio-invitation', label: 'Web Studio Invitation' },
+  // Queue-system screens added by the 2026-09-04 coverage pass (OP-14 / OP-15). Both are flat routes the
+  // authGuard gates by first path segment; without these docs the guard shows
+  // "No roles or profiles configured for screen: X" and the component never mounts.
+  { route: '/queuevenue', label: 'Queue Venue' },
+  { route: '/zoomaccount', label: 'Zoom Account' },
+  // OP-18 / OP-19 — the planner pair. Between them they read ~20 collections, but only the ones the
+  // shared queue seed already writes (`queue generation`, `queue variation`, `queue planning`,
+  // `queue_token`, `arena events`) are needed for the queue picker each screen builds on load; the rest
+  // drive panels that stay empty and render fine that way.
+  { route: '/queue-planner', label: 'Queue Planner' },
+  { route: '/queue-planner-review', label: 'Queue Planner Review' },
+  { route: '/queuetransfer', label: 'Queue Transfer' },   // OP-20
+  { route: '/bigchatscreen', label: 'BIG Chat Screen' },  // BIG-15
+  // OP-21 — the arena board is /arena/:queueid/:stage, but authGuard matches by the FIRST path segment
+  // only (auth.guard.ts:35), so the grant is the bare '/arena'.
+  { route: '/arena', label: 'Arena Board' },
+  { route: '/openmeeting', label: 'Open Meeting (Zoom client view)' },   // OP-22 (first segment only)
+  // DELIBERATELY ABSENT: /evolution-prep-participants and /evolution-prep-participants-v2. Both are ATC
+  // READERS and are on the D-001 denylist (_support/excluded-routes.ts). Granting a test actor access to
+  // them here would defeat the exclusion — the point is that no spec ever reaches those screens.
   // /queue-web (QueueWebVersion1Component, app.routes.ts:319) is the PARTICIPANT landing route
   // (LANDING_ROUTES.bigParticipant) that hosts the <app-web-studio-invitation> accept/deny overlay
   // (studio SS-05/06/08). It is the ONLY driven participant screen with no dashboard grant — the

@@ -173,6 +173,9 @@ test.describe('Events — route-mount smoke (guard admits super-role admin)', ()
     '/create_event', '/event_participation_approve', '/arena_e_ticket_approve', '/qr-scanner',
     '/event_attendance_log', '/videoask-display', '/arena_space', '/layers-screen',
     '/eventopportunitydashboard', '/initiateeventproduct',
+    // Added 2026-09-03 closing the route-coverage gap. NOT '/live_event_dashboard_v3' — that route is
+    // now ATC-excluded (_support/excluded-routes.ts) and must never be navigated to by a test.
+    '/events-stage-data', '/event-participation-confirmation', '/locationlog',
   ];
   test('every seeded event route mounts (no /login bounce)', async ({ page }) => {
     await installEvtStubs(page);

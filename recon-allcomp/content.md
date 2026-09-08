@@ -266,6 +266,48 @@ includes `admin` in `roles[]`.
 | CN-17 | Viewparticipantstieraccess: renders `participant metadata` stream; participants with `tier[]` appear in the correct tier bucket on screen | REAL-UI | Seed 2 participant metadata docs with `tier: ['tier_id_1']`; rendered tier bucket for `tier_id_1` shows >= 2 names — app computed the grouping from stream | P2 |
 | CN-18 | `/ads` route loads without error (even though click-ads class is commented out — component shell renders) | REAL-UI | Navigate to `/ads`; no fatal console error; URL remains `/ads` (authGuard admitted); empty component renders — app computed the route admission | P2 |
 
+### `/content-upload-v2` — CN-19..CN-20 (added 2026-09-04, coverage-gap pass)
+
+> WHY THESE EXIST: the content suite's `appPaths` glob already claimed `src/app/content-upload-version2/**`,
+> so a change there made the content gate MANDATORY — but no spec ever opened the module's only route.
+> The gate ran green while testing none of it. Same false-green class as comms `/channel-templates`
+> (CN-18..23 there). Found by `scripts/check-route-coverage.mjs`.
+
+**Route:** `/content-upload-v2` → `content-upload-version2/content-upload-version2.component.ts:1`,
+`authGuard`, selector `app-content-upload-version2`. It is a SHELL: a sidebar of child links plus, when
+`isHome` (`router.url === '/content-upload-v2'`, ts:64), a "Content Status Overview" home of 5 cards.
+
+**Firestore surface** — `loadAll()` (ts:71-79) fires five `loadLast()` reads, each
+`getDocs(query(collection, orderBy(<field>,'desc'), limit(1)))` (ts:86-88). Single-field orderBy, no
+composite index:
+
+| Card key | Collection | orderBy field | Seeded by seed-content.js? |
+|---|---|---|---|
+| `solar` | `solar voice audios` | `date` | YES (3 audios, ID.AUD1..3) |
+| `episodes` | `episodes` | `date` | YES |
+| `ads` | `ads` | `startdate` | **NO** — the seed writes `adsplaylist`, a DIFFERENT collection |
+| `health` | `health stories` | `date` | YES |
+| `home` | `content_urls` | `added` | YES |
+
+| ID | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|
+| CN-19 | `/content-upload-v2` home renders a card whose last-item title came from the app's own `orderBy(date desc) limit(1)` read | REAL-UI | The Solar Voice `.card-item` text is `lastItemTitle`, resolved by the app as `title ?? name ?? subject` (ts:98-101) from the ONE doc its own query selected. The seed writes `name`, never a card value. Assert it matches the seeded audio-name pattern — see note 2 on why the exact doc is not pinned. | P1 |
+| CN-20 | The card's "ago" badge is COMPUTED by the app from the seeded timestamp | ORACLE | `daysAgoInfo()` (ts:143-157) derives `Today` / `1 day ago` / `N days ago` from the doc's date. The seed writes `date: now()`, so the app must compute exactly `Today` in `.ago-value`. The test supplies a timestamp, never the label — the label is the app's arithmetic. | P1 |
+
+**Implementation notes:**
+
+1. **`/content-upload-v2` needs a `dashboard` route grant.** `seed-content.js` has an explicit `ROUTES`
+   array (ts:80-93) and this route is NOT in it. Without the grant `authGuard` denies with
+   "No roles or profiles configured for screen: /content-upload-v2" and the component never mounts on a
+   URL that otherwise looks correct — the exact failure that cost a debugging cycle on comms CN-18.
+2. **Do NOT pin CN-19 to a specific audio doc.** All three seeded audios get `date: now()` in a loop, so
+   which one `limit(1)` returns depends on sub-millisecond write ordering. Assert the seeded NAME PATTERN
+   (`TEST_AUDIO_<run>_[123]`) instead — that still proves the app rendered a value from its own query,
+   without encoding a race into the assertion.
+3. **The `ads` card has no data** — the seed writes `adsplaylist`, not `ads`. Its `.card-item` is
+   `*ngIf="s.lastItemTitle"` so the element simply will not exist. Do not assert on the ads card, and do
+   not "fix" this by seeding `ads` — that collection belongs to CN-18's route, not this screen.
+
 ---
 
 ## ATC exclusions within this group
@@ -307,3 +349,103 @@ The following ATC touchpoints were found in this group's source files. Each is e
 9. **`buffermixToRecommendedPlaylist` CF uses `batch.commit` in chunks of 400** — for small N (2 profiles × 1 type = 2 docs), a single batch commit suffices. The `status: 'completed'` written back to the `buffermix archive` doc (content.js:222) is an additional assertable side-effect for CN-15.
 
 10. **`adsseries` route does not appear in the active route table** — the routes for this concept group do not include a standalone `/addseries` child path; it exists only as `seriesdashboard/addseries` (app.routes.ts:109). Navigate as `/seriesdashboard/addseries` in tests for CN-04.
+
+---
+
+# Addendum — 2026-09-07: the ten routes with no test
+
+Same method as the events (2026-09-03), modes and workshops (2026-09-04) addenda: the LIVE `app.routes.ts`
+parsed with comments stripped and `children:` nesting resolved, filtered to this suite's manifest globs,
+intersected with the routes a spec in `content/` actually `page.goto`s **inside a test that runs**.
+Journal: `specs/journals/2026-09-07-content-coverage-audit.md`.
+
+## Coverage baseline this addendum closes
+
+23 top-level content routes on `manoja-development`. Opened by a running test: 12 (7 with a functional
+assertion, 5 mount-smoke only). Opened only by a `test.fixme` (CN-04): `/seriesdashboard/addseries`.
+Never opened: 10 —
+
+| Route | Component | Finding that shapes the test |
+|---|---|---|
+| `/content-upload-v2` | `content-upload-version2` | Read-only shell: 5 "latest item" cards, each `orderBy(field,'desc') limit(1)` over `solar voice audios` / `episodes` / `ads` / `health stories` / `content_urls` (ts:71-104). Cards call `router.navigate([s.route])` with **no `relativeTo`** (ts:129) so they leave the shell for the top-level routes. The sidebar with the nested links is commented out. Nested children are URL-only. |
+| `/content-upload-v2/playlistdashboard/{add,edit}-playlist` | `playlist-configuration` | **Dead route.** The component injects `MatDialogRef` + `MAT_DIALOG_DATA` non-optionally (ts:89-90); routing to it throws `NullInjectorError`. It is the dialog `/playlistdashboard` opens (playlist-dashboard.ts:127-149). The only component in the shell tree that is not also top-level. |
+| `/seriesdashboard/addseries`, `/seriesdashboard/editseries` | `add-series`, `edit-series` | **Dead routes.** Declared as `children` of `seriesdashboard` (routes:120-123) but `series-dashboard.component.html` has **no `<router-outlet>`** (0 hits in the tree). The guard admits, the URL holds, the child never renders. This is why CN-04 was `fixme` since the initial commit: it drives a form that cannot mount. The live create/edit path is `ConfigureseriesdialogComponent` opened by "Create Series" / row edit (series-dashboard.ts:80-96). |
+| `/playlistdashboard/edit-playlist?id=` | `playlist-dashboard/edit` | Reachable by URL only (the dashboard's edit now opens a dialog; the old `navigateByUrl` is commented, playlist-dashboard.ts:110-122). The parent has an outlet and hides its table when the URL contains `edit-playlist` (ts:79-89). `onSubmit` is a **full `setDoc` overwrite that omits `imageurl`** (edit.component.ts:198-207). The duplicate-name check compares against the playlist's **own** name (ts:218-223), so Update is disabled until the name is changed. |
+| `/assigncategory` | `series-dashboard/categoryassign` | **No `canActivate`** (routes:125): any authenticated user reaches it. Live `combineLatest(category, series)`; keeps only `sequence` entries that are `DocumentReference`s to an existing series (ts:86-89); sorts by `localeCompare` (ts:102). Dialog: create writes `setDoc(category/{auto}, {id, category, date: serverTimestamp(), sequence})`, edit writes `updateDoc({sequence})` (assigncategorydialog.ts:175-188). Duplicate-name check is case/whitespace-insensitive (ts:122-131). |
+| `/ads` | `click-ads` | **Correction to Risk #1 / CN-18: the class is LIVE** (`export class ClickAdsComponent` at ts:118; lines 1-82 are an old commented copy). Reads the whole `ads` collection with no client filter; `delete:true` rows still render with badge `Deleted` (html:196-198). Role gate commented out (ts:138,148). `startdate`/`enddate` **must be Timestamps** (`.toDate()` in the template). Dialog create writes `setDoc(ads/{auto}, {...form, docid, image:{}})`; update is keyed on the `docid` **field** (update-ads.ts:444). |
+| `/accessscreen` | `access-screen` | Three tabs. Tier: live `tier`. Assign Series: live `series`, then `getDoc` per `tier[]` ref (N+1); a ref to a missing tier renders chip `Unknown` (ts:126); no `tier` field renders 0 chips. Assign Users: reads collection **`user`** (not `user_data`). Add Tier writes `setDoc(tier/{auto}, {id: auto, tier, ...messages, customersupport: non-blank[], date})` (add-tier.ts:77-97). The Assign Series dialog writes name-keyed refs for untouched selections (assign-series.ts:66-86, `[value]="data.id"` vs prefilled names): a real bug, not driven here. |
+| `/contentupload` | `content-upload` | Live `content_urls orderBy('added','desc')`, **no filter** (`available:false` rows still render, badge `No` + `.deleted`). The row template calls `row.added.toDate()`: a doc without `added` crashes the render. The edit dialog patches the form **inside the `atc taxonomy` snapshot callback** (dialog.ts:100-141; an empty collection still emits once). A metadata-only edit is an `updateDoc` with **zero Storage calls** (dialog.ts:368-418); it needs `type` in {testimonial, event} and `publishdate` on the doc or `myForm` stays invalid. The HLS badge dblclick runs `confirm()` then GETs the **production** `uploadContentToPublitio` (component.ts:153-157): firewalled, never driven. |
+| `/videodashboard/upload` (`?edit=`) | `episodes-dashboard/upload-studio` | New on this branch (absent from `meena-development`). `?edit=<id>` runs `getDoc(episodes/id)` into one job with `files.length===0`; "Save change (1)" then calls `saveEpisode` immediately with **no Storage** (ts:372-378, 424-463): `setDoc(episodes/{id}, {...}, {merge:true})` where every media field falls back to `sourceDoc`. `canDeactivate: pendingUploadsGuard` blocks only while a job is `queued/uploading/paused/finalizing` (guard:9; ts:79,180); with nothing pending it returns `true` synchronously. |
+| `/contentanalytics` | `content-analytics` | Not the same screen as `/content-analytics-dashboard`. Default window is **today minus 7 days .. today**, strict bounds (`>`/`<`), `onSnapshot` ignoring `fromCache` (ts:109-110, 810-821). Duplicate detection key: `${logdate.seconds}_${videoid}_${totaltimespend}_${profileid}`; the 2nd+ doc is flagged `isDuplicate` (ts:831-842), which renders the trash button `title="Delete duplicate"`, which runs `confirm('Are you sure you want to delete this duplicate?')` then `deleteDoc` (ts:977-987). Summary cards: Unique Users = distinct `profileid` over `filteredData` (ts:993-1007). |
+| `/createarenavideoasktemplate` | `arena-video-ask-input` | Reads `event collection` (select, needs `name`) and live `arenavideoask`. Row toggle runs `updateDoc({active})`; when turning ON, a `writeBatch` sets `active:false` on every sibling with the same `eventref.path` (ts:193-220). Submit needs a Storage upload; `active:true` with event "None" throws before `setDoc` (ts:204). Delete is unreachable (`doc` shadowing, column not displayed). The doc id is minted from `content_urls` (ts:148); nothing is written there. |
+
+Also folded in: 5 covered routes are mount-smoke only (`/playlistdashboard`, `/videodashboard`, `/playlistads`,
+`/tieraccessconfig`, `/learningmaterial`); CN-11/12/14 stay `fixme` (out of scope this session).
+
+## Guard finding: `/assigncategory` ships with no `canActivate`
+
+Every other content route declares `canActivate:[authGuard]`; `/assigncategory` (routes:125) does not.
+Same shape as the workshops finding (six unguarded routes, WS-34/35): pinned executably below as CN-46
+(`test.fail()` until the guard is added) with CN-45 as the positive control that proves the participant
+actor really is unprivileged.
+
+## Candidate test cases (addendum)
+
+| ID | Title | Type | Anti-circular basis | Priority |
+|---|---|---|---|---|
+| CN-04 | **(rewritten)** Create Series via the live `ConfigureseriesdialogComponent` on `/seriesdashboard`: `writeBatch.set(series)` + `arrayUnion` on the picked episode | REAL-UI | `queryWhere('series', seriesName==input)` returns 1 doc; `getDoc('episodes', EP1).series` contains the new ref. Both written by the app's batch; the test knows only the input name and the EP1 id | P0 |
+| CN-19 | `/content-upload-v2` renders 5 status cards whose "latest item" equals the newest doc of each collection | REAL-UI | Card text == Admin-SDK `orderBy(field,'desc').limit(1)` on the same collection: two independent readers of the same "latest" | P1 |
+| CN-20 | `/content-upload-v2/playlistdashboard/add-playlist` must mount the Create Playlist form | REAL-UI | **pinned defect** (`test.fail`): `PlaylistConfigurationComponent` is dialog-only; the route throws `NullInjectorError` | P2 |
+| CN-21 | `/seriesdashboard/addseries` and `/editseries` are admitted by the guard (URL holds, no `/login` bounce) | REAL-UI | authGuard resolves the `/seriesdashboard` grant for the child (auth.guard.ts:35) | P2 |
+| CN-22 | `/seriesdashboard/addseries` must render the Add Series form | REAL-UI | **pinned defect** (`test.fail`): the parent has no `<router-outlet>` | P2 |
+| CN-23 | `/assigncategory` rows == category count, sorted; CAT2's chips show only the ref that resolves (dangling ref + string entry hidden) | REAL-UI | Row count vs `countWhere('category')`; chip count vs the Admin-computed `sequence.filter(isRef && exists)`; the two hidden entries are the negative controls for ts:86-89 | P1 |
+| CN-24 | `/assigncategory` Create Category writes a new `category` doc with `id == docId`, trimmed name, `date` Timestamp, `sequence` refs in picked order | REAL-UI | `queryWhere('category', category==name)` returns the 1 doc the dialog wrote; id/date/sequence shape is app-computed | P1 |
+| CN-25 | `/assigncategory` duplicate-name guard: typing an existing name in different case/whitespace disables Save | REAL-UI | The seeded `category` name is the only thing the test knows; the normalisation is the app's (ts:123,129) | P2 |
+| CN-26 | `/ads` rows == `ads` count; the `delete:true` row shows badge `Deleted`, the other `Active` | REAL-UI | Row count vs `countWhere('ads')` (no client filter); badge text vs the seeded flag | P1 |
+| CN-27 | `/ads` Create Ad (no image slots) writes `setDoc` with `docid == doc.id`, `image == {}`, Timestamp dates | REAL-UI | `queryWhere('ads', calltoaction==input)` returns 1 doc; `docid`/`image` are app-derived | P1 |
+| CN-28 | `/accessscreen` Tier tab rows == `tier` count | REAL-UI | vs `countWhere('tier')` | P2 |
+| CN-29 | `/accessscreen` Assign Series tab: SER3 chips == {TIER1, TIER2, `Unknown`}; SER1 (empty `tier`) shows 0 chips | REAL-UI | The `Unknown` chip exists only because the app `getDoc`'d a ref to a missing tier (ts:126): negative control | P1 |
+| CN-30 | `/accessscreen` Assign Users tab reads `user`, not `user_data`: rows == `countWhere('user')`, seeded staff emails absent | REAL-UI | Two collections, one screen; the absent email proves which one | P2 |
+| CN-31 | `/accessscreen` Add Tier writes `setDoc(tier/{auto}, {id: auto, ..., customersupport: blanks stripped})` | REAL-UI | `queryWhere('tier', tier==name)` returns 1; `id == doc.id` and the stripped array are app-computed (add-tier.ts:81-93) | P1 |
+| CN-32 | `/contentupload` rows == `content_urls` count; the `available:false` row still renders with badge `No`; the first row is the newest by `added` | REAL-UI | vs `countWhere('content_urls')`; order vs Admin `orderBy('added','desc').limit(1)` | P1 |
+| CN-33 | `/contentupload` metadata-only edit runs `updateDoc`: title changed, `url`/`thumbnail`/`videoSize` unchanged, **zero Storage requests** | REAL-UI | Post-state via `getDoc`; a `page.route` counter on the Storage host proves no upload happened | P1 |
+| CN-34 | `/videodashboard/upload?edit=EP3` loads the seeded title / reference title / description into the job card | REAL-UI | Values the app read via `getDoc` and rendered; the test knows only the seeded strings | P1 |
+| CN-35 | `/videodashboard/upload?edit=EP3` title-only "Save change (1)" runs `setDoc(merge)`: `title` new, `videoUrl`/`imageUrl`/`srt`/`date` unchanged, `id == doc.id`, zero Storage requests | REAL-UI | Post-state via `getDoc`; Storage route counter | P0 |
+| CN-36 | `/videodashboard/upload` back arrow with nothing pending navigates to `/videodashboard` without the "Uploads in progress" dialog | REAL-UI | `pendingUploadsGuard` returns `true` synchronously when `jobs.some(pending)` is false (guard:9) | P2 |
+| CN-37 | `/playlistdashboard/edit-playlist?id=PLAY2` patches name/description and pre-checks exactly `sequence.length` rows | REAL-UI | Checked-row count vs Admin `sequence.length`; the pre-selection is `ngAferViewInit`'s (ts:153-166) | P1 |
+| CN-38 | edit-playlist Update (renamed) runs `setDoc`: `name` new, `sequence` == the 3 audio refs, `tags` preserved | REAL-UI | Post-state via `getDoc`; refs are app-built from `selection.selected` (ts:198-207) | P1 |
+| CN-39 | edit-playlist Update must preserve `imageurl` | REAL-UI | **pinned defect** (`test.fail`): the payload at edit.component.ts:198 omits it | P2 |
+| CN-40 | `/contentanalytics` Unique Users card == distinct in-window `profileid`s; a 30-day-old doc is excluded | REAL-UI | Card value vs the Admin-computed distinct count over `logdate` in [today-7, today]; the old doc is the negative control for the strict range | P1 |
+| CN-41 | `/contentanalytics` flags exactly one of an identical pair as duplicate; "Duplicates only" shows exactly 1 row | REAL-UI | The pair is seeded identical; the app's key function decides which is 2nd (ts:831-842) | P1 |
+| CN-42 | `/contentanalytics` Delete duplicate (confirm accepted) leaves exactly one of the pair | REAL-UI | `countWhere('content analytics', profileid==dup)` goes 2 to 1; **dialog trap**: without `page.on('dialog')` confirm() auto-dismisses and the test would pass on a no-op | P1 |
+| CN-43 | `/createarenavideoasktemplate` event select == seeded events + "None"; rows == `arenavideoask` count | REAL-UI | Option count vs `countWhere('event collection')+1`; rows vs `countWhere('arenavideoask')` | P2 |
+| CN-44 | toggle VA3 Active ON: VA3 `active:true`, siblings VA1/VA2 `active:false` (batch), VA4 (other event) untouched | REAL-UI | Post-state via `getDoc` x4; VA4 is the negative control for the `eventref.path` partition (ts:203-220) | P1 |
+| CN-45 | Positive control: a seeded participant is bounced off every guarded content route (`/ads`, `/accessscreen`, `/contentanalytics`, `/createarenavideoasktemplate`) | REAL-UI | Landing pathname != route; proves the actor is unprivileged | P1 |
+| CN-46 | The same participant must be bounced off `/assigncategory` | REAL-UI | **pinned defect** (`test.fail`): routes:125 has no `canActivate` | P1 |
+
+## Additional seed requirements (seed-content.js)
+
+- **participant actor** `participant0+<run>@example.com` (roles `['participant']`, full auth chain): CN-45/46.
+- **grants** for `/ads`, `/accessscreen`, `/contentanalytics`, `/assigncategory`, `/createarenavideoasktemplate`,
+  `/content-upload-v2` (`/videodashboard/upload`, `/playlistdashboard/edit-playlist`, `/seriesdashboard/*`
+  are authorised through their first segment, auth.guard.ts:35).
+- `series` **SER3** `type:'tier'`, `tier: [ref TIER1, ref TIER2, ref tier/<dangling>]`: CN-29 negative control.
+- `category` **CAT2** with `sequence: [ref series/SER1, ref series/<dangling>, 'not-a-ref']`: CN-23 negative controls.
+- `ads` **ADS_A** (`delete:false`) + **ADS_B** (`delete:true`), Timestamp `startdate`/`enddate`, `docid == id`.
+- `user` **USR1, USR2** (`username`, `email`, `tier: []`): CN-30.
+- `content_urls` **CU1** gains `type:'event'`, `publishdate` (edit-form validity); **CU2** `available:false`, `added` 2 days ago.
+- `episodes` **EP3** with `srt`, `screenshot`, `reftitle`: the upload-studio edit subject (CN-34/35); reset per run.
+- `solar voice playlist` **PLAY2** with `imageurl`, `tags:['<tag>']`, `sequence` = 3 audios: CN-37/38/39; reset per run.
+- `content analytics` **duplicate pair** (identical `logdate`/`videoid`/`totaltimespend`/`profileid`) + one doc with `logdate` 30 days ago: CN-40/41/42; the pair is re-created per run.
+- `event collection` **EV1, EV2** (`name`); `arenavideoask` **VA1..VA4** (`docid`, `eventref`, `active`): CN-43/44; VA1-3 reset per run.
+- The teardown list grows by `ads`, `user`, `event collection`, `arenavideoask`.
+
+## Additional risks / unknowns
+
+11. **Three dead routes are now pinned, not papered over.** `/seriesdashboard/addseries`, `/seriesdashboard/editseries` (no outlet) and `/content-upload-v2/playlistdashboard/*` (dialog-only component) fail today under `test.fail()`; the moment someone adds the outlet or makes the injections optional, Playwright reports "expected to fail, but passed" and the `test.fail()` line must be removed.
+12. **`/assigncategory` unguarded.** CN-46 is the executable alarm; adding `canActivate:[authGuard]` at routes:125 flips it green.
+13. **edit-playlist drops `imageurl` on Update** (edit.component.ts:198-207): CN-39 pinned.
+14. **Assign Series writes name-keyed tier refs** for untouched selections (assign-series.ts:66-86): documented, not driven; a write-path test there would corrupt SER3's `tier` refs.
+15. **`/contentupload` and `/ads` templates throw on non-Timestamp dates.** Every seeded `added`/`startdate`/`enddate` is a `Timestamp`; never seed a string.
+16. **Storage is exercised only through the existing `installStorageStub`** (simple `uploadBytes` POST + `getDownloadURL` GET), which CN-04's thumbnail needs. Every other write-path case takes a no-upload path and asserts a zero-request counter on `firebasestorage.googleapis.com`; the `uploadBytesResumable` protocol used by content-upload and upload-studio is not stubbed.
+17. **`atc taxonomy` stays unseeded** (operator rule). Screens that read it render empty tag chips; the content-upload edit dialog still patches because an empty `collectionSnapshots` emits once.

@@ -58,6 +58,17 @@ export const journeyIds = {
   // deep
   PJP_ONB: `${RUN}_PJP_ONB`, SL1: `${RUN}_SL1`,
   DF1: `${RUN}_DF1`, APT1: `${RUN}_APT1`, EMT1: `${RUN}_EMT1`,
+  // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks). Mirrors seed-journey.js.
+  JOD1: `${RUN}_JOD1`, JOD2: `${RUN}_JOD2`,
+  // sales_teams rows (JP-23 / JP-24). Mirrors seed-journey.js.
+  ST1: `${RUN}_ST1`, ST2: `${RUN}_ST2`,
+};
+
+/** The seeded sales-team names, exactly as seed-journey.js writes them. */
+export const salesTeamNames = {
+  alpha: `TEST Team Alpha ${RUN}`,
+  /** Seeded WITHOUT a `members` array on purpose — exercises the service's Array.isArray fallback to []. */
+  beta: `TEST Team Beta ${RUN}`,
 };
 export const journeyNames = {
   journey1: `Test Journey ${RUN}`,

@@ -27,6 +27,7 @@
 // initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
 // FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
 const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
+const { LIST_IDS, SEEDED_LISTS, seedListsSegmentsTags } = require('./seed-lists-segments-tags');
 
 const TESTRUNID = process.env.PROF_RUNID || 'prof';
 
@@ -109,6 +110,11 @@ const ROUTES = [
   // deep cases reach the evolution-summary route directly (it is normally a menu-button navigation from
   // analytics). The data-driven authGuard needs a dashboard grant or it shows "Contact Admin" and bounces.
   { route: '/participant-evolution-summary', label: 'Participant Evolution Summary' },
+  // profilelist: grants RENDER + the Update Role path (users_roles, default DB) only.
+  // Its deleteProfile is NOT gate-testable and must not be driven: the pre-flight guard queries hit the
+  // `firestore-atc` named DB (atc_alpha), which this project never touches, plus `firestore-forms`
+  // (the same multi-db emulator limitation that skips PA-13/PA-14). See journal 2026-09-02 V-03.
+  { route: '/profilelist', label: 'Profile List' },
 ];
 
 async function seedProfiles() {
@@ -282,6 +288,11 @@ async function seedProfiles() {
       formsByClient: 1, appflowbreaks: 2, productCfProducts: 1,
     },
   };
+  // 10) LISTS / SEGMENTS / TAGS / interim-crossover for the dialog suites (PA-20..PA-43).
+  //     queueChain defaults FALSE so this seeder writes NOTHING into the queue suite collections;
+  //     LIST_B is made live via the list's own live:true flag instead (the second of the two
+  //     independent live paths in getMergeConflicts). See seed-lists-segments-tags.js.
+  await seedListsSegmentsTags(db, tag, PF);
 }
 
 // Collections this seed writes (for teardown). formsByClient lives in the forms DB — swept separately.
@@ -317,7 +328,7 @@ async function teardownProfiles() {
   return n;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, seedProfiles, teardownProfiles };
+module.exports = { TESTRUNID, ID, LIST_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, seedProfiles, teardownProfiles };
 
 if (require.main === module) {
   const mode = process.argv[2];
