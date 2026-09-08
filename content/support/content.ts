@@ -15,6 +15,8 @@ export const PASSWORD = 'Test!1234';
 /** Seeded content actor (seed-content.js roster) — admin+ah super-role passes every content guard. */
 export const contentActors = {
   admin: `admin+${RUN}@example.com`,
+  /** participant-ONLY actor (no content grants) — the unprivileged actor for CN-45/46 (route guards). */
+  participant0: `participant0+${RUN}@example.com`,
 };
 
 /** Seeded ids the specs assert the app's reads/writes against. Keep in sync with seed-content.js ID. */
@@ -35,7 +37,17 @@ export const contentIds = {
   J1: `${RUN}_J1`, PR1: `${RUN}_PR1`, BL1: `${RUN}_BL1`,
   // CN-06/07 CF subjects the deep spec seeds+mutates itself (gated: content CFs not deployed).
   EPHLS: `${RUN}_EPHLS`, CUHLS: `${RUN}_CUHLS`,
+  // ---- 2026-09-07 addendum (CN-19…CN-46) — keep in sync with seed-content.js ID ----
+  EP3: `${RUN}_EP3`, SER3: `${RUN}_SER3`, CAT2: `${RUN}_CAT2`, PLAY2: `${RUN}_PLAY2`, CU2: `${RUN}_CU2`,
+  ADSA: `${RUN}_ADSA`, ADSB: `${RUN}_ADSB`,
+  USR1: `${RUN}_USR1`, USR2: `${RUN}_USR2`,
+  EV1: `${RUN}_EV1`, EV2: `${RUN}_EV2`,
+  VA1: `${RUN}_VA1`, VA2: `${RUN}_VA2`, VA3: `${RUN}_VA3`, VA4: `${RUN}_VA4`,
+  MISSING_TIER: `${RUN}_MISSING_TIER`, MISSING_SERIES: `${RUN}_MISSING_SERIES`,
+  CA_DUP_A: `${RUN}_ca_dup_a`, CA_DUP_B: `${RUN}_ca_dup_b`, CA_OLD: `${RUN}_ca_old`,
 };
+/** The /contentanalytics duplicate-pair profile (CN-40/41/42). */
+export const analyticsDupProfile = `${RUN}_ca_dup`;
 
 /** Seeded run-unique TEXT the specs match MatTable rows by (most content screens have no data-testid). */
 export const contentText = {
@@ -47,6 +59,23 @@ export const contentText = {
   health: `TEST_HEALTH_${RUN}`,
   ad: `TEST_AD_${RUN}`,
   buffermix: `TEST_BUF_${RUN}`,
+  // ---- 2026-09-07 addendum ----
+  seriesTier: `TEST_SERIES_TIER_${RUN}`,
+  category2: `TEST_CAT2_${RUN}`,
+  playlist2: `TEST_PLAYLIST2_${RUN}`,
+  episode3Title: `TEST_EPISODE_${RUN}_3`,
+  episode3Ref: `TEST_REF_${RUN}_3`,
+  content1: `TEST_CONTENT_${RUN}`,
+  content2: `TEST_CONTENT2_${RUN}`,
+  ctaActive: `TEST_CTA_${RUN}_ACTIVE`,
+  ctaDeleted: `TEST_CTA_${RUN}_DELETED`,
+  tierBasic: `TEST_TIER_BASIC_${RUN}`,
+  tierPrem: `TEST_TIER_PREM_${RUN}`,
+  user1: `TEST_USER_${RUN}_1`,
+  user2: `TEST_USER_${RUN}_2`,
+  event1: `TEST_EVENT_${RUN}_1`,
+  event2: `TEST_EVENT_${RUN}_2`,
+  videoAsk: (n: number) => `TEST_VIDEOASK_${RUN}_${n}`,
 };
 
 /** Seeded content-analytics profileids (3 solarvoice-only, 2 eiflix-only). */
@@ -267,3 +296,94 @@ export async function resetHlsContentUrl(): Promise<string> {
   });
   return contentIds.CUHLS;
 }
+
+// =====================================================================================================
+// 2026-09-07 addendum — helpers for CN-19…CN-46 (recon-allcomp/content.md → "Addendum — 2026-09-07").
+// =====================================================================================================
+
+/** Log in as the participant-ONLY actor (no content grants) — CN-45/46 route-guard cases. */
+export async function loginAsContentParticipant(page: Page): Promise<void> {
+  await loginAs(page, contentActors.participant0, PASSWORD);
+}
+
+// The seed-time doc factories live in seed-content.js so a reset writes the SAME bytes the seed wrote.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const contentSeed = require('../seed-content');
+
+function adminHandles() {
+  const admin = seed.initAdmin();
+  return { admin, db: admin.firestore(), T: admin.firestore.Timestamp };
+}
+
+/**
+ * Count requests the page makes to Firebase Storage. Several write-path cases (CN-33, CN-35) take a
+ * deliberately upload-free path; asserting `count() === 0` afterwards is what proves the app really
+ * skipped Storage rather than uploading to a stub. Attach BEFORE navigating.
+ */
+export function countStorageRequests(page: Page): () => number {
+  let n = 0;
+  page.on('request', (r) => { if (/firebasestorage\.googleapis\.com/i.test(r.url())) n++; });
+  return () => n;
+}
+
+// ---- CN-34/35: upload-studio metadata-only edit subject ---------------------------------------------
+/** Restore EP3 to its seed-time shape (title/media fields). PRECONDITION write only — CN-35 asserts the
+ *  app's setDoc(merge) post-state, never this. */
+export async function resetEpisodeEdit(): Promise<void> {
+  const { db, T } = adminHandles();
+  await db.collection('episodes').doc(contentIds.EP3).set(contentSeed.addendumDocs(db, T).episode3());
+}
+
+// ---- CN-37/38/39: edit-playlist subject ------------------------------------------------------------
+/** Restore PLAY2 (name, sequence, imageurl, tags). CN-38 renames it; CN-39 asserts imageurl survival. */
+export async function resetPlaylistEdit(): Promise<void> {
+  const { db, T } = adminHandles();
+  await db.collection('solar voice playlist').doc(contentIds.PLAY2).set(contentSeed.addendumDocs(db, T).playlist2());
+}
+
+// ---- CN-33: /contentupload metadata-only edit subject ----------------------------------------------
+/** Restore CU1's title (CN-33 renames it). Merge — every other seeded field stays as the seed wrote it. */
+export async function resetContentUrlTitle(): Promise<void> {
+  const { db } = adminHandles();
+  await db.collection('content_urls').doc(contentIds.CU1).set({ title: contentText.content1 }, { merge: true });
+}
+
+// ---- CN-40/41/42: /contentanalytics duplicate pair -------------------------------------------------
+/** Re-create the IDENTICAL pair from ONE factory call (both share the same logdate seconds). CN-42
+ *  deletes one of them through the UI, so this runs before every case that needs the pair intact. */
+export async function resetAnalyticsDuplicates(): Promise<void> {
+  const { db, T } = adminHandles();
+  const D = contentSeed.addendumDocs(db, T);
+  const col = db.collection('content analytics');
+  await col.doc(contentIds.CA_DUP_A).delete().catch(() => {});
+  await col.doc(contentIds.CA_DUP_B).delete().catch(() => {});
+  await col.doc(contentIds.CA_DUP_A).set(D.analyticsDup('a'));
+  await col.doc(contentIds.CA_DUP_B).set(D.analyticsDup('b'));
+}
+
+// ---- CN-44: arenavideoask active flags ---------------------------------------------------------------
+/** Restore the seed-time `active` flags (VA1 on, VA2 on, VA3 OFF, VA4 on). CN-44 toggles VA3 on and
+ *  asserts the app's sibling deactivation; the flags are the precondition, never the assertion. */
+export async function resetVideoAskActives(): Promise<void> {
+  const { db } = adminHandles();
+  const col = db.collection('arenavideoask');
+  await col.doc(contentIds.VA1).set({ active: true }, { merge: true });
+  await col.doc(contentIds.VA2).set({ active: true }, { merge: true });
+  await col.doc(contentIds.VA3).set({ active: false }, { merge: true });
+  await col.doc(contentIds.VA4).set({ active: true }, { merge: true });
+}
+
+// ---- app-created docs from the create dialogs (no testrunid → matched by their natural key) ---------
+async function deleteWhere(collection: string, field: string, value: string): Promise<void> {
+  const { db } = adminHandles();
+  const snap = await db.collection(collection).where(field, '==', value).get();
+  const batch = db.batch();
+  snap.docs.forEach((d) => batch.delete(d.ref));
+  await batch.commit();
+}
+/** CN-24: delete any `category` doc a prior run's Create Category dialog wrote under this name. */
+export async function deleteCreatedCategory(name: string): Promise<void> { await deleteWhere('category', 'category', name); }
+/** CN-31: delete any `tier` doc a prior run's Add Tier dialog wrote under this name. */
+export async function deleteCreatedTier(name: string): Promise<void> { await deleteWhere('tier', 'tier', name); }
+/** CN-27: delete any `ads` doc a prior run's Create Ad dialog wrote under this call-to-action. */
+export async function deleteCreatedAd(calltoaction: string): Promise<void> { await deleteWhere('ads', 'calltoaction', calltoaction); }
