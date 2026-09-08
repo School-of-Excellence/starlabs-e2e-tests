@@ -137,6 +137,11 @@ const ROUTES = [
   { route: '/salesleads', label: 'Sales Leads' },             // JP-10 reject
   { route: '/productdelivery', label: 'Product Delivery' },   // product-delivery render + entry to deliverysequence authoring
   { route: '/journeyonboardingdetail', label: 'Journey Onboarding Detail' },  // JP-18 / JP-19
+  // 2026-09-08 coverage pass. Both read only collections this seed already writes
+  // (participantjourneyproduct / users_roles for opportunities; journey / salesleads for sales-report),
+  // so they need a grant and no new fixture data.
+  { route: '/opportunities', label: 'Opportunities Dashboard' },              // JP-20
+  { route: '/sales-report', label: 'Sales Report' },                          // JP-21
 ];
 
 async function seedJourney() {
