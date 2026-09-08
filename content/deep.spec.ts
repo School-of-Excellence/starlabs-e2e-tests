@@ -55,10 +55,14 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
   test.afterEach(() => assertNoFatal(guard, 'content deep: no fatal console errors / pageerrors'));
 
   // ===========================================================================================
-  // CN-04 — create series: the multi-field form + an episode pick + a thumbnail (Storage stubbed)
-  //          → writeBatch.set(series) AND each picked episode's series[] arrayUnion gains the new ref
+  // CN-04 — create series via the LIVE path: /seriesdashboard "Create Series" opens
+  //          ConfigureseriesdialogComponent → writeBatch.set(series) AND each picked episode's series[]
+  //          arrayUnion gains the new ref (configureseriesdialog.component.ts:318-341).
+  //          REWRITTEN 2026-09-07: the original drove /seriesdashboard/addseries, a child route whose parent
+  //          has no <router-outlet> — the form it filled can never mount, which is why this sat under
+  //          test.fixme since the initial commit. That route is pinned in series-child-routes.spec.ts (CN-22).
   // ===========================================================================================
-  test.fixme('CN-04 add-series writeBatch creates the series and arrayUnions it onto the picked episode', async ({ page }) => {
+  test('CN-04 Create Series (live dialog) writeBatch-creates the series and arrayUnions it onto the picked episode', async ({ page }) => {
     const NEW_SERIES = `NEW_SERIES_${RUN}_${Date.now()}`; // run-unique → re-runs never collide
 
     // Preconditions (idempotent): EP1.series empty; no prior app-created series with this name.
@@ -68,33 +72,32 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     expect(await countWhere('series', [['seriesName', '==', NEW_SERIES]]), 'CN-04: name unused pre-submit').toBe(0);
 
     await loginAsContentAdmin(page);
-    await page.goto('/seriesdashboard/addseries', { waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(/addseries/, { timeout: 30_000 });
+    await page.goto('/seriesdashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/seriesdashboard$/, { timeout: 30_000 });
+    await page.locator('button.btn-primary', { hasText: 'Create Series' }).click();
+    const dialog = page.locator('mat-dialog-container');
+    await expect(dialog).toBeVisible({ timeout: 20_000 });
 
-    // [REAL-UI] fill name (required, minlength 4) + description (required).
-    await page.getByPlaceholder('Series').first().fill(NEW_SERIES);
-    await page.getByPlaceholder('Description').first().fill('e2e created series');
+    // [REAL-UI] name (required, minlength 4) + description (required, minlength 6).
+    await dialog.locator('input[name="seriesName"]').fill(NEW_SERIES);
+    await dialog.locator('input[name="description"]').fill('e2e created series');
+    // Access Type defaults to 'tier' (ts:70), which makes the Tier select required. 'free' keeps this case
+    // about the batch, not tiers: for a non-tier series the app writes tier: [] (ts:328).
+    await openSelect(page, dialog.locator('mat-select[name="type"]'));
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: /^s*Frees*$/ }).click();
+    // Pick the seeded EP1 in the episode multi-select — the only .cat-select left once type != 'tier'.
+    await openSelect(page, dialog.locator('mat-select.cat-select'));
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: `TEST_EPISODE_${RUN}_1` }).first().click();
+    await page.keyboard.press('Escape');
+    await expect(dialog.locator('.drag-item'), 'CN-04: the picked episode is in the sequence list').toHaveCount(1);
+    // The thumbnail is REQUIRED in create mode (html: `!isEditMode && !thumbImageFile` disables Submit). The
+    // hero zone's hidden input comes first, the thumbnail zone's second (html:96 / :120). Storage is stubbed
+    // (installStorageStub) so the batch's uploadBytes + getDownloadURL resolve without a real object.
+    await dialog.locator('input[type="file"][accept="image/*"]').nth(1).setInputFiles(TINY_PNG);
 
-    // Tier mat-select (required, multiple) → pick the seeded Basic tier.
-    await openSelect(page, page.locator('mat-select[name="Tier"]'));
-    await page.getByRole('option', { name: new RegExp(`TEST_TIER_BASIC_${RUN}`) }).click();
-    await page.keyboard.press('Escape'); // close the multi-select overlay
-
-    // Thumbnail: the Submit button is disabled while image==null. Set the (required) main image input.
-    // The second file input is "Choose an Image" (previewImage → this.image). Storage is stubbed so the
-    // batch's uploadBytes resolves without creating a real object.
-    const imageInput = page.locator('input[type="file"]').nth(1);
-    await imageInput.setInputFiles(TINY_PNG);
-
-    // Filter the episode table to THIS run's episodes and select EP1's row checkbox.
-    await page.getByPlaceholder('Filter by name').fill(`TEST_EPISODE_${RUN}`);
-    const epRow = page.locator(ROW).filter({ hasText: `TEST_EPISODE_${RUN}_1` });
-    await expect(epRow, 'CN-04: the seeded EP1 row lists for selection').toBeVisible({ timeout: 30_000 });
-    await epRow.locator('mat-checkbox, input[type="checkbox"]').first().click();
-
-    // Submit → onUpload writes the batch (add-series.component.ts:255-262).
-    const submit = page.getByRole('button', { name: /^Submit$/i });
-    await expect(submit, 'CN-04: Submit enables once form valid + image + a row selected').toBeEnabled({ timeout: 20_000 });
+    // Submit → onSubmit builds the writeBatch (ts:318-341). No window.confirm on this path.
+    const submit = dialog.locator('button.btn-primary', { hasText: /^Submit$/ });
+    await expect(submit, 'CN-04: Submit enables once form valid + thumbnail + unique name').toBeEnabled({ timeout: 20_000 });
     await submit.click();
 
     // [ASSERT] the app's batch wrote ONE series doc with this name…
@@ -104,10 +107,15 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
       { label: `CN-04: one series named ${NEW_SERIES}`, timeoutMs: 30_000 },
     );
     const newSeriesId = series[0].id;
-    expect((series[0] as any).seriesName, 'CN-04: app wrote the input series name').toBe(NEW_SERIES);
+    const sdoc = series[0] as any;
+    expect(sdoc.seriesName, 'CN-04: app wrote the input series name').toBe(NEW_SERIES);
+    expect(sdoc.id, 'CN-04: id field == doc id (ts:323-325)').toBe(newSeriesId);
+    expect(sdoc.type, 'CN-04: the chosen access type').toBe('free');
+    expect(sdoc.tier, 'CN-04: a non-tier series carries an empty tier[]').toEqual([]);
+    expect(sdoc.order, 'CN-04: new series start at order 1').toBe(1);
 
     // …and the SAME batch arrayUnion'd the new series ref onto the picked episode's series[] (the app
-    // COMPUTED the ref from MY row pick; the test only knows the episode id + the new series id).
+    // COMPUTED the ref from MY pick; the test only knows the episode id + the new series id).
     const after = await pollUntil(
       () => getDoc('episodes', epId),
       (d) => Array.isArray(d?.series) && (d!.series as any[]).some((r: any) => (r?.id || r?._path?.segments?.slice(-1)[0]) === newSeriesId),

@@ -157,6 +157,10 @@ test.describe('Content — route-mount smoke (guard admits content admin)', () =
     '/audiodashboard', '/playlistdashboard', '/seriesdashboard', '/videodashboard',
     '/category-dashboard', '/healthstories', '/playlistads', '/content-analytics-dashboard',
     '/tieraccessconfig', '/learningmaterial',
+    // 2026-09-07 addendum — the grants seed-content.js added for CN-19…CN-46 (mount only; the functional
+    // cases live in their own spec files).
+    '/contentupload', '/ads', '/accessscreen', '/contentanalytics', '/assigncategory',
+    '/createarenavideoasktemplate', '/content-upload-v2',
   ];
   test('every seeded content route mounts (no /login bounce)', async ({ page }) => {
     await installContentStubs(page);

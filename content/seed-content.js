@@ -52,7 +52,23 @@ const ID = {
   // CN-16 recommended-mix-playlist direct CF subject (RecommendedPlaylistTrigger_to_pmd is a deployed
   //   *_to_pmd CF — seeding ONE recommended-mix doc fires it; assert the participant-metadata merge).
   RMP1: `${TESTRUNID}_RMP1`,
+  // ---- 2026-09-07 addendum (recon-allcomp/content.md → "Addendum — 2026-09-07", CN-19…CN-46) ----
+  EP3: `${TESTRUNID}_EP3`,             // upload-studio edit subject (CN-34/35) — reset per run
+  SER3: `${TESTRUNID}_SER3`,           // type:'tier' with TIER1+TIER2+a DANGLING tier ref (CN-29)
+  CAT2: `${TESTRUNID}_CAT2`,           // category with a resolvable ref + dangling ref + a string (CN-23)
+  PLAY2: `${TESTRUNID}_PLAY2`,         // edit-playlist subject with imageurl + tags (CN-37/38/39) — reset per run
+  CU2: `${TESTRUNID}_CU2`,             // available:false content_urls row (CN-32)
+  ADSA: `${TESTRUNID}_ADSA`, ADSB: `${TESTRUNID}_ADSB`,     // /ads rows: active + delete:true (CN-26)
+  USR1: `${TESTRUNID}_USR1`, USR2: `${TESTRUNID}_USR2`,     // `user` collection rows (CN-30)
+  EV1: `${TESTRUNID}_EV1`, EV2: `${TESTRUNID}_EV2`,         // `event collection` (CN-43/44)
+  VA1: `${TESTRUNID}_VA1`, VA2: `${TESTRUNID}_VA2`, VA3: `${TESTRUNID}_VA3`, VA4: `${TESTRUNID}_VA4`, // arenavideoask
+  // ids that deliberately point at NOTHING — negative controls for the app's dangling-ref filters
+  MISSING_TIER: `${TESTRUNID}_MISSING_TIER`,
+  MISSING_SERIES: `${TESTRUNID}_MISSING_SERIES`,
 };
+// /contentanalytics duplicate-detection subject (CN-40/41/42): one profile, two IDENTICAL log docs
+// (same logdate seconds / videoid / totaltimespend / profileid) + one log 30 days old (outside the window).
+const CA_DUP_PF = `${TESTRUNID}_ca_dup`;
 
 // content-analytics profileids (Flow 8 / CN-08) — 3 solarvoice-only, 2 eiflix-only. Run-scoped so the
 // dashboard's app-computed "only solarvoice" bucket includes EXACTLY these 3 (lower-bound assertion).
@@ -67,12 +83,16 @@ const BUF_PF = [`${TESTRUNID}_buf_p0`, `${TESTRUNID}_buf_p1`];
 const TIER_PF = [`${TESTRUNID}_tier_p0`, `${TESTRUNID}_tier_p1`];
 
 // Actors. The content routes are admin-gated; a single admin+ah super-role passes every guard.
-const PF = { admin: `${TESTRUNID}_pf_admin` };
-const EMAIL = { admin: `admin+${TESTRUNID}@example.com` };
+// p0 is a participant-ONLY actor (full auth chain, NO content grants): the unprivileged actor for the
+// route-guard cases CN-45 (positive control) / CN-46 (the /assigncategory guard gap). Same shape as the
+// workshops roster (seed-workshops.js) so seedAuthChain's participant branch builds its login chain.
+const PF = { admin: `${TESTRUNID}_pf_admin`, p0: `${TESTRUNID}_pf_p0` };
+const EMAIL = { admin: `admin+${TESTRUNID}@example.com`, p0: `participant0+${TESTRUNID}@example.com` };
 
 function roster() {
   const staff = [{ uid: `${TESTRUNID}_u_admin`, profileid: PF.admin, email: EMAIL.admin, role: 'admin', roles: ['admin', 'ah'] }];
-  return { staff, operators: [], participants: [] };
+  const participants = [{ uid: `${TESTRUNID}_u_p0`, profileid: PF.p0, email: EMAIL.p0, role: 'participant', roles: ['participant'] }];
+  return { staff, operators: [], participants };
 }
 
 // Routes the content specs navigate to (each needs a dashboard route-config grant). The authGuard
@@ -90,8 +110,63 @@ const ROUTES = [
   { route: '/viewparticipantstieraccess', label: 'View Participants Tier Access' }, // CN-17
   { route: '/learningmaterial', label: 'Learning Material' },
   { route: '/contentupload', label: 'Content Upload' },
-  { route: '/content-upload-v2', label: 'Content Upload V2' },   // CN-19 / CN-20
+  // 2026-09-07 addendum. authGuard authorises by the FIRST segment (auth.guard.ts:35), so
+  // /videodashboard/upload, /playlistdashboard/edit-playlist and /seriesdashboard/* ride on the grants
+  // above; only these new first segments need their own. NONE is participant-flagged — p0 stays denied.
+  { route: '/ads', label: 'Click Ads' },                                       // CN-26/27
+  { route: '/accessscreen', label: 'Access Management' },                      // CN-28..31
+  { route: '/contentanalytics', label: 'Content Analytics' },                  // CN-40..42
+  { route: '/assigncategory', label: 'Category Assignment' },                  // CN-23..25 (route is UNGUARDED — grant is for symmetry)
+  { route: '/createarenavideoasktemplate', label: 'Arena VideoAsk Templates' },// CN-43/44
+  { route: '/content-upload-v2', label: 'Content Home (v2 shell)' },           // CN-19/20
 ];
+
+// ---- 2026-09-07 addendum: doc factories SHARED with content/support/content.ts reset helpers -----------
+// Each returns the SEED-TIME shape of a doc that a write-path case mutates, so a spec can restore the
+// precondition idempotently — the same bytes the seed wrote, never the value the test asserts.
+function addendumDocs(db, T) {
+  const tag = TAG(TESTRUNID);
+  const audioRef = (id) => db.collection('solar voice audios').doc(id);
+  const eventRef = (id) => db.collection('event collection').doc(id);
+  const now = () => T.now();
+  // ONE fixed instant for the duplicate pair: the app's duplicate key is `${logdate.seconds}_…` (ts:831-842),
+  // so both docs must carry the SAME seconds value. Whole-second so re-seeds can never drift by millis.
+  const dupLogdate = T.fromMillis(Math.floor((Date.now() - 86400e3) / 1000) * 1000);
+  return {
+    /** CN-34/35 subject: carries every media field so a title-only save has fields to leave UNCHANGED. */
+    episode3: () => ({
+      docid: ID.EP3, id: ID.EP3, title: `TEST_EPISODE_${TESTRUNID}_3`, reftitle: `TEST_REF_${TESTRUNID}_3`,
+      description: 'seed episode 3 (upload-studio edit subject)',
+      videoUrl: 'https://example.com/ep3.mp4', imageUrl: 'https://example.com/ep3.jpg',
+      screenshot: 'https://example.com/ep3-shot.jpg', srt: 'https://example.com/ep3.srt',
+      videoSizeBytes: 1000, videoSize: '0.00 MB', imagesize: 10, duration: '01:00', tags: [],
+      convertedtohls: true, series: [], date: now(), ...tag,
+    }),
+    /** CN-37/38/39 subject: imageurl + tags present so the overwrite bug (edit.component.ts:198) is observable. */
+    playlist2: () => ({
+      docid: ID.PLAY2, id: ID.PLAY2, name: `TEST_PLAYLIST2_${TESTRUNID}`, description: 'seed playlist 2 (edit-playlist subject)',
+      sequence: [audioRef(ID.AUD1), audioRef(ID.AUD2), audioRef(ID.AUD3)],
+      imageurl: 'https://example.com/play2.jpg', tags: [`${TESTRUNID}_tag1`], private: false, date: now(), ...tag,
+    }),
+    /** CN-40/41/42: the two IDENTICAL logs (which = 'a' | 'b') — only the doc id differs. */
+    analyticsDup: (which) => ({
+      docid: `${TESTRUNID}_ca_dup_${which}`, profileid: CA_DUP_PF, type: 'solarvoice', platform_name: 'SolarVoice',
+      videoid: `${TESTRUNID}_vid_dup`, videoname: 'TEST_VID_dup', totaltimespend: 300, totalruntime: 600,
+      status: 'incomplete', logdate: dupLogdate, ...tag,
+    }),
+    /** CN-40 negative control: 30 days old — outside the screen's default 7-day window AND CN-08's 9-day one. */
+    analyticsOld: () => ({
+      docid: `${TESTRUNID}_ca_old`, profileid: `${TESTRUNID}_ca_oldpf`, type: 'solarvoice', platform_name: 'SolarVoice',
+      videoid: `${TESTRUNID}_vid_old`, videoname: 'TEST_VID_old', totaltimespend: 300, totalruntime: 600,
+      status: 'incomplete', logdate: T.fromMillis(Date.now() - 30 * 86400e3), ...tag,
+    }),
+    /** CN-43/44: an arenavideoask row. `docid` is what the toggle/batch key on (ts:197,208), NOT doc.id. */
+    videoAsk: (id, eventId, active, n) => ({
+      docid: id, createddate: now(), title: `TEST_VIDEOASK_${TESTRUNID}_${n}`, description: 'seed video ask',
+      active, eventref: eventRef(eventId), questiontype: 'image', questionurl: 'https://example.com/q.png', ...tag,
+    }),
+  };
+}
 
 async function seedContent() {
   const admin = initAdminAuto();
@@ -122,9 +197,11 @@ async function seedContent() {
 
   // 3) AUDIO (Flow 1-2): 3 audios with run-unique names. url is a harmless example.com mp3 (read-path
   //    only — never played to completion in the render test; no Storage upload needed).
+  //    `id` (== doc id) is REQUIRED by /playlistdashboard/edit-playlist, which keys its audio map on the data
+  //    field `id`, not doc.id (edit.component.ts:90-94) — without it CN-37's pre-selection resolves nothing.
   for (const id of [ID.AUD1, ID.AUD2, ID.AUD3]) {
     await audioRef(id).set({
-      docid: id, name: `TEST_AUDIO_${TESTRUNID}_${id.slice(-1)}`, description: 'seed audio',
+      docid: id, id, name: `TEST_AUDIO_${TESTRUNID}_${id.slice(-1)}`, description: 'seed audio',
       url: 'https://example.com/test.mp3', imageUrl: '', duration: 60, size: '1.2 MB',
       tags: [], date: now(), ...tag,
     });
@@ -157,9 +234,27 @@ async function seedContent() {
     docid: ID.SER2, seriesName: `TEST_SERIES_EXCL_${TESTRUNID}`, type: 'exclusive',
     sequence: [episodeRef(ID.EP2)], tier: [], category: ID.CAT1, order: 1, date: now(), ...tag,
   });
+  // 6b) SER3 (CN-29): a `tier`-typed series whose tier[] holds TWO real tier refs and ONE ref to a tier doc
+  //     that does not exist. /accessscreen's Assign-Series tab getDoc()s each ref and renders `Unknown` for
+  //     the missing one (access-screen.component.ts:126) — the negative control that proves the lookup ran.
+  //     type:'tier' keeps CN-05's `free` count untouched.
+  const tierRef = (id) => db.collection('tier').doc(id);
+  await db.collection('series').doc(ID.SER3).set({
+    docid: ID.SER3, id: ID.SER3, seriesName: `TEST_SERIES_TIER_${TESTRUNID}`, type: 'tier',
+    sequence: [episodeRef(ID.EP2)], tier: [tierRef(ID.TIER1), tierRef(ID.TIER2), tierRef(ID.MISSING_TIER)],
+    category: ID.CAT1, order: 2, date: now(), ...tag,
+  });
 
   // 7) CATEGORY (Flow 9).
   await db.collection('category').doc(ID.CAT1).set({ id: ID.CAT1, category: `TEST_CAT_${TESTRUNID}`, date: now(), ...tag });
+  // 7b) CAT2 (CN-23): sequence holds a ref that resolves (SER1), a ref to a series that does NOT exist, and a
+  //     plain string. /assigncategory keeps only DocumentReference entries whose target exists
+  //     (categoryassign.component.ts:86-89) → exactly ONE chip. category-dashboard never reads `sequence`.
+  const seriesRef = (id) => db.collection('series').doc(id);
+  await db.collection('category').doc(ID.CAT2).set({
+    id: ID.CAT2, category: `TEST_CAT2_${TESTRUNID}`, date: now(),
+    sequence: [seriesRef(ID.SER1), seriesRef(ID.MISSING_SERIES), 'not-a-ref'], ...tag,
+  });
 
   // 8) TIERS + TIER ACCESS CONFIG (Flow 10): 2 tiers + one config row.
   //    TIER1.order set so /viewparticipantstieraccess (CN-17) sorts the bucket deterministically.
@@ -196,9 +291,20 @@ async function seedContent() {
   // 11) CONTENT_URLS (referenced by playlist-ads contentMap; convertedtohls:true so the
   //     generalContentUpdate CF stays a no-op). title run-unique. CU1 also backs CN-14's adstrailer +
   //     ads-playlist selects (the create-ad dialog reads content_urls.title/url/docid).
+  //     2026-09-07: CU1 also carries `type` + `publishdate` — the /contentupload edit dialog's template-driven
+  //     form has a REQUIRED radio (type) and a REQUIRED date; without them a metadata-only edit (CN-33) can
+  //     never submit. CU2 is `available:false` (CN-32: the screen has NO availability filter — it must still
+  //     render, badge "No") and older, so CU1 stays the newest by `added` for the v2 shell card (CN-19).
   await contentUrlRef(ID.CU1).set({
     docid: ID.CU1, title: `TEST_CONTENT_${TESTRUNID}`, url: 'https://example.com/test.mp4',
-    thumbnail: 'https://example.com/test.jpg', convertedtohls: true, available: true, added: now(), ...tag,
+    thumbnail: 'https://example.com/test.jpg', convertedtohls: true, available: true, added: now(),
+    type: 'event', publishdate: now(), hero: false, tags: [], duration: null,
+    videoSizeBytes: 1000, videoSize: '0.00 MB', thumbnailsize: null, ...tag,
+  });
+  await contentUrlRef(ID.CU2).set({
+    docid: ID.CU2, title: `TEST_CONTENT2_${TESTRUNID}`, url: 'https://example.com/test2.mp4',
+    thumbnail: 'https://example.com/test2.jpg', convertedtohls: true, available: false, added: recent(2),
+    type: 'testimonial', publishdate: recent(2), hero: false, tags: [], duration: null, ...tag,
   });
 
   // 16) CN-16 — RecommendedPlaylistTrigger_to_pmd is a DEPLOYED *_to_pmd CF. The spec seeds a fresh
@@ -239,6 +345,13 @@ async function seedContent() {
   let caN = 0;
   for (const pf of ANALYTICS_PF.sv) await db.collection('content analytics').doc(`${TESTRUNID}_ca_${caN++}`).set(mkAnalytics(pf, 'solarvoice', caN));
   for (const pf of ANALYTICS_PF.ei) await db.collection('content analytics').doc(`${TESTRUNID}_ca_${caN++}`).set(mkAnalytics(pf, 'eiflixcontent', caN));
+  // 13b) /contentanalytics (CN-40/41/42): the identical duplicate pair (re-created per run by
+  //      resetAnalyticsDuplicates — CN-42 deletes one) + the 30-day-old out-of-window log. The dup profile is
+  //      solarvoice-only, so CN-08's `>= 3` lower bound still holds.
+  const D = addendumDocs(db, T);
+  await db.collection('content analytics').doc(`${TESTRUNID}_ca_dup_a`).set(D.analyticsDup('a'));
+  await db.collection('content analytics').doc(`${TESTRUNID}_ca_dup_b`).set(D.analyticsDup('b'));
+  await db.collection('content analytics').doc(`${TESTRUNID}_ca_old`).set(D.analyticsOld());
 
   // 14) BUFFERMIX → RECOMMENDED-MIX-PLAYLIST CF chain (Flow 13 / CN-15). Seed the participant metadata
   //     docs first (so RecommendedPlaylistTrigger_to_pmd has a merge target), then the buffermix doc.
@@ -258,12 +371,49 @@ async function seedContent() {
     date: now(), expiredate: future(7), ...tag,
   });
 
+  // ---- 2026-09-07 addendum blocks (CN-19…CN-46) --------------------------------------------------------
+  // 18) EP3 — the upload-studio metadata-only edit subject (CN-34/35). Reset per run (resetEpisodeEdit).
+  await episodeRef(ID.EP3).set(D.episode3());
+
+  // 19) PLAY2 — the /playlistdashboard/edit-playlist subject (CN-37/38/39). Reset per run (resetPlaylistEdit).
+  await db.collection('solar voice playlist').doc(ID.PLAY2).set(D.playlist2());
+
+  // 20) ADS (CN-26/27): one live ad + one soft-deleted ad. /ads has NO client filter, so BOTH must render —
+  //     the delete flag only changes the badge. startdate/enddate MUST be Timestamps (`.toDate()` in the
+  //     template). `docid` == doc id because the edit dialog keys updateDoc on the FIELD (update-ads.ts:444).
+  for (const [id, del] of [[ID.ADSA, false], [ID.ADSB, true]]) {
+    await db.collection('ads').doc(id).set({
+      docid: id, paymentlink: 'https://example.com/pay', deeplinkinternal: '', deeplink: false,
+      calltoaction: `TEST_CTA_${TESTRUNID}_${del ? 'DELETED' : 'ACTIVE'}`, displayscreen: 'home',
+      startdate: now(), enddate: future(7), delete: del, image: {}, ...tag,
+    });
+  }
+
+  // 21) `user` (CN-30): /accessscreen's Assign-Users tab reads the collection literally named `user`, NOT
+  //     `user_data`. Two rows here; the spec asserts the seeded staff email (which lives in user_data) is absent.
+  for (const [id, n] of [[ID.USR1, 1], [ID.USR2, 2]]) {
+    await db.collection('user').doc(id).set({
+      docid: id, username: `TEST_USER_${TESTRUNID}_${n}`, email: `testuser${n}+${TESTRUNID}@example.com`, tier: [], ...tag,
+    });
+  }
+
+  // 22) `event collection` + `arenavideoask` (CN-43/44). Only `name` is read from the event. VA1/VA2/VA3 share
+  //     EV1 (VA3 is the INACTIVE one CN-44 toggles on → the app's batch must flip VA1/VA2 off); VA4 sits on EV2
+  //     and must be UNTOUCHED (the negative control for the eventref.path partition, ts:203-220).
+  await db.collection('event collection').doc(ID.EV1).set({ docid: ID.EV1, name: `TEST_EVENT_${TESTRUNID}_1`, ...tag });
+  await db.collection('event collection').doc(ID.EV2).set({ docid: ID.EV2, name: `TEST_EVENT_${TESTRUNID}_2`, ...tag });
+  await db.collection('arenavideoask').doc(ID.VA1).set(D.videoAsk(ID.VA1, ID.EV1, true, 1));
+  await db.collection('arenavideoask').doc(ID.VA2).set(D.videoAsk(ID.VA2, ID.EV1, true, 2));
+  await db.collection('arenavideoask').doc(ID.VA3).set(D.videoAsk(ID.VA3, ID.EV1, false, 3));
+  await db.collection('arenavideoask').doc(ID.VA4).set(D.videoAsk(ID.VA4, ID.EV2, true, 4));
+
   return {
     TESTRUNID, ID, PF, EMAIL, ANALYTICS_PF, BUF_PF, TIER_PF,
     counts: {
-      audios: 3, playlists: 1, episodes: 2, series: 2, category: 1, tiers: 2, tierAccessConfig: 1,
-      healthStories: 1, ads: 1, learningMaterials: 1, contentAnalytics: 5, buffermix: 1,
+      audios: 3, playlists: 2, episodes: 3, series: 3, category: 2, tiers: 2, tierAccessConfig: 1,
+      healthStories: 1, ads: 1, learningMaterials: 1, contentAnalytics: 8, buffermix: 1,
       journey: 1, products: 1, biglevel: 1, tierParticipants: TIER_PF.length,
+      clickAds: 2, users: 2, events: 2, videoAsks: 4, contentUrls: 2,
     },
   };
 }
@@ -278,6 +428,8 @@ const SEEDED = [
   'journey', 'products', 'biglevel',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
+  // 2026-09-07 addendum
+  'ads', 'user', 'event collection', 'arenavideoask',
 ];
 
 async function teardownContent() {
@@ -292,7 +444,7 @@ async function teardownContent() {
   return n;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, ANALYTICS_PF, BUF_PF, TIER_PF, ROUTES, SEEDED, seedContent, teardownContent };
+module.exports = { TESTRUNID, ID, PF, EMAIL, ANALYTICS_PF, BUF_PF, TIER_PF, CA_DUP_PF, ROUTES, SEEDED, addendumDocs, seedContent, teardownContent };
 
 if (require.main === module) {
   const mode = process.argv[2];

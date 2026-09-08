@@ -1,43 +1,29 @@
-// content-upload-v2.spec.ts — /content-upload-v2 "Content Status Overview" home (REAL-UI, anti-circular).
+// content-upload-v2.spec.ts — /content-upload-v2 (the "Content Home" v2 shell) and its dead nested child.
 //
-// Recon: e2e/recon-allcomp/content.md (CN-19 / CN-20).
+// Recon: e2e/recon-allcomp/content.md "Addendum — 2026-09-07" (CN-19 / CN-20).
 //
-// WHY THIS FILE EXISTS: the content suite's `appPaths` glob already claimed
-// `src/app/content-upload-version2/**`, so a change there made the content gate MANDATORY — but no spec
-// ever opened the module's only route. The gate ran green while testing none of it. Same false-green class
-// as comms /channel-templates. Found by scripts/check-route-coverage.mjs (coverage pass 2026-09-03).
+// The shell reads FIVE collections, each `orderBy(<dateField>,'desc') limit(1)`, and renders one "latest
+// item" card per collection (content-upload-version2.component.ts:71-104). CN-19 asks the Admin SDK the
+// same question independently and compares — two readers of the same "latest", neither written by the test.
 //
-// Anti-circularity: the home's cards are filled by loadAll() -> loadLast(), five independent
-// getDocs(query(collection, orderBy(<field>,'desc'), limit(1))) reads (component ts:71-88). CN-19 asserts
-// the card TEXT the app resolved from the doc ITS OWN query selected (`title ?? name ?? subject`,
-// ts:98-101 — the seed writes `name`, never a card value). CN-20 asserts the "ago" badge, which the app
-// COMPUTES from the doc's timestamp via daysAgoInfo() (ts:143-157) — the test supplies a date, never a
-// label. No case asserts a value the test wrote into the view.
+// CN-20 pins a route that cannot work: `/content-upload-v2/playlistdashboard/add-playlist` loads
+// PlaylistConfigurationComponent, which injects MatDialogRef + MAT_DIALOG_DATA without @Optional
+// (playlist-configuration.component.ts:89-90). Routing to it throws NullInjectorError. `test.fail()` keeps
+// CI green while the defect stands and flips to "expected to fail, but passed" the day it is fixed.
 import { test, expect } from '@playwright/test';
 import { installContentStubs, loginAsContentAdmin } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
-// Must match seed-content.js / support/content.ts exactly — the env var is CONT_RUNID (not CONTENT_RUNID);
-// getting it wrong silently falls back to 'cont' and the seeded-doc lookups quietly find nothing.
-const RUN = process.env.CONT_RUNID || 'cont';
+/** The shell's screens[] (ts:32-38): key → [collection, orderBy field, the field the card shows]. */
+const CARDS: Array<[key: string, collection: string, dateField: string, titleField: string]> = [
+  ['solar', 'solar voice audios', 'date', 'name'],
+  ['episodes', 'episodes', 'date', 'title'],
+  ['health', 'health stories', 'date', 'subject'],
+  ['home', 'content_urls', 'added', 'title'],
+];
 
-/** Navigate to the shell and wait for the component the app mounts (not a bare URL check). */
-async function openContentUploadV2(page: import('@playwright/test').Page): Promise<void> {
-  await page.goto('/content-upload-v2', { waitUntil: 'domcontentloaded' });
-  await expect(page).toHaveURL(/content-upload-v2/, { timeout: 30_000 });
-  await expect(
-    page.locator('app-content-upload-version2'),
-    'content-upload-v2 must mount — if this fails on a correct URL, check that /content-upload-v2 has a ' +
-    'dashboard route grant in seed-content.js ROUTES (authGuard denies unlisted screens)',
-  ).toBeVisible({ timeout: 30_000 });
-}
-
-/** The overview card for one screen title (the .card-title text is static app config). */
-const cardFor = (page: import('@playwright/test').Page, title: string) =>
-  page.locator('.card').filter({ has: page.locator('.card-title', { hasText: new RegExp(`^\\s*${title}\\s*$`) }) });
-
-test.describe('Content — /content-upload-v2 status overview (real UI, anti-circular)', () => {
+test.describe('Content — /content-upload-v2 shell (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
   test.beforeEach(async ({ page }) => {
     guard = attachConsoleGuard(page);
@@ -46,73 +32,68 @@ test.describe('Content — /content-upload-v2 status overview (real UI, anti-cir
   test.afterEach(() => assertNoFatal(guard, 'content-upload-v2: no fatal console errors / pageerrors'));
 
   // ===========================================================================================
-  // CN-19 — the Solar Voice card shows the last-item title from the app's OWN limit(1) read
+  // CN-19 — every status card shows the NEWEST doc of its collection (app orderBy-desc-limit-1)
   // ===========================================================================================
-  test('CN-19 content-upload-v2 home renders the last audio title from its own query', async ({ page }) => {
-    // [PRECONDITION] The seeded audios must exist, or the card would be empty for the wrong reason
-    // (*ngIf="s.lastItemTitle" simply drops the element). Admin-read them; the test never writes here.
-    const audios = await queryWhere('solar voice audios', [['testrunid', '==', RUN]]);
-    expect(
-      audios.length,
-      `CN-19 precondition: seeded solar-voice audios must exist for run ${RUN}`,
-    ).toBeGreaterThan(0);
-
+  test('CN-19 the five status cards show the newest item of each collection', async ({ page }) => {
     await loginAsContentAdmin(page);
-    await openContentUploadV2(page);
+    await page.goto('/content-upload-v2', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/content-upload-v2$/, { timeout: 30_000 });
 
-    // [REAL-UI] isHome is true on the bare route (ts:64), so the overview cards render.
-    const card = cardFor(page, 'Solar Voice');
-    await expect(card, 'CN-19: the Solar Voice card must render').toBeVisible({ timeout: 30_000 });
+    // The shell only shows its cards when router.url === '/content-upload-v2' exactly (ts:63-65).
+    await expect(page.locator('.card'), 'CN-19: five screen cards render').toHaveCount(5, { timeout: 30_000 });
 
-    // [ASSERT] .card-item is `lastItemTitle` — the app resolved it as title ?? name ?? subject from the ONE
-    // doc its orderBy('date','desc') limit(1) query selected. The seed writes `name` only.
-    //
-    // NOT pinned to a specific doc ON PURPOSE: all three seeded audios are written with date: now() in a
-    // loop, so which one limit(1) returns depends on sub-millisecond write ordering. Asserting the seeded
-    // NAME PATTERN proves the app rendered a value from its own query without encoding that race.
-    const item = card.locator('.card-item');
-    await expect(item, 'CN-19: the Solar Voice card must show a last-item title').toBeVisible({ timeout: 30_000 });
-    await expect(
-      item,
-      `CN-19: the card title must be an audio NAME the app read from Firestore (run ${RUN})`,
-    ).toHaveText(new RegExp(`^\\s*TEST_AUDIO_${RUN}_[0-9]+\\s*$`), { timeout: 30_000 });
+    for (const [key, collection, dateField, titleField] of CARDS) {
+      // [INDEPENDENT] the Admin SDK's answer to "newest doc of this collection".
+      const latest = await queryWhere(collection, [], { orderBy: dateField, orderDir: 'desc', limit: 1 });
+      expect(latest.length, `CN-19: ${collection} has at least one doc (seeded)`).toBe(1);
+      const expected = String(latest[0][titleField] ?? '');
+      expect(expected, `CN-19: ${collection} newest doc carries a ${titleField}`).not.toBe('');
 
-    // Cross-check: whatever the app rendered must be one of the seeded names, not arbitrary text.
-    const rendered = (await item.innerText()).trim();
-    const seededNames = audios.map((a) => String(a.name));
-    expect(
-      seededNames,
-      `CN-19: the rendered title "${rendered}" must be one of the seeded audio names`,
-    ).toContain(rendered);
+      // [REAL-UI] the card the app rendered for this screen key (icon class is `icon-<key>`, html:263-302).
+      const card = page.locator('.card').filter({ has: page.locator(`.icon-${key}`) });
+      await expect(card, `CN-19: a card for "${key}" renders`).toHaveCount(1);
+      await expect(
+        card.locator('.card-item'),
+        `CN-19: the "${key}" card shows the newest ${collection} doc's ${titleField} (${expected})`,
+      ).toContainText(expected, { timeout: 30_000 });
+      await expect(card.locator('.card-date'), `CN-19: the "${key}" card shows a date, not the empty state`)
+        .not.toHaveText(/No data available/);
+    }
+
+    // The ads card has no title-ish field (ads docs carry calltoaction, not title/name/subject), so only
+    // the date line is asserted: the seed wrote a Timestamp startdate, so the empty state must not show.
+    const ads = page.locator('.card').filter({ has: page.locator('.icon-ads') });
+    await expect(ads, 'CN-19: the ads card renders').toHaveCount(1);
+    await expect(ads.locator('.card-date'), 'CN-19: the ads card found the newest ad by startdate')
+      .not.toHaveText(/No data available/, { timeout: 30_000 });
   });
+});
+
+test.describe('Content — /content-upload-v2 nested child route (pinned defect)', () => {
+  // No console guard here on purpose: the NullInjectorError this case pins IS a pageerror, and the point
+  // of the case is the missing screen, not the console.
+  test.beforeEach(async ({ page }) => { await installContentStubs(page); });
 
   // ===========================================================================================
-  // CN-20 — the "ago" badge is the app's OWN arithmetic over the seeded timestamp
+  // CN-20 — THE GAP: the shell-only playlist-configuration route cannot mount
   // ===========================================================================================
-  test('CN-20 the card ago-badge is computed by the app from the seeded date', async ({ page }) => {
-    // [PRECONDITION] seed-content.js writes the audios with `date: now()`, so daysAgoInfo() must compute
-    // diff <= 0 -> 'Today' (ts:150-152). Confirm the seeded date really is today before asserting the
-    // label, otherwise a stale emulator would fail this for a reason that has nothing to do with the app.
-    const audios = await queryWhere('solar voice audios', [['testrunid', '==', RUN]]);
-    expect(audios.length, 'CN-20 precondition: seeded audios must exist').toBeGreaterThan(0);
-    const newestMs = Math.max(...audios.map((a) => {
-      const d = a.date as { toMillis?: () => number } | undefined;
-      return typeof d?.toMillis === 'function' ? d.toMillis() : 0;
-    }));
-    const daysOld = Math.floor((Date.now() - newestMs) / 86_400_000);
-    expect(daysOld, 'CN-20 precondition: the newest seeded audio must be dated today').toBeLessThanOrEqual(0);
-
+  // EXPECTED TO FAIL TODAY. PlaylistConfigurationComponent is a dialog (opened by /playlistdashboard's
+  // "New Playlist" / row edit) that also got declared as a route child of the v2 shell. It injects
+  // MatDialogRef and MAT_DIALOG_DATA unconditionally, so the router cannot construct it. Remove the
+  // test.fail() once the component takes those injections as @Optional() (or the route is deleted).
+  test('CN-20 /content-upload-v2/playlistdashboard/add-playlist must mount the Create Playlist form', async ({ page }) => {
+    test.fail(
+      true,
+      'KNOWN DEFECT (recon-allcomp/content.md → Addendum 2026-09-07): PlaylistConfigurationComponent '
+      + 'injects MatDialogRef/MAT_DIALOG_DATA non-optionally (playlist-configuration.component.ts:89-90); '
+      + 'routing to it throws NullInjectorError. Remove this test.fail() when the route can render.',
+    );
     await loginAsContentAdmin(page);
-    await openContentUploadV2(page);
-
-    const card = cardFor(page, 'Solar Voice');
-    await expect(card, 'CN-20: the Solar Voice card must render').toBeVisible({ timeout: 30_000 });
-
-    // [ORACLE] The test supplied a TIMESTAMP; the app produced the LABEL. daysAgoInfo() returns
-    // {value:'Today', label:''} for diff <= 0 — so .ago-value must read exactly "Today".
+    await page.goto('/content-upload-v2/playlistdashboard/add-playlist', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/playlistdashboard\/add-playlist/, { timeout: 30_000 });
     await expect(
-      card.locator('.ago-value'),
-      'CN-20: the app must compute "Today" from the seeded timestamp',
-    ).toHaveText(/^\s*Today\s*$/, { timeout: 30_000 });
+      page.locator('h1.dash-title', { hasText: 'Create Playlist' }),
+      'CN-20: the Create Playlist form must render inside the v2 shell',
+    ).toBeVisible({ timeout: 15_000 });
   });
 });
