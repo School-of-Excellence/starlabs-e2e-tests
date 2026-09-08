@@ -38,20 +38,42 @@ const SUITE_DIRS = [...new Set(Object.values(manifest.suites).map((s) => s.specD
 const routesFile = path.join(APP, 'src/app/app.routes.ts');
 const routesSrc = fs.readFileSync(routesFile, 'utf8');
 
+// NESTED ROUTES: a child inside a `children: [...]` array carries only its own segment, so
+// `{path: 'add-playlist'}` under `{path: 'playlistdashboard', children: [...]}` is really
+// /playlistdashboard/add-playlist. Reading the segment alone recorded it as "/add-playlist", which no
+// spec ever navigates to — so every nested route in the app read as permanently uncovered. That
+// under-reported content by six routes (all six had specs) and hid that /add-playlist is registered TWICE
+// under different parents, pointing at different components.
+//
+// Track bracket depth and keep a stack of the parents whose `children:` array we are inside.
 const routes = []; // { route, module, line }
-routesSrc.split('\n').forEach((raw, i) => {
-  const line = raw.trim();
-  if (line.startsWith('//') || line.startsWith('*')) return; // commented-out blocks
-  // A route entry contributes a path; the nearest import() on the same line names the module.
-  const pathM = line.match(/path\s*:\s*['"]([^'"]*)['"]/);
-  if (!pathM) return;
-  const impM = line.match(/import\(\s*['"]\.\/([^'"]+)['"]/);
-  if (!impM) return; // redirectTo / component-less parents
-  const p = pathM[1];
-  if (p === '**' || p === '') return;
-  const module = 'src/app/' + impM[1].split('/')[0];
-  routes.push({ route: '/' + p, module, line: i + 1 });
-});
+{
+  let depth = 0;
+  const stack = []; // { seg, depth } — parents whose children array is currently open
+
+  routesSrc.split('\n').forEach((raw, i) => {
+    const line = raw.trim();
+    const isComment = line.startsWith('//') || line.startsWith('*');
+
+    const pathM = isComment ? null : line.match(/path\s*:\s*['"]([^'"]*)['"]/);
+    const impM = isComment ? null : line.match(/import\(\s*['"]\.\/([^'"]+)['"]/);
+
+    if (pathM && impM) {
+      const seg = pathM[1];
+      if (seg !== '**' && seg !== '') {
+        const full = '/' + [...stack.map((s) => s.seg), seg].filter(Boolean).join('/');
+        routes.push({ route: full, module: 'src/app/' + impM[1].split('/')[0], line: i + 1 });
+      }
+    }
+
+    // Depth bookkeeping. A parent is pushed with the depth BEFORE its own line, so its children (one
+    // level deeper) never pop it, and the closing `]` that returns to that depth does.
+    const before = depth;
+    depth += (line.match(/\[/g) || []).length - (line.match(/\]/g) || []).length;
+    if (!isComment && pathM && /children\s*:\s*\[/.test(line)) stack.push({ seg: pathM[1], depth: before });
+    while (stack.length && depth <= stack[stack.length - 1].depth) stack.pop();
+  });
+}
 
 // ------------------------------------------------------------- 2. spec gotos
 function walk(dir, out = []) {
