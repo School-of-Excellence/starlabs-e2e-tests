@@ -111,6 +111,9 @@ const ROUTES = [
   { route: '/mapappointmentrole', label: 'Map Appointment Role' },
   { route: '/offtime', label: 'Offtime' },
   { route: '/appointmentcalendar', label: 'Appointment Calendar' },
+  // 2026-09-08 — the two Scheduling routes reassigned to this suite (APPT-19/20).
+  { route: '/openappointmentzoom', label: 'Appointment Zoom View' },
+  { route: '/appointment-status-update', label: 'Appointment Status Update' },
   { route: '/mycalendar', label: 'My Calendar' },
 ];
 
