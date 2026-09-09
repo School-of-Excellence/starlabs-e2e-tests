@@ -43,7 +43,15 @@ READY_TIMEOUT="${EMU_READY_TIMEOUT:-200}"
   exit 1
 }
 
-port_up() { lsof -ti tcp:"$1" >/dev/null 2>&1; }
+# Same lsof-with-node-fallback as scripts/run-isolated.sh — see the comment there. Unchanged on
+# macOS/Linux/CI; only platforms without lsof (Git Bash on Windows) take the node branch. (2026-09-09)
+port_up() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti tcp:"$1" >/dev/null 2>&1
+  else
+    node -e "const s=require('net').connect($1,'127.0.0.1');s.on('connect',()=>{s.destroy();process.exit(0)});s.on('error',()=>process.exit(1));" 2>/dev/null
+  fi
+}
 
 kill_emulator() {
   pkill -f functionsEmulatorRuntime   2>/dev/null || true

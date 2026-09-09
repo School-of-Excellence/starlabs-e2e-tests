@@ -14,7 +14,7 @@
     "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
   },
   "neutral": {
-    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.) Operator decision 2026-09-09 added: firebase.json + package-lock.json (config/lockfile — note package.json itself stays crossCutting, a dependency CHANGE still fans out to every suite), scripts/** (build/tooling, never shipped to a user), and 'src/app/LiveKit Cloud/**' (declared out of scope for automated coverage — this is the LiveKit Cloud component only; plain 'src/app/LiveKit/**' is NOT listed and still reports SUITES_MISSING). Operator decision 2026-09-09 also added: src/assets/** (vendored third-party binaries — MediaPipe .tflite/.wasm and friends; no Playwright suite can cover a wasm blob) and src/coi-serviceworker.js (vendored COI service worker). CSS added by operator decision 2026-09-08: stylesheets never make a suite mandatory. TRADE-OFF STATED AND ACCEPTED — a global stylesheet change can break layout on any screen, and this exempts ALL of it (a .css-only commit now reports NOT_APPLICABLE and would dispatch nothing). The trigger was src/app/app.component.css blocking a branch as 'uncovered': the app shell sits at the ROOT of src/app, where every suite's `src/app/<Folder>/**` glob fails to reach. Narrower alternatives (fencing only the shell, or adding the shell to crossCutting) were available and NOT chosen.",
+    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.) Operator decision 2026-09-09 added: firebase.json + package-lock.json (config/lockfile — note package.json itself stays crossCutting, a dependency CHANGE still fans out to every suite), scripts/** (build/tooling, never shipped to a user), and 'src/app/LiveKit Cloud/**' (declared out of scope for automated coverage — this is the LiveKit Cloud component only; plain 'src/app/LiveKit/**' is NOT listed and still reports SUITES_MISSING). Operator decision 2026-09-09 also added *.spec.ts + **/*.spec.ts — Karma/Jasmine UNIT tests that ship to nobody and can never be driven by an e2e suite; 74 of the app's 425 were being counted as uncovered app code. (`profiles` carries a narrower `!**/*.component.spec.ts` exclusion which only applies inside its own matching; this is the global rule.) Also added: src/assets/** (vendored third-party binaries — MediaPipe .tflite/.wasm and friends; no Playwright suite can cover a wasm blob) and src/coi-serviceworker.js (vendored COI service worker). CSS added by operator decision 2026-09-08: stylesheets never make a suite mandatory. TRADE-OFF STATED AND ACCEPTED — a global stylesheet change can break layout on any screen, and this exempts ALL of it (a .css-only commit now reports NOT_APPLICABLE and would dispatch nothing). The trigger was src/app/app.component.css blocking a branch as 'uncovered': the app shell sits at the ROOT of src/app, where every suite's `src/app/<Folder>/**` glob fails to reach. Narrower alternatives (fencing only the shell, or adding the shell to crossCutting) were available and NOT chosen.",
     "appPaths": [
       "*.md",
       "**/*.md",
@@ -22,6 +22,8 @@
       "**/*.txt",
       "*.css",
       "**/*.css",
+      "*.spec.ts",
+      "**/*.spec.ts",
       "firebase.json",
       "package-lock.json",
       "scripts/**",
@@ -45,16 +47,29 @@
   "retired": {
     "_why": "DEAD routes: still registered in app.routes.ts but reachable only by typing the URL, and superseded by a live screen. They leave the coverage denominator because writing a spec for code that should be deleted is waste — but they are NOT `fenced`: fenced means an automated suite may never cover it (ATC, a hard constraint), whereas these COULD be tested and simply should not exist. Different reason, different remedy: the fix for an entry here is to delete the route and its component, at which point the entry goes too. Keyed by route with the evidence that it is dead.",
     "routes": {
-      "/userprofile_old": "Operator decision 2026-09-08. No reference anywhere in src/app outside its own component file; the sibling `/userprofile_old/:id` route is already commented out (app.routes.ts:38) and the live screen is /userprofile. Counted three times in coverage because `Participants Profile Management` is claimed by journey, modes AND profiles, so it inflated all three."
+      "/userprofile_old": "Operator decision 2026-09-08. No reference anywhere in src/app outside its own component file; the sibling `/userprofile_old/:id` route is already commented out (app.routes.ts:38) and the live screen is /userprofile. Counted three times in coverage because `Participants Profile Management` is claimed by journey, modes AND profiles, so it inflated all three.",
+      "/devtestmic": "Operator decision 2026-09-08. Module is literally src/app/Test Component; zero references anywhere in src/app outside app.routes.ts. NOTE: /routeconfiguration was proposed alongside it and REJECTED as dead — despite living in a folder named route-configuration-duplicate, it is linked from the app shell nav (app.component.html:101) for rolemanager/developer and read at app.component.ts:482. It is live and still needs a suite."
     },
-    "_appPathsWhy": "FILE-PATH twin of `routes` above, added 2026-09-09 so the PUSH-TIME readiness check can see deprecation — it reads this key, never `routes`. Matched BEFORE `fenced` and before any suite, so a deprecated file is neither a coverage gap (SUITES_MISSING) nor manual-only (NO_COVERAGE_POSSIBLE): it simply does not participate, and a commit touching only deprecated files reports NOT_APPLICABLE and proceeds. Every entry here MUST correspond to a route in `routes` above — that is where the evidence of deadness lives. Remove BOTH when the component is deleted.",
+    "_appPathsWhy": "FILE-PATH twin of `routes` above, added 2026-09-09 so the PUSH-TIME readiness check can see deprecation — it reads this key, never `routes`. Matched BEFORE `fenced` and before any suite, so a deprecated file is neither a coverage gap (SUITES_MISSING) nor manual-only (NO_COVERAGE_POSSIBLE): it simply does not participate, and a commit touching only deprecated files reports NOT_APPLICABLE and proceeds. Every entry here MUST correspond to a route in `routes` above — that is where the evidence of deadness lives. Remove BOTH when the component is deleted. 2026-09-09 — the two entries below are a SECOND kind of dead and deliberately have NO `routes` counterpart: openvidu-loading-game and authloading are not registered in app.routes.ts at all AND are referenced by nothing outside their own folder (verified: 0 external class references, 0 template uses of <app-openvidu-loading-game> / <app-authloading>). Unroutable and unreferenced is deader than a dead route, so the evidence lives here instead. CHECKED AND NOT RETIRED in the same pass: route-configuration-duplicate (3 external refs, though its class names collide with the live src/app/route-configuration — needs a human look), Test Component/DevTestMic, slackwebhookurls and arena-design-insights (all routed), and updatesnackbar (used by app.component.ts).",
     "appPaths": [
-      "src/app/Participants Profile Management/userprofile_old/**"
+      "src/app/Participants Profile Management/userprofile_old/**",
+      "src/app/openvidu-loading-game/**",
+      "src/app/authloading/**"
     ]
   },
   "crossCutting": {
-    "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory. Operator decision 2026-09-09 added the ROOT of src/app, which no suite glob could reach (every suite is shaped src/app/<Folder>/**): the app shell (app.component.*) and three app-wide root services. BUG FIX in the same pass — `src/app/**/*.guard.ts` compiles to ^src/app/.*/[^/]*\\.guard\\.ts$ and therefore REQUIRES a directory, so the two root guards (auth.guard.ts, role.guard.ts) never matched and were reported as uncovered rather than cross-cutting. The bare `src/app/*.guard.ts` form fixes it — exactly the `*.md` / `**/*.md` precedent documented in `neutral`. Keep BOTH forms. TRADE-OFF: a change to any of these now fans out to all 12 suites, which is expensive but is the safe direction for the app shell and the authorization gate. NOTE src/main.ts, src/index.html and src/app/app.*.server.ts share the same root-level blind spot and are still NOT listed.",
+    "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory. Operator decision 2026-09-09 added the ROOT of src/app, which no suite glob could reach (every suite is shaped src/app/<Folder>/**): the app shell (app.component.*) and three app-wide root services. BUG FIX in the same pass — `src/app/**/*.guard.ts` compiles to ^src/app/.*/[^/]*\\.guard\\.ts$ and therefore REQUIRES a directory, so the two root guards (auth.guard.ts, role.guard.ts) never matched and were reported as uncovered rather than cross-cutting. The bare `src/app/*.guard.ts` form fixes it — exactly the `*.md` / `**/*.md` precedent documented in `neutral`. Keep BOTH forms. TRADE-OFF: a change to any of these now fans out to all 12 suites, which is expensive but is the safe direction for the app shell and the authorization gate. 2026-09-09 completed the sweep: src/main.ts (bootstrap), src/index.html (document shell), src/firebase-messaging-sw.js (FCM service worker), both app.*.server.ts (SSR config) and network-status.service.ts are now listed too, so no root-level file is left reporting as an uncovered feature.",
+    "_sharedUi2026_09_09": "loading-progress and ProfilePicture are SHARED UI: they live under profiles' appPaths but are imported by 9 systems each (measured, not assumed — loading-progress by queue/journey/support/events/appointments/content/business/workshops/comms; profile-picture by queue/journey/support/events/appointments/business/workshops/evomap/modes). Routing them to profiles alone meant a spinner change ran ONE gate while nine systems rendered it. They are NOT relocated to src/app/shared/** (operator decision 2026-09-09 — no file moves); listing them here gives the same routing without touching the tree. Narrower shared components (video-player, participants-analytics inputs, Product Designer delivery-set widgets, channel-communication) are deliberately NOT here: they are consumed by 1-4 named systems, so they are listed in those suites' appPaths instead, which is more precise than making every PR run everything.",
     "appPaths": [
+      "src/app/loading-progress/**",
+      "src/app/ProfilePicture/**",
+      "src/app/authguard.service.ts",
+      "src/app/custompipe.pipe.ts",
+      "src/app/wati.service.ts",
+      "src/app/DialogBox/**",
+      "src/app/form-element/**",
+      "src/app/Service/**",
+      "src/environments/**",
       "src/app/**/*.guard.ts",
       "src/app/*.guard.ts",
       "src/app/shared/**",
@@ -64,6 +79,12 @@
       "src/app/authguard.service.ts",
       "src/app/instance-status.service.ts",
       "src/app/nav-drawer.service.ts",
+      "src/app/network-status.service.ts",
+      "src/app/app.config.server.ts",
+      "src/app/app.routes.server.ts",
+      "src/main.ts",
+      "src/index.html",
+      "src/firebase-messaging-sw.js",
       "angular.json",
       "package.json"
     ],
@@ -80,7 +101,30 @@
       "capture": "all",
       "specDir": "queue",
       "ciReady": true,
-      "appPaths": ["src/app/queue system/**", "src/app/big/**"],
+      "appPaths": [
+        "src/app/queue system/**",
+        "src/app/big/**",
+        "src/app/OpenVidu/**",
+        "src/app/LiveKit/**",
+        "src/app/Participants Profile Management/participants-analytics/wati-input/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Participants Profile Management/participants-analytics/manage-participantlist-dialog/**",
+        "src/app/Participants Profile Management/participants-analytics/tag-participants/**",
+        "src/app/Participants Profile Management/participants-analytics/add-queue-tag/**",
+        "src/app/Participants Profile Management/participants-analytics/bulk-add-products/**",
+        "src/app/Participants Profile Management/participants-analytics/map-recommendedplaylist-toparticipant.component/**",
+        "src/app/AppEngagement/app-action-pending/**",
+        "src/app/Product Designer/delivery-set/form-option/**",
+        "src/app/Product Designer/delivery-set/form-template-preview/**",
+        "src/app/Product Designer/delivery-set/formtemplate/**",
+        "src/app/Channel Communication/channel-communication/**",
+        "src/app/Events/events-stage-data/**",
+        "src/app/EvolutionMapping/evolution-mapping/participant-evolution-mapping/**",
+        "src/app/video-player/**",
+        "src/app/instance-status.service.ts",
+        "src/app/web-studio-invitation/**"
+      ],
       "cfPaths": [
         "functions/components/queuesystem.js",
         "functions/components/big-assignment.js",
@@ -141,9 +185,14 @@
         "src/app/journey-onboarding-detail/**",
         "src/app/Participants Profile Management/journey-product-purchase/**",
         "src/app/Participants Profile Management/participant-product/**",
-        "src/app/Participants Profile Management/participant-delivery-sequence/**"
+        "src/app/Participants Profile Management/participant-delivery-sequence/**",
+        "src/app/Product Designer/**",
+        "src/app/Participants Profile Management/new-profile/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**"
       ],
-      "cfPaths": ["functions/components/participantmetadata.js"],
+      "cfPaths": [
+        "functions/components/participantmetadata.js"
+      ],
       "reviewNote": "cfPaths guess — review"
     },
     "business": {
@@ -153,8 +202,18 @@
       "capture": "failure-only",
       "specDir": "business",
       "ciReady": true,
-      "appPaths": ["src/app/Business Dashboard/**", "src/app/main-dashboard/**"],
-      "cfPaths": ["functions/components/interimreport.js", "functions/components/salescrm-updates.js"],
+      "appPaths": [
+        "src/app/Business Dashboard/**",
+        "src/app/main-dashboard/**",
+        "src/app/quiz/**",
+        "src/app/hpc/**",
+        "src/app/Zone Management/**",
+        "src/app/New-Workshop/quiz/**"
+      ],
+      "cfPaths": [
+        "functions/components/interimreport.js",
+        "functions/components/salescrm-updates.js"
+      ],
       "reviewNote": "globs draft — review"
     },
     "comms": {
@@ -167,9 +226,12 @@
       "appPaths": [
         "src/app/Communication Center/**",
         "src/app/Channel Communication/**",
-        "src/app/in-app-message-input/**"
+        "src/app/in-app-message-input/**",
+        "src/app/Customer Support/releaselogdialog/**"
       ],
-      "cfPaths": ["functions/components/communication.js"]
+      "cfPaths": [
+        "functions/components/communication.js"
+      ]
     },
     "content": {
       "title": "Content",
@@ -178,8 +240,14 @@
       "capture": "failure-only",
       "specDir": "content",
       "ciReady": true,
-      "appPaths": ["src/app/content/**", "src/app/content-upload-version2/**", "src/app/video-player/**"],
-      "cfPaths": ["functions/components/content.js"]
+      "appPaths": [
+        "src/app/content/**",
+        "src/app/content-upload-version2/**",
+        "src/app/video-player/**"
+      ],
+      "cfPaths": [
+        "functions/components/content.js"
+      ]
     },
     "evomap": {
       "title": "Evolution mapping",
@@ -188,8 +256,12 @@
       "capture": "failure-only",
       "specDir": "evomap",
       "ciReady": true,
-      "appPaths": ["src/app/EvolutionMapping/**"],
-      "cfPaths": ["functions/components/achievements.js"],
+      "appPaths": [
+        "src/app/EvolutionMapping/**"
+      ],
+      "cfPaths": [
+        "functions/components/achievements.js"
+      ],
       "reviewNote": "cfPaths guess — review"
     },
     "modes": {
@@ -199,8 +271,17 @@
       "capture": "failure-only",
       "specDir": "modes",
       "ciReady": true,
-      "appPaths": ["src/app/participant-touchpoint/**", "src/app/Participants Profile Management/**"],
-      "cfPaths": ["functions/components/participantmode.js"],
+      "appPaths": [
+        "src/app/participant-touchpoint/**",
+        "src/app/Participants Profile Management/**",
+        "src/app/quiz/**",
+        "src/app/New-Workshop/quiz/**",
+        "src/app/video-player/**",
+        "src/app/Customer Support/add-issue/**"
+      ],
+      "cfPaths": [
+        "functions/components/participantmode.js"
+      ],
       "reviewNote": "appPaths guess — review"
     },
     "authroles": {
@@ -210,8 +291,15 @@
       "capture": "failure-only",
       "specDir": "authroles",
       "ciReady": true,
-      "appPaths": ["src/app/login/**", "src/app/exceptionalrouting/**", "src/app/route-configuration/**"],
-      "cfPaths": ["functions/components/user_registration.js"]
+      "appPaths": [
+        "src/app/login/**",
+        "src/app/exceptionalrouting/**",
+        "src/app/route-configuration/**",
+        "src/app/icon-list.ts"
+      ],
+      "cfPaths": [
+        "functions/components/user_registration.js"
+      ]
     },
     "workshops": {
       "title": "Workshops",
@@ -220,8 +308,21 @@
       "capture": "failure-only",
       "specDir": "workshops",
       "ciReady": true,
-      "appPaths": ["src/app/Workshop/**", "src/app/New-Workshop/**"],
-      "cfPaths": ["functions/components/workshop.js"]
+      "appPaths": [
+        "src/app/Workshop/**",
+        "src/app/New-Workshop/**",
+        "src/app/tv-auth.component.ts",
+        "src/app/eiflix-telemetry/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Product Designer/delivery-set/form-option/**",
+        "src/app/Product Designer/delivery-set/form-template-preview/**",
+        "src/app/Product Designer/delivery-set/update-delivery/**",
+        "src/app/content/episodes-dashboard/upload-episode-dialog/**"
+      ],
+      "cfPaths": [
+        "functions/components/workshop.js"
+      ]
     },
     "appointments": {
       "title": "Appointments",
@@ -230,8 +331,15 @@
       "capture": "all",
       "specDir": "appointments",
       "ciReady": true,
-      "appPaths": ["src/app/appointment-dashboard/**", "src/app/Scheduling/**"],
-      "cfPaths": ["functions/components/appointment.js", "functions/components/appointmentZoomIntegraion.js"]
+      "appPaths": [
+        "src/app/appointment-dashboard/**",
+        "src/app/Scheduling/**",
+        "src/app/Offtime/**"
+      ],
+      "cfPaths": [
+        "functions/components/appointment.js",
+        "functions/components/appointmentZoomIntegraion.js"
+      ]
     },
     "events": {
       "title": "Events",
@@ -240,7 +348,16 @@
       "capture": "all",
       "specDir": "events",
       "ciReady": true,
-      "appPaths": ["src/app/Events/**"],
+      "appPaths": [
+        "src/app/Events/**",
+        "src/app/Diagnostics Tool/**",
+        "src/app/Participants Profile Management/participants-analytics/wati-input/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Participants Profile Management/participants-analytics/bulk-add-products/**",
+        "src/app/Participants Profile Management/participants-analytics/tag-participants/**",
+        "src/app/Channel Communication/channel-communication/**"
+      ],
       "cfPaths": []
     },
     "profiles": {
@@ -257,14 +374,37 @@
         "src/app/AppEngagement/app-action-pending/**",
         "src/app/loading-progress/**",
         "src/app/New-Workshop/workshop-dashboard/sendmessages/**",
-        "src/app/New-Workshop/whatsapp-progress-dialog.component.ts"
+        "src/app/New-Workshop/whatsapp-progress-dialog.component.ts",
+        "src/app/participant-videoask/**",
+        "src/app/video-player/**",
+        "src/app/Customer Support/add-issue/**"
       ],
-      "cfPaths": ["functions/components/participantmetadata.js"]
+      "cfPaths": [
+        "functions/components/participantmetadata.js"
+      ]
+    },
+    "support": {
+      "title": "Customer Support",
+      "description": "Customer support dashboard, chat and ticket flows.",
+      "config": "playwright.support.config.ts",
+      "capture": "failure-only",
+      "specDir": "support",
+      "ciReady": false,
+      "appPaths": [
+        "src/app/Customer Support/**"
+      ],
+      "cfPaths": [
+        "functions/components/ticketsystem.js",
+        "functions/components/clientissue.js"
+      ],
+      "reviewNote": "WIRED 2026-09-08. The specs existed since the initial commit but no manifest entry claimed them, so /customersupportdashboard read as covered while no gate ever ran them. ciReady:false is deliberate and honest — there is no playwright.support.emulator.config.ts yet, so this cannot join the emulator gate until one is written (mirror lib/emulator-playwright-config makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown)."
     }
   },
   "cfPredeploy": {
     "description": "Specs the CF predeploy hook runs LOCALLY (emulator) before every firebase deploy — the ONLY CF quality gate (L13/L14). Fail = deploy blocked by the Firebase CLI.",
     "config": "playwright.cf-guards.config.ts",
-    "specs": ["cf-guards/no-retrigger-loop.spec.ts"]
+    "specs": [
+      "cf-guards/no-retrigger-loop.spec.ts"
+    ]
   }
 }

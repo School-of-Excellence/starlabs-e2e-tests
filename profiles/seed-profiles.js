@@ -114,7 +114,13 @@ const ROUTES = [
   // Its deleteProfile is NOT gate-testable and must not be driven: the pre-flight guard queries hit the
   // `firestore-atc` named DB (atc_alpha), which this project never touches, plus `firestore-forms`
   // (the same multi-db emulator limitation that skips PA-13/PA-14). See journal 2026-09-02 V-03.
+  // 2026-09-08 coverage pass — AppEngagement screens (PA-44..PA-46). authGuard matches the FIRST
+  // path segment, so each needs its own grant.
+  { route: '/communitymanager', label: 'Community Manager' },
+  { route: '/atctaxonomy', label: 'ATC Taxonomy (reference-only config)' },
+  { route: '/ahcrm', label: 'A&H CRM' },
   { route: '/profilelist', label: 'Profile List' },
+  { route: '/participantvideoask', label: 'Participant VideoAsk' },   // PA-47 (assigned 2026-09-08)
 ];
 
 async function seedProfiles() {

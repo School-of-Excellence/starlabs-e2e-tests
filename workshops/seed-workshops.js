@@ -141,7 +141,10 @@ const ROUTES = [
   { route: '/newusersprofile', label: 'New Users Profile' },                    // unguarded
   { route: '/eiflixdiscoverpage', label: 'Eiflix Discover Page' },              // unguarded
   { route: '/campaigndashboard', label: 'Campaign Dashboard' },                 // unguarded
-  { route: '/wccalendar', label: 'Workshop / Campaign Calendar' },              // unguarded
+  { route: '/wccalendar', label: 'Workshop / Campaign Calendar' },
+  // /tv-auth deliberately absent — that route carries NO authGuard (app.routes.ts:295), so a grant
+  // would be meaningless. See WS-37.
+  { route: '/eiflixtelemetry', label: 'EiFlix Session Telemetry' },      // WS-36 (assigned 2026-09-08)              // unguarded
 ];
 
 // A two-curriculum challenge structure shared by the workshop-config doc AND the seeded participant

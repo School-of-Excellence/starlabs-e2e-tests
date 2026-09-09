@@ -176,6 +176,7 @@ const ROUTES = [
   { route: '/initiateeventproduct', label: 'Initiate Event Product' },
   { route: '/events-stage-data', label: 'Events Stage Data' },
   { route: '/event-participation-confirmation', label: 'Event Participation Confirmation' },
+  { route: '/liveeventhealth', label: 'Live Event Health (Diagnostics)' },  // EVT-17 (assigned 2026-09-08)
   { route: '/live_event_dashboard_v3', label: 'Live Event Dashboard v3' },
   // NOTE: /locationlog is deliberately NOT granted here — app.routes.ts carries no canActivate guard
   // at all for that route (confirmed 2026-09-03; looks like an accidental omission, flagged to app

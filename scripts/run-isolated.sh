@@ -110,14 +110,28 @@ acquire_lock() {
     echo "$$" > "$LOCK_DIR/pid"; return 0
   fi
   local holder; holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || echo '')"
-  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+  # `kill -0` stays the PRIMARY liveness check and is unchanged on macOS/Linux, where $$ and the pid a
+  # process reports are the same namespace. Under Git Bash on Windows they are NOT: $$ is an MSYS pid, so
+  # `kill -0` can report a long-dead run as alive whenever an unrelated MSYS process reuses that number —
+  # and the lock then blocks EVERY later run with "already running", which is what happened on 2026-09-09
+  # (had to rm -rf the lock by hand). The age backstop below covers that case without weakening the pid
+  # check anywhere: LOCK_TTL_MIN is far above the longest real run (queue ≈ 30 min), so a live run can
+  # never have its lock stolen.
+  LOCK_TTL_MIN="${LOCK_TTL_MIN:-120}"
+  local aged=0
+  [ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +"$LOCK_TTL_MIN" 2>/dev/null)" ] && aged=1
+  if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null && [ "$aged" = "0" ]; then
     echo "🛑 another run-isolated.sh is already running (pid $holder)." >&2
     echo "   This suite is SERIAL-ONLY: two runs share the same run1 seed (and, on emulator, the single" >&2
     echo "   emulator) and would corrupt each other. Wait for it to finish, or kill pid $holder." >&2
     echo "   (lock: $LOCK_DIR)" >&2
     return 1
   fi
-  echo "↻ reclaiming stale lock (holder pid ${holder:-?} is dead): $LOCK_DIR" >&2
+  if [ "$aged" = "1" ]; then
+    echo "↻ reclaiming stale lock (older than ${LOCK_TTL_MIN}m; holder pid ${holder:-?}): $LOCK_DIR" >&2
+  else
+    echo "↻ reclaiming stale lock (holder pid ${holder:-?} is dead): $LOCK_DIR" >&2
+  fi
   rm -rf "$LOCK_DIR"
   if mkdir "$LOCK_DIR" 2>/dev/null; then echo "$$" > "$LOCK_DIR/pid"; return 0; fi
   echo "🛑 could not acquire lock $LOCK_DIR" >&2; return 1
@@ -126,7 +140,19 @@ acquire_lock || exit 3
 trap 'rm -rf "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
 
 # ──────────────── emulator health / restart helpers (no-op on cloud) ────────────────
-port_up() { lsof -ti tcp:"$1" >/dev/null 2>&1; }
+# Is something listening on this port? `lsof` is the primary check and is UNCHANGED on macOS/Linux (and so
+# in CI). Git Bash on Windows ships no lsof, so `lsof -ti` fails for EVERY port there — which made
+# emulator_healthy() permanently false, so ensure_emulator_healthy() restarted a perfectly healthy emulator
+# and the restart then died on "port taken", and start_emulator()'s `... && emulator_healthy` never became
+# true even after a clean boot. Hence the fallback: node is already a hard dependency of this repo.
+# (2026-09-09 — found while trying to run the suites locally on Windows.)
+port_up() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti tcp:"$1" >/dev/null 2>&1
+  else
+    node -e "const s=require('net').connect($1,'127.0.0.1');s.on('connect',()=>{s.destroy();process.exit(0)});s.on('error',()=>process.exit(1));" 2>/dev/null
+  fi
+}
 # Healthy == the three ports the specs depend on are all listening (functions is the one that dies).
 emulator_healthy() { port_up 8080 && port_up 9099 && port_up 5001; }
 

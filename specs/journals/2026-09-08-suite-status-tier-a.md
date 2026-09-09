@@ -324,3 +324,52 @@ clean**.
 3. Old-flow removal: `deployPreview`/`signoff`/`createPullRequest` + their buttons, `preview.yml`,
    `preview-e2e.yml`, and the projection's dependence on the old facets. Deliberately NOT started —
    removing the live path before the replacement has run once would leave no working flow at all.
+
+## Increment 3 — classification hygiene (2026-09-09)
+
+Three operator-approved wins. NONE touches a suite's `appPaths` — the operator's instruction was
+"keep A as it is, don't change any suits", so suite ownership is untouched throughout.
+
+Measured on the `Starlabs - VideoConference` checkout, 1,892 source files:
+**uncovered 233 → 149 (-84, -36%); distinct uncovered areas 24 → 10.**
+
+1. **`*.spec.ts` + `**/*.spec.ts` → neutral.** Karma/Jasmine UNIT tests: not shipped, and no e2e
+   suite can ever drive one. 74 of the app's 425 were being counted as uncovered app code. Both glob
+   forms, per the `*.md` precedent. (`profiles` keeps its narrower `!**/*.component.spec.ts`, which
+   only applies inside its own matching; this is the global rule.)
+2. **`openvidu-loading-game` + `authloading` → `retired.appPaths`.** A SECOND kind of dead, with no
+   `routes` counterpart: not in app.routes.ts at all AND referenced by nothing outside their own
+   folder (0 external class refs, 0 uses of `<app-openvidu-loading-game>` / `<app-authloading>`).
+   Unroutable and unreferenced is deader than a dead route, so the evidence lives in `_appPathsWhy`.
+   **Checked and deliberately NOT retired:** `route-configuration-duplicate` (3 external refs, but
+   its class names collide with the live `src/app/route-configuration` — needs a human look),
+   `Test Component`/DevTestMic, `slackwebhookurls`, `arena-design-insights` (all routed), and
+   `updatesnackbar` (used by app.component.ts). A first pass using `grep -c` on app.routes.ts had
+   reported several of these as 0-reference; that method was wrong (trailing-space patterns) and the
+   proper class/selector reference scan corrected it before anything was retired.
+3. **Root-level sweep completed → crossCutting:** `src/main.ts`, `src/index.html`,
+   `src/firebase-messaging-sw.js`, both `app.*.server.ts`, `network-status.service.ts`. No root-level
+   file now reports as an uncovered feature.
+
+Verified: 75/75 unit tests · `authloading` → NOT_APPLICABLE · `arena-board.component.spec.ts` →
+NOT_APPLICABLE · `src/main.ts` → all 12 suites · `quiz` → MATCHED[business] · `README.md` unchanged.
+
+### Stale-read incident (worth remembering)
+
+An earlier analysis this session reported `support` as an unregistered orphan suite and claimed
+LiveKit/OpenVidu/Product Designer had no owner. All of that was WRONG: `suites-manifest.json` changed
+on disk mid-session (operator commits `e74295c` / `f066657`) and the analysis had been run against
+the older copy. The current manifest has **13** suites including `support`
+(`ciReady: false`, wired 2026-09-08 for exactly the reason the stale analysis "discovered"), and
+`queue` claims `OpenVidu/**` + `LiveKit/**` while `journey` claims `Product Designer/**`.
+LESSON: re-read the manifest before every analysis pass in a session where the operator is also
+committing — do not trust a value read earlier in the same session.
+
+### Branch state, unchanged by this increment (as expected)
+
+`Starlabs - VideoConference` is still `SUITES_MISSING` with the same 7 files + 1 drift:
+`AppEngagement/{email-record,notification-record,wati-record}` (6, need a suite claim — `comms`
+already drives `/notificationrecord` but suite paths are frozen by operator instruction),
+`Customer Support/customer-support-dashboard` (1 — `support` claims it but `ciReady:false`, so
+classifyChanges skips it; needs `playwright.support.emulator.config.ts`), and the `bp-event-select`
+drift (one-line app fix at `big-planner.component.html:17`).
