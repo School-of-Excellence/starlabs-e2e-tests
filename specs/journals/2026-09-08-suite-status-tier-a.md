@@ -608,3 +608,60 @@ trip for the question people ask most — "did my change reach production?" — 
 keeps the full batch view regardless.
 
 Verified: 75/75 unit tests · full AOT production build clean · `showProdPr` fully replaced.
+
+## Increment 10 — "shipped to production" must be EVIDENCE, not inference (2026-09-10)
+
+Operator: "other branches also show shipped to production. Verify the accuracy." They were right —
+increment 9's `shipped` state was inferred, and the inference was unsound.
+
+`unreleased` is written in exactly two places: set `true` on a feature→development merge
+(index.ts:489), cleared to `false` only where already true (index.ts:551). It is NEVER seeded on a
+new candidate. So a falsy `unreleased` carries TWO meanings that cannot be told apart:
+
+  (a) it was true and a production release cleared it  → genuinely shipped
+  (b) it was never set at all                          → we know NOTHING
+
+Increment 9 read `!unreleased && prDev.state === 'MERGED'` as (a). Every branch in case (b) — merged
+before D2 existed (2026-06-26), or whose pull_request webhook was never delivered — got a green
+"shipped to production" it had never earned.
+
+**Fix: record the fact at the only moment we know it.** When the dev→prod merge clears `unreleased`,
+it now also writes `released: { at, prNumber, prUrl }` — and the prod PR's number/url are already in
+scope there. `prodStage()` returns `shipped` ONLY when `released.at` exists; no record means
+UNKNOWN and the card shows no production pill at all.
+
+Two things this buys beyond correctness:
+- It removes increment 9's stated limitation ("we do not record WHICH prod PR carried a branch, so
+  shipped cannot be a link"). It can now, and it is — the shipped pill links the actual PR.
+- Absence is now meaningful. `released` missing means the console cannot tell, and it says nothing
+  rather than guessing.
+
+⚠️ MIGRATION: branches whose batch shipped BEFORE this change have no `released` record and will
+show no production pill. That is the honest outcome — the data to prove they shipped does not
+exist — but it is a visible change for existing cards. Backfilling would require walking merged
+dev→prod PRs and matching commits, which is not worth it; new releases populate it from now on.
+
+Verified: 75/75 unit tests · functions tsc clean · full AOT production build clean.
+
+## Increment 11 — a bypass must not supersede itself (2026-09-10)
+
+Operator bypassed and approved the videoconference branch; stage ④ still read "approval superseded"
+with the button live. Increment 8's clause (b) was the cause and it was self-contradictory:
+
+    superseded = approved AND ( sha != headSha OR NOT(run PASSED and fresh) )
+
+A bypass is BY DEFINITION an approval that is not backed by a passing run — that is what it is for.
+So every bypassed approval satisfied the second condition permanently: the stage never settled, the
+approve/bypass button stayed live, and the branch could never reach an approved resting state.
+
+Fixed by ordering the tests so a bypass short-circuits the evidence check but NOT the staleness one:
+
+  (a) sha != headSha           → superseded, bypass included (new code needs a new decision)
+  (b) rollout.bypass present   → NOT superseded (an admin accepted this, on the record, with a reason)
+  (c) otherwise                → requires a FRESH PASSING run behind it
+
+The operator suggested disabling the button; the button disappearing is the correct outcome, since
+with (b) in place `rolloutApproved()` is true and stage ④ renders "approved" plus the amber
+"⚠ bypassed" badge — which is what a bypass should look like once it has taken effect.
+
+Verified: 75/75 unit tests · full AOT production build clean.

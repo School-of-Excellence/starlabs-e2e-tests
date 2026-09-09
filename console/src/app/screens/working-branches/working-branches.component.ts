@@ -509,8 +509,21 @@ export class WorkingBranchesComponent {
    */
   prodStage(rc: ReleaseCandidate): 'none' | 'in-batch' | 'shipped' {
     if (rc.unreleased) return 'in-batch';
-    if (rc.prDev?.state === 'MERGED') return 'shipped';
+    // `shipped` requires the POSITIVE record written when the batch merged — never an inference
+    // from `!unreleased`. That flag is also falsy for a branch it was never set on (merged before
+    // D2, or a webhook that never arrived), and inferring from it put a green "shipped to
+    // production" on branches that had never been released. No record → we do not know → say
+    // nothing. Older branches will therefore show no production pill at all, which is correct:
+    // the console genuinely cannot tell whether they shipped.
+    if (rc.released?.at) return 'shipped';
     return 'none';
+  }
+
+  /** The production PR that actually carried this branch — known only for `shipped` branches. */
+  releasedPr(rc: ReleaseCandidate): { number?: number | null; url?: string | null } | null {
+    return rc.released?.prUrl || rc.released?.prNumber
+      ? { number: rc.released.prNumber, url: rc.released.prUrl }
+      : null;
   }
 
   prPillTone(state: PrState): string {
@@ -578,12 +591,17 @@ export class WorkingBranchesComponent {
    */
   private rolloutSuperseded(rc: ReleaseCandidate): boolean {
     if (rc.rollout?.state !== 'APPROVED') return false;
-    // (a) the approval describes a commit that is no longer HEAD.
+    // (a) the approval describes a commit that is no longer HEAD. Applies to a BYPASS too: new code
+    // needs a new decision, however the last one was made.
     if (this.bcRolloutStale(rc)) return true;
-    // (b) the evidence behind it no longer holds: stage ④ may only say "approved" while a FRESH
-    // PASSING run stands behind it. A failed or stale run means the approval is unsupported, even
-    // if its sha still matches — which is exactly the case that showed a green stage ④ next to a
-    // red stage ③.
+    // (b) A BYPASS is, by definition, an approval that is NOT backed by a passing run — that is the
+    // entire point of it. Applying the evidence test below to one made every bypassed approval
+    // permanently "superseded", leaving the button live and the branch unable to settle. An admin
+    // already accepted this risk, on the record, with a reason.
+    if (rc.rollout.bypass) return false;
+    // (c) otherwise the evidence must still hold: stage ④ may say "approved" only while a FRESH
+    // PASSING run stands behind it. A failed or stale run means the approval is unsupported even
+    // when its sha matches — the case that showed a green stage ④ beside a red stage ③.
     const run = rc.testSuiteStatus?.run;
     return !(run?.state === 'PASSED' && this.bcRunFresh(rc));
   }

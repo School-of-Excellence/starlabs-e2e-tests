@@ -548,7 +548,27 @@ async function handlePullRequest(deliveryId: string, payload: any): Promise<bool
       for (const d of feats.docs) {
         const fc = d.data() as ReleaseCandidate;
         if (!isProtected(fc.branch) && fc.unreleased) {
-          await d.ref.set({ unreleased: false, updatedAt: Date.now() }, { merge: true });
+          await d.ref.set(
+            {
+              unreleased: false,
+              // POSITIVE EVIDENCE of shipping (2026-09-10). `unreleased: false` alone cannot mean
+              // "shipped": it is also the state of a branch the flag was NEVER set on — one merged
+              // before D2 existed, or whose pull_request webhook was never delivered. Inferring
+              // "shipped" from `!unreleased && prDev.state === 'MERGED'` therefore put a green
+              // "shipped to production" on branches that had never been released.
+              //
+              // Here we KNOW: this branch carried `unreleased`, and THIS PR is the one that took the
+              // batch to production. Recording it turns a guess into a fact — and gives the UI the
+              // right PR to link, which the earlier design could not do.
+              released: {
+                at: Date.now(),
+                prNumber: number ?? null,
+                prUrl: url ?? null,
+              },
+              updatedAt: Date.now(),
+            },
+            { merge: true },
+          );
         }
       }
     }

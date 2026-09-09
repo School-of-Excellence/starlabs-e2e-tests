@@ -203,6 +203,18 @@ export interface RolloutFacet {
   bypass?: { by: string; at: number; reason: string; suiteState?: string; runState?: string };
 }
 
+/**
+ * POSITIVE record that the release batch containing this branch reached production. Written when
+ * `unreleased` is cleared, which is the only moment we actually know it. Absence means UNKNOWN, not
+ * "not shipped" — a branch merged before this existed will never have it, and the UI must say
+ * nothing rather than guess.
+ */
+export interface ReleasedFacet {
+  at: number;
+  prNumber?: number | null;
+  prUrl?: string | null;
+}
+
 export interface LastActivity {
   type: string;
   sha?: string;
@@ -355,6 +367,8 @@ export interface ReleaseCandidate {
    * the development→production merge (the whole batch releases together).
    */
   unreleased?: boolean;
+  /** Set once, when this branch's batch merged to production. Absent = unknown. */
+  released?: ReleasedFacet;
 
   derivedStatus: ReleaseStatus;
   lastActivity?: LastActivity;

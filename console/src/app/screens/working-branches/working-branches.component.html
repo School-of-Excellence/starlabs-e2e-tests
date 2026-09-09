@@ -241,11 +241,17 @@
                   }
                 }
                 @case ('shipped') {
-                  <!-- Terminal, and deliberately NOT a link: we do not record WHICH prod PR carried
-                       a given branch, so the fact of shipping is the only honest thing to show. -->
+                  <!-- Backed by the `released` record written when the batch merged — never inferred.
+                       That record also names the PR that carried it, so this CAN link correctly. -->
                   <span class="pr-pill" data-tone="ok"
-                        title="The release batch containing this branch has merged to production">
+                        title="The release batch containing this branch merged to production">
                     <span class="pr-target">✓ shipped to production</span>
+                    @if (releasedPr(rc); as rp) {
+                      @if (rp.number) { <span class="pr-num">#{{ rp.number }}</span> }
+                      @if (rp.url) {
+                        <a class="ghlink sm" [href]="rp.url" target="_blank" rel="noopener">open ↗</a>
+                      }
+                    }
                   </span>
                 }
               }

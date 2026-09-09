@@ -178,6 +178,18 @@ export interface RolloutFacet {
   bypass?: { by: string; at: number; reason: string; suiteState?: string; runState?: string };
 }
 
+/**
+ * POSITIVE record that the release batch containing this branch reached production. Written when
+ * `unreleased` is cleared, which is the only moment we actually know it. Absence means UNKNOWN, not
+ * "not shipped" — a branch merged before this existed will never have it, and the UI must say
+ * nothing rather than guess.
+ */
+export interface ReleasedFacet {
+  at: number;
+  prNumber?: number | null;
+  prUrl?: string | null;
+}
+
 /** A tester sign-off gate (dev gate or prod gate). */
 export interface GateFacet {
   verdict: GateVerdict;
@@ -389,6 +401,8 @@ export interface ReleaseCandidate {
   promotable?: boolean;
   /** FEATURE candidate: merged to development, not yet shipped to production (in the batch, D2). */
   unreleased?: boolean;
+  /** Set once, when this branch's batch merged to production. Absent = unknown. */
+  released?: ReleasedFacet;
 
   /** Projection: the milestone derived from the activity log (plan D8). */
   derivedStatus: RcStatus;
