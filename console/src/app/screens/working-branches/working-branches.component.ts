@@ -371,6 +371,90 @@ export class WorkingBranchesComponent {
     return LABELS[state] ?? state;
   }
 
+  // ── NEW FLOW — rollout approval (2026-09-09) ──────────────────────────────────────────────────
+
+  bcRunTone(state: 'RUNNING' | 'PASSED' | 'FAILED'): string {
+    return state === 'PASSED' ? 'ok' : state === 'FAILED' ? 'bad' : 'active';
+  }
+
+  bcRunLabel(state: 'RUNNING' | 'PASSED' | 'FAILED'): string {
+    return state === 'RUNNING' ? 'running…' : state.toLowerCase();
+  }
+
+  /**
+   * Is the suite run trustworthy for THIS head? A re-check overwrites `state`/`details` but
+   * deliberately never touches `run`, so a PASS from an older commit can still be sitting there.
+   * The backend enforces the same test — this only keeps the button honest.
+   */
+  bcRunFresh(rc: ReleaseCandidate): boolean {
+    const run = rc.testSuiteStatus?.run;
+    return !!run?.sha && !!rc.headSha && run.sha === rc.headSha;
+  }
+
+  /** Approval covers a commit that is no longer HEAD — shown as a warning, never hidden. */
+  bcRolloutStale(rc: ReleaseCandidate): boolean {
+    const r = rc.rollout;
+    return r?.state === 'APPROVED' && !!r.sha && !!rc.headSha && r.sha !== rc.headSha;
+  }
+
+  /** Null when the tester may approve; otherwise the reason, shown as the button's tooltip. */
+  bcRolloutBlockReason(rc: ReleaseCandidate): string | null {
+    if (!this.auth.hasCapability('APPROVE_ROLLOUT')) return 'Your role does not grant this action.';
+    if (rc.rollout?.state === 'APPROVED') return 'Already approved for rollout.';
+    const run = rc.testSuiteStatus?.run;
+    if (!run) return 'The test suites have not run yet.';
+    if (run.state === 'RUNNING') return 'The test suites are still running.';
+    if (run.state !== 'PASSED') return `The test suites ${run.state.toLowerCase()}.`;
+    if (!this.bcRunFresh(rc)) return 'The suite run is stale — it did not cover the current commit.';
+    return null;
+  }
+
+  canApproveRollout(rc: ReleaseCandidate): boolean {
+    return this.bcRolloutBlockReason(rc) === null;
+  }
+
+  /** An admin may approve past a blocked suite status — always with a recorded reason. */
+  canBypassRollout(rc: ReleaseCandidate): boolean {
+    return (
+      this.auth.hasCapability('BYPASS_SUITE_STATUS') &&
+      rc.rollout?.state !== 'APPROVED' &&
+      this.bcRolloutBlockReason(rc) !== null
+    );
+  }
+
+  async approveRollout(rc: ReleaseCandidate): Promise<void> {
+    const ok = await this.confirm.ask({
+      title: 'Approve for rollout?',
+      message:
+        `${rc.branch} (${rc.repo}) will be approved and a PR to development opened. ` +
+        `A GitHub admin merges it — the console does not merge.`,
+      confirmLabel: 'Approve',
+    });
+    if (ok) await this.fb.approveRollout(rc);
+  }
+
+  /**
+   * Admin override. The reason is mandatory and permanent: a bypass that left no trace would be
+   * indistinguishable from a real pass when someone reads the card next week.
+   */
+  async bypassRollout(rc: ReleaseCandidate): Promise<void> {
+    const why = this.bcRolloutBlockReason(rc) ?? 'unknown';
+    const reason = window.prompt(
+      `BYPASS the suite status for ${rc.branch}?\n\n${why}\n\n` +
+        `This is recorded on the branch permanently. Why are you overriding it? (min 10 characters)`,
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 10) {
+      await this.confirm.ask({
+        title: 'Reason too short',
+        message: 'A bypass needs a reason of at least 10 characters. Nothing was approved.',
+        confirmLabel: 'OK',
+      });
+      return;
+    }
+    await this.fb.approveRollout(rc, { reason: reason.trim() });
+  }
+
   /** Tooltip: why the suites cannot run, in the fewest words that still name the culprit. */
   bcSuiteDetail(ts: TestSuiteStatusFacet): string {
     const d = ts.details;

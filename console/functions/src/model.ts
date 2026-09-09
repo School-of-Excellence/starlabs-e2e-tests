@@ -113,6 +113,94 @@ export interface GateRunFacet {
   at?: number;
 }
 
+// --- NEW FLOW facets (branch-channels, 2026-08-19) ------------------------------
+// Mirror of console/src/app/core/release-candidate.model.ts. Written by readiness.ts as raw
+// patches; typed here so the callables that READ them are checked. NONE of these are read by
+// deriveStatus()/reconcileVerdict() — that is what keeps the new flow unable to move a status.
+
+export type ChannelStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
+
+export interface ChannelFacet {
+  status: ChannelStatus;
+  url?: string | null;
+  project?: string | null;
+  site?: string | null;
+  deployedAt?: number | null;
+  expiresAt?: number | null;
+}
+
+export interface PreviewStatusFacet {
+  dev?: ChannelFacet;
+  prod?: ChannelFacet;
+  sha?: string | null;
+  commitMsg?: string | null;
+  author?: string | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  updatedAt?: number | null;
+}
+
+export type SuiteState =
+  | 'CHECKING'
+  | 'MATCHED'
+  | 'SUITES_MISSING'
+  | 'NEEDS_UPDATE'
+  | 'MISSING_TEST_CASES'
+  | 'NO_COVERAGE_POSSIBLE'
+  | 'NOT_APPLICABLE'
+  | 'RUNNING'
+  | 'PASSED'
+  | 'FAILED';
+
+export interface TestSuiteStatusFacet {
+  state: SuiteState;
+  canProceed: boolean;
+  sha?: string | null;
+  checkedAt?: number | null;
+  runId?: string | null;
+  runUrl?: string | null;
+  suites?: string[];
+  crossCutting?: string | null;
+  details?: Record<string, unknown>;
+  /** Written ONLY by recordSuiteRun. `sha` is the commit the suites actually ran against. */
+  run?: {
+    state: 'RUNNING' | 'PASSED' | 'FAILED';
+    sha?: string | null;
+    suites?: string[];
+    passed?: number;
+    failed?: number;
+    skipped?: number;
+    startedAt?: number;
+    finishedAt?: number;
+    reportRunId?: string | null;
+    runUrl?: string | null;
+  };
+  recheck?: { requestedBy?: string; requestedAt?: number; count?: number };
+}
+
+/**
+ * NEW FLOW (2026-09-09) — the tester/admin "approve for rollout" gate that opens the PR →
+ * development. Deliberately NOT read by deriveStatus()/reconcileVerdict(): until cutover the old
+ * flow still owns every status, and this facet must not be able to move one.
+ *
+ * `sha` is the head the approval was given against. It goes stale the moment a new commit lands,
+ * exactly like GateFacet.sha — an approval must never cover code the approver did not see.
+ */
+export interface RolloutFacet {
+  state: 'NONE' | 'APPROVED';
+  by?: string;
+  at?: number;
+  sha?: string;
+  prNumber?: number;
+  prUrl?: string;
+  /**
+   * Recorded when an ADMIN approved despite a suite status that was not PASSED. Never optional in
+   * practice: a bypass that leaves no trace is indistinguishable from a real pass later, so the
+   * callable refuses to bypass without a reason.
+   */
+  bypass?: { by: string; at: number; reason: string; suiteState?: string; runState?: string };
+}
+
 export interface LastActivity {
   type: string;
   sha?: string;
@@ -244,6 +332,13 @@ export interface ReleaseCandidate {
   gateRun?: GateRunFacet;
   testSummary?: TestSummary;
 
+  /** NEW FLOW — tester/admin rollout approval. Not read by the projection (see RolloutFacet). */
+  rollout?: RolloutFacet;
+  /** NEW FLOW — two hosting channels per push (recordBranchChannel). */
+  previewStatus?: PreviewStatusFacet;
+  /** NEW FLOW — suite alignment verdict (recordSuiteStatus) + run result (recordSuiteRun). */
+  testSuiteStatus?: TestSuiteStatusFacet;
+
   /** Latest deploy health from the deploy workflow_run / deployment_status (D10). */
   lastDeploymentState?: string;
 
@@ -314,13 +409,20 @@ export type Capability =
   | 'SIGNOFF_DEV_PROD'
   | 'CREATE_PR_DEV'
   | 'CREATE_PR_PROD'
-  | 'MANAGE_MEMBERS';
+  | 'MANAGE_MEMBERS'
+  // --- NEW FLOW (2026-09-09). Added ALONGSIDE the old capabilities, not replacing them: the old
+  // flow is still the live path, and stripping developer:DEPLOY_PREVIEW/CREATE_PR_DEV today would
+  // break it. Role tightening happens at cutover, with the old-flow buttons.
+  /** tester/admin — approve a branch for rollout, which opens the PR → development. */
+  | 'APPROVE_ROLLOUT'
+  /** admin ONLY — approve for rollout even though the suite status is not PASSED. Always audited. */
+  | 'BYPASS_SUITE_STATUS';
 
 export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   // Promotion to production is ADMIN-ONLY (D1, 2026-06-26). The server enforces this too via
   // requireCapability(CREATE_PR_PROD) in createPullRequest, so a developer cannot promote by API.
   developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV'],
-  tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD'],
+  tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD', 'APPROVE_ROLLOUT'],
   admin: [
     'DEPLOY_PREVIEW',
     'CREATE_PR_DEV',
@@ -328,6 +430,8 @@ export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
     'SIGNOFF_PREVIEW_DEV',
     'SIGNOFF_DEV_PROD',
     'MANAGE_MEMBERS',
+    'APPROVE_ROLLOUT',
+    'BYPASS_SUITE_STATUS',
   ],
 };
 

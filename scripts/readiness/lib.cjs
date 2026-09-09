@@ -93,10 +93,17 @@ function parseNameStatus(out) {
 function classifyChanges(manifest, changedFiles) {
   const ciReady = Object.entries(manifest.suites || {}).filter(([, s]) => s.ciReady);
   const neutralGlobs = (manifest.neutral && manifest.neutral.appPaths) || [];
+  // `retired.appPaths` = DEAD code. Operator decision 2026-09-09: a change here never blocks —
+  // writing a test for code that should be deleted is waste. Reported separately from `neutral`
+  // so the console can say WHY it passed ("deprecated screen" reads differently from "docs only").
+  // NOTE this is the FILE-PATH twin of `retired.routes`, which is route-keyed and read only by
+  // scripts/check-route-coverage.mjs. Both live under the same key; neither replaces the other.
+  const deprecatedGlobs = (manifest.retired && manifest.retired.appPaths) || [];
   const fencedGlobs = (manifest.fenced && manifest.fenced.appPaths) || [];
   const ccGlobs = (manifest.crossCutting && manifest.crossCutting.appPaths) || [];
 
   const neutral = [];
+  const deprecated = [];
   const fenced = [];
   const covered = []; // { file, suite, glob }
   const uncovered = [];
@@ -105,6 +112,12 @@ function classifyChanges(manifest, changedFiles) {
   for (const file of changedFiles) {
     if (matchesAny(file, neutralGlobs)) {
       neutral.push(file);
+      continue;
+    }
+    // Checked BEFORE fenced and before any suite: dead code is neither testable-by-hand-only
+    // (fenced) nor a coverage gap (uncovered). It simply does not participate.
+    if (matchesAny(file, deprecatedGlobs)) {
+      deprecated.push({ file, glob: whichGlob(file, deprecatedGlobs) });
       continue;
     }
     if (matchesAny(file, fencedGlobs)) {
@@ -138,7 +151,7 @@ function classifyChanges(manifest, changedFiles) {
     }
   }
 
-  return { neutral, fenced, covered, uncovered, suites, crossCutting };
+  return { neutral, deprecated, fenced, covered, uncovered, suites, crossCutting };
 }
 
 // --- selector alignment ------------------------------------------------------

@@ -32,19 +32,19 @@
     ]
   },
   "fenced": {
-    "_why": "Areas that can NEVER be covered by an automated suite. ATC is a hard constraint — the emulator must never touch it — so a change here can only be validated by hand. The readiness check reports NO_COVERAGE_POSSIBLE rather than pretending a suite could exist. ALSO consumed by the three coverage checkers in scripts/ (check-suite-coverage, check-route-coverage, check-atc-coupling), which drop these paths from the denominator so a fenced area never reads as an unclosed gap — one key, both toolchains. Operator decisions 2026-09-03/04: src/app/ATC/** is the 15 authoring routes (prescribe/edit/preview/view/Triple ATC); src/app/ATC-Ops/** follows it. The route-level twin of this list is _support/excluded-routes.ts, which stops a spec NAVIGATING to an ATC screen — both layers are needed and neither replaces the other.",
-    "appPaths": [
-      "src/app/ATC/**",
-      "src/app/ATC-Ops/**",
-      "src/app/view-ai-generated-atc/**"
-    ],
-    "_resolvedReview": "The 'view-ai-generated-atc' REVIEW note is settled (2026-09-04): it IS ATC. Its route /viewaigeneratedatc has been on the D-001 denylist in _support/excluded-routes.ts since that file was written, and scripts/check-atc-coupling.mjs classes it ATC-coupled. Added to appPaths above."
+    "_why": "Areas that can NEVER be covered by an automated suite — a change there can only be validated by hand, so the readiness check reports NO_COVERAGE_POSSIBLE rather than pretending a suite could exist. ALSO consumed by scripts/check-route-coverage.mjs and scripts/check-atc-coupling.mjs, which drop these paths from the coverage denominator — one key, both toolchains. EMPTY as of 2026-09-08 (see _emptied below), so NO_COVERAGE_POSSIBLE is currently unreachable. Populate this list again if a genuinely un-automatable area appears; do NOT use it for code that merely lacks tests (that is SUITES_MISSING) or for dead code (that is `retired`).",
+    "appPaths": [],
+    "_emptied": "OPERATOR DECISION 2026-09-08 — REVERSES the 2026-09-03/04 fencing. Removed: src/app/ATC/**, src/app/ATC-Ops/**, src/app/view-ai-generated-atc/**. Operator's reasoning, stated explicitly: the ATC restriction applies to the REAL database only; seeding into the emulator is allowed, so ATC components are not un-automatable. NOTE this narrows a rule previously recorded as absolute — starlabs-angular/CLAUDE.md:31 still reads 'Never read, write, or seed ATC Firestore collections… Exclude all src/app/ATC/** components and ATC readers from the test pipeline', and profiles/profilelist.spec.ts still cancels its Delete Profile case citing 'a standing rule, not an emulator limitation'. Those two records now CONTRADICT this key and should be updated, or a future session will re-fence these paths. CONSEQUENCES: (1) no suite claims src/app/ATC/**, so ATC changes now report SUITES_MISSING — still blocked, only the label and the reason change (operator acknowledged); (2) the second layer is untouched — _support/excluded-routes.ts (D-001) still stops any spec NAVIGATING to ~30 ATC routes, so removing this fence does NOT by itself permit ATC testing; (3) check-route-coverage and check-atc-coupling no longer subtract these paths, so ATC screens re-enter the coverage denominator and reported coverage will drop."
   },
   "retired": {
     "_why": "DEAD routes: still registered in app.routes.ts but reachable only by typing the URL, and superseded by a live screen. They leave the coverage denominator because writing a spec for code that should be deleted is waste — but they are NOT `fenced`: fenced means an automated suite may never cover it (ATC, a hard constraint), whereas these COULD be tested and simply should not exist. Different reason, different remedy: the fix for an entry here is to delete the route and its component, at which point the entry goes too. Keyed by route with the evidence that it is dead.",
     "routes": {
       "/userprofile_old": "Operator decision 2026-09-08. No reference anywhere in src/app outside its own component file; the sibling `/userprofile_old/:id` route is already commented out (app.routes.ts:38) and the live screen is /userprofile. Counted three times in coverage because `Participants Profile Management` is claimed by journey, modes AND profiles, so it inflated all three."
-    }
+    },
+    "_appPathsWhy": "FILE-PATH twin of `routes` above, added 2026-09-09 so the PUSH-TIME readiness check can see deprecation — it reads this key, never `routes`. Matched BEFORE `fenced` and before any suite, so a deprecated file is neither a coverage gap (SUITES_MISSING) nor manual-only (NO_COVERAGE_POSSIBLE): it simply does not participate, and a commit touching only deprecated files reports NOT_APPLICABLE and proceeds. Every entry here MUST correspond to a route in `routes` above — that is where the evidence of deadness lives. Remove BOTH when the component is deleted.",
+    "appPaths": [
+      "src/app/Participants Profile Management/userprofile_old/**"
+    ]
   },
   "crossCutting": {
     "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",

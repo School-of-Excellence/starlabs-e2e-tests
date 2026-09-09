@@ -109,6 +109,8 @@ export interface SuiteStatusDetails {
   uncovered?: string[];
   /** Changed files in a permanently untestable area (ATC). */
   fenced?: string[];
+  /** Changed files that are dead code (manifest `retired`) — never blocks; shown as "deprecated". */
+  deprecated?: string[];
   /** Selectors a spec drives that the app no longer declares. */
   drift?: { id: string; usedBy: string[] }[];
   /** New elements this diff added that no spec references. */
@@ -131,18 +133,47 @@ export interface TestSuiteStatusFacet {
   suites?: string[];
   crossCutting?: string | null;
   details?: SuiteStatusDetails;
-  /** Populated only once the suites actually execute. */
+  /**
+   * Populated only once the suites actually execute — written by `recordSuiteRun`, never by the
+   * check. PASSED means EVERY matrix leg passed; branch-suites.yml collapses the legs so the
+   * console stores a verdict rather than recomputing it.
+   *
+   * `sha` is the commit the suites ran against. Compare it with `testSuiteStatus.sha` before
+   * trusting this: a fresh check overwrites `state`/`details` but deliberately leaves `run` alone,
+   * so a stale result can outlive the check that produced it.
+   */
   run?: {
     state: 'RUNNING' | 'PASSED' | 'FAILED';
+    sha?: string | null;
+    suites?: string[];
     passed?: number;
     failed?: number;
     skipped?: number;
     startedAt?: number;
     finishedAt?: number;
-    reportRunId?: string;
+    reportRunId?: string | null;
+    runUrl?: string | null;
   };
   /** Set by the console's Recheck button; re-dispatches the workflow for this ref. */
   recheck?: { requestedBy?: string; requestedAt?: number; count?: number };
+}
+
+/**
+ * NEW FLOW — the tester/admin "approve for rollout" gate. Approving opens the PR → development;
+ * a GitHub admin merges it (the console still never merges).
+ *
+ * `sha` is the head that was approved. It is stale the moment a new commit lands — an approval
+ * must never cover code the approver did not see.
+ */
+export interface RolloutFacet {
+  state: 'NONE' | 'APPROVED';
+  by?: string;
+  at?: number;
+  sha?: string;
+  prNumber?: number;
+  prUrl?: string;
+  /** Present only when an ADMIN approved despite a non-PASSED suite status. Never silent. */
+  bypass?: { by: string; at: number; reason: string; suiteState?: string; runState?: string };
 }
 
 /** A tester sign-off gate (dev gate or prod gate). */
@@ -344,6 +375,8 @@ export interface ReleaseCandidate {
   previewStatus?: PreviewStatusFacet;
   /** Whether the hub's suites cover this diff, and — later — how the run went. */
   testSuiteStatus?: TestSuiteStatusFacet;
+  /** NEW FLOW — the tester/admin rollout approval that opened the PR → development. */
+  rollout?: RolloutFacet;
 
   /** Latest deploy health (dev → starlabs-test, prod → fir-sample). */
   lastDeploymentState?: string;

@@ -121,7 +121,20 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       runId: '900003',
       runUrl: 'https://github.com/School-of-Excellence/starlabs-angular/actions/runs/900003',
       details: {},
-      run: { state: 'PASSED', passed: 41, failed: 0, skipped: 2, startedAt: 1755500200000, finishedAt: 1755502000000 },
+      // `sha` MATCHES headSha ('ccc3333') on purpose — that is what makes the run fresh, and so
+      // what makes "approve for rollout" clickable in mock mode. Change it to see the stale path.
+      run: {
+        state: 'PASSED',
+        sha: 'ccc3333',
+        suites: ['queue', 'appointments'],
+        passed: 41,
+        failed: 0,
+        skipped: 2,
+        startedAt: 1755500200000,
+        finishedAt: 1755502000000,
+        reportRunId: '900003',
+        runUrl: 'https://github.com/School-of-Excellence/starlabs-angular/actions/runs/900003',
+      },
     },
     devGate: { verdict: 'NONE' },
     prDev: { state: 'NONE' },

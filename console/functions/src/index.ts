@@ -481,6 +481,17 @@ async function handlePullRequest(deliveryId: string, payload: any): Promise<bool
     await mutateCandidate(repo, 'development', lastActivityFrom(entry), (c) => {
       c.hasUnreleased = true;
     });
+    // NEW FLOW (2026-09-09): open the development → production PR IN PARALLEL with the dev deploy,
+    // rather than waiting for `promotable`. Operator decision, trade-off stated and accepted:
+    //   • the PR now exists BEFORE the dev deploy result is known, so its existence is NOT a signal
+    //     that development is ready — it is a container. The GitHub admin merging it is the gate.
+    //   • operator decision D2 (2026-09-09): there is deliberately NO console tester sign-off on
+    //     this PR. The only test evidence is from each feature branch before merge.
+    // FIND-OR-CREATE: development→production is ONE long-lived PR, not one per feature. The second
+    // feature merged in the same batch must reuse the open PR — GitHub rejects a duplicate.
+    await ensureDevToProdPr(repo).catch((e) =>
+      logger.error('dev→prod PR ensure failed (non-fatal)', e),
+    );
   }
   // A development → production PR: mirror it onto the production candidate (so the Production entry
   // shows it) and, once merged, clear development's unreleased/promotable flags (batch released).
@@ -510,6 +521,58 @@ async function handlePullRequest(deliveryId: string, payload: any): Promise<bool
   }
 
   return true;
+}
+
+/**
+ * Ensure ONE open PR development → production exists for `repo`.
+ *
+ * Called on every feature→development merge (NEW FLOW). Idempotent by design — a release batch is
+ * several feature merges, and each one runs this:
+ *   • an open PR already there → nothing to do, return it
+ *   • GitHub reports "no commits between" → development is level with production, nothing to ship
+ *   • any other failure → logged and swallowed by the caller; a webhook must never 500 over this
+ *
+ * Never merges (D3) and never writes prProd — the `pull_request` opened webhook does that when
+ * GitHub delivers the event this call causes.
+ */
+async function ensureDevToProdPr(repo: string): Promise<{ number: number; url: string } | null> {
+  const octokit = appOctokit();
+  const existing = await octokit.pulls.list({
+    owner: GITHUB_ORG,
+    repo,
+    base: 'production',
+    head: `${GITHUB_ORG}:development`,
+    state: 'open',
+    per_page: 1,
+  });
+  if (existing.data.length > 0) {
+    const pr = existing.data[0];
+    logger.info(`dev→prod PR already open for ${repo}: #${pr.number}`);
+    return { number: pr.number, url: pr.html_url };
+  }
+  try {
+    const resp = await octokit.pulls.create({
+      owner: GITHUB_ORG,
+      repo,
+      head: 'development',
+      base: 'production',
+      title: 'Release: development → production',
+      body:
+        'Opened automatically when a feature merged into `development`.\n\n' +
+        '⚠️ This PR is a CONTAINER for the current release batch — its existence does **not** mean ' +
+        'development is verified. Check the development deploy before merging.\n\n' +
+        '_The console does not merge — please review and merge on GitHub._',
+    });
+    logger.info(`dev→prod PR created for ${repo}: #${resp.data.number}`);
+    return { number: resp.data.number, url: resp.data.html_url };
+  } catch (err: any) {
+    const msg = String(err?.message ?? err);
+    if (/no commits between/i.test(msg)) {
+      logger.info(`dev→prod PR not needed for ${repo}: development is level with production`);
+      return null;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -1129,6 +1192,156 @@ export const createPullRequest = onCall<CreatePullRequestData>(
 
     logger.info(`PR created ${repo} ${head}→${base} #${pr.number} by ${callerLabel(caller)}`);
     return { ok: true, prNumber: pr.number, prUrl: pr.html_url };
+  },
+);
+
+// ===========================================================================
+// 5. setMember (callable) — admin-only member management (D1)
+// ===========================================================================
+
+// ===========================================================================
+// 4b. approveRollout (callable) — the NEW FLOW's single human gate
+// ===========================================================================
+//
+// Tester or admin approves a branch for rollout; on success this opens the PR → development.
+// A GitHub admin merges it (D3 — the console still never merges).
+//
+// PRECONDITIONS, all enforced server-side because the UI is not a fence:
+//   • caller has APPROVE_ROLLOUT
+//   • testSuiteStatus.run.state === 'PASSED'
+//   • the run covers the CURRENT head — run.sha === headSha. A fresh check overwrites
+//     state/details but deliberately leaves `run` alone, so a stale PASS can outlive the check
+//     that produced it; without this test an approval could cover code nobody ran.
+//
+// An ADMIN may override the last two with `bypass: { reason }` — requires BYPASS_SUITE_STATUS and a
+// non-empty reason, and is recorded on the candidate. A bypass that left no trace would be
+// indistinguishable from a real pass afterwards.
+//
+// This does NOT write prDev: the `pull_request` webhook does that when GitHub delivers the event,
+// exactly as it does for the old flow's PRs. NOTE that this means opening a PR here WILL advance
+// the old flow's derivedStatus to PR_TO_DEV — unavoidable while both flows share one document, and
+// harmless because the old flow is being retired.
+
+interface ApproveRolloutData {
+  repo: string;
+  branch: string;
+  bypass?: { reason: string };
+}
+
+export const approveRollout = onCall<ApproveRolloutData>(
+  { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
+  async (req: CallableRequest<ApproveRolloutData>) => {
+    const caller = requireAuth(req);
+    const { repo, branch, bypass } = req.data ?? ({} as ApproveRolloutData);
+    if (!repo || !branch) {
+      throw new HttpsError('invalid-argument', 'repo and branch are required.');
+    }
+    const member = await requireCapability(caller, 'APPROVE_ROLLOUT');
+
+    const snap = await db.collection(PATHS.releaseCandidates).doc(candidateId(repo, branch)).get();
+    if (!snap.exists) {
+      throw new HttpsError('failed-precondition', `No candidate for ${repo}/${branch}.`);
+    }
+    const cand = snap.data() as ReleaseCandidate;
+    const ts = cand.testSuiteStatus;
+    const run = ts?.run;
+    const headSha = cand.headSha;
+
+    const passed = run?.state === 'PASSED';
+    const fresh = !!run?.sha && !!headSha && run.sha === headSha;
+
+    if (!passed || !fresh) {
+      if (!bypass) {
+        const why = !passed
+          ? `suite run is ${run?.state ?? 'not started'} (needs PASSED)`
+          : 'the suite run is stale — it did not cover the current head commit';
+        throw new HttpsError('failed-precondition', `Cannot approve: ${why}.`);
+      }
+      if (!hasCapability(member.roles ?? [], 'BYPASS_SUITE_STATUS')) {
+        throw new HttpsError('permission-denied', 'Only an admin may bypass the suite status.');
+      }
+      const reason = typeof bypass.reason === 'string' ? bypass.reason.trim() : '';
+      if (reason.length < 10) {
+        throw new HttpsError(
+          'invalid-argument',
+          'A bypass needs a reason of at least 10 characters — it is recorded on the candidate.',
+        );
+      }
+    }
+
+    // Open the PR FIRST: if GitHub rejects it (no commits, branch gone) nothing should be recorded
+    // as approved. An approval with no PR is a lie the console would keep showing.
+    const octokit = appOctokit();
+    let pr;
+    try {
+      const resp = await octokit.pulls.create({
+        owner: GITHUB_ORG,
+        repo,
+        head: branch,
+        base: 'development',
+        title: `Rollout: ${branch} → development`,
+        body:
+          `Approved for rollout by ${callerLabel(caller)} via the StarLabs release console.\n\n` +
+          `Suite status: \`${ts?.state ?? 'unknown'}\` · run: \`${run?.state ?? 'none'}\`` +
+          (bypass ? `\n\n⚠️ **Suite status bypassed by admin.** Reason: ${bypass.reason}` : '') +
+          `\n\n_The console does not merge — please review and merge on GitHub._`,
+      });
+      pr = resp.data;
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      logger.error('approveRollout: PR create failed', err);
+      if (/no commits between/i.test(msg)) {
+        throw new HttpsError(
+          'failed-precondition',
+          'No new commits ahead of development. Sync your branch, commit and push before approving.',
+        );
+      }
+      if (/already exist/i.test(msg)) {
+        throw new HttpsError('already-exists', 'A PR from this branch to development is already open.');
+      }
+      throw new HttpsError('internal', `GitHub PR create failed: ${msg}`);
+    }
+
+    const now = Date.now();
+    const entry = activityEntry({
+      repo,
+      branch,
+      type: 'pr_to_dev',
+      source: 'console',
+      confirmed: false, // the pull_request webhook confirms
+      eventTime: now,
+      sha: headSha,
+      actor: callerLabel(caller),
+      detail: { base: 'development', number: pr.number, rollout: true, bypassed: !!bypass },
+    });
+    await appendActivity(entry);
+    await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
+      c.rollout = {
+        state: 'APPROVED',
+        by: callerLabel(caller),
+        at: now,
+        sha: headSha,
+        prNumber: pr.number,
+        prUrl: pr.html_url,
+        ...(bypass
+          ? {
+              bypass: {
+                by: callerLabel(caller),
+                at: now,
+                reason: bypass.reason.trim(),
+                suiteState: ts?.state,
+                runState: run?.state,
+              },
+            }
+          : {}),
+      };
+    });
+
+    logger.info(
+      `approveRollout ${repo}/${branch} → PR #${pr.number} by ${callerLabel(caller)}` +
+        (bypass ? ' (BYPASSED)' : ''),
+    );
+    return { ok: true, prNumber: pr.number, prUrl: pr.html_url, bypassed: !!bypass };
   },
 );
 

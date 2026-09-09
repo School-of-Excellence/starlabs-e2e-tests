@@ -27,6 +27,7 @@ const eq = (name, got, want) => ok(name, JSON.stringify(got) === JSON.stringify(
 const manifest = {
   neutral: { appPaths: ['*.md', '**/*.md', '.github/**'] },
   fenced: { appPaths: ['src/app/ATC/**'] },
+  retired: { appPaths: ['src/app/old-screen/**'] },
   crossCutting: { appPaths: ['package.json', 'src/app/shared/**'] },
   suites: {
     queue: { ciReady: true, specDir: 'queue', appPaths: ['src/app/queue system/**'] },
@@ -94,6 +95,38 @@ console.log('\nclassifyChanges');
 {
   const r = lib.classifyChanges(manifest, ['src/app/ATC/atc.component.ts']);
   ok('ATC → fenced', r.fenced.length === 1 && r.uncovered.length === 0);
+}
+// --- deprecated (`retired.appPaths`) — operator decision 2026-09-09 -----------
+{
+  const r = lib.classifyChanges(manifest, ['src/app/old-screen/old.component.ts']);
+  ok('deprecated → its own bucket', r.deprecated.length === 1);
+  eq('  not uncovered (never a coverage gap)', r.uncovered, []);
+  eq('  not fenced (it COULD be tested)', r.fenced, []);
+  eq('  triggers no suite', r.suites, []);
+}
+{
+  // Deprecated must not mask a real gap sitting alongside it in the same commit.
+  const r = lib.classifyChanges(manifest, [
+    'src/app/old-screen/old.component.ts',
+    'src/app/nowhere/x.component.ts',
+  ]);
+  ok('deprecated + uncovered → the gap still reported', r.deprecated.length === 1 && r.uncovered.length === 1);
+  eq('  verdict still blocks', lib.verdictOf({ classified: r, drift: { drifted: [] }, newComponents: [] }), 'SUITES_MISSING');
+}
+{
+  const r = lib.classifyChanges(manifest, ['src/app/old-screen/old.component.ts']);
+  eq(
+    'deprecated ONLY → NOT_APPLICABLE (proceeds)',
+    lib.verdictOf({ classified: r, drift: { drifted: [] }, newComponents: [] }),
+    'NOT_APPLICABLE',
+  );
+  ok('  canProceed', lib.canProceed('NOT_APPLICABLE') === true);
+}
+{
+  // Precedence: deprecated is checked BEFORE fenced, so a path in both is deprecated.
+  const m2 = { ...manifest, retired: { appPaths: ['src/app/ATC/**'] } };
+  const r = lib.classifyChanges(m2, ['src/app/ATC/atc.component.ts']);
+  ok('deprecated wins over fenced', r.deprecated.length === 1 && r.fenced.length === 0);
 }
 {
   const r = lib.classifyChanges(manifest, ['package.json']);

@@ -142,6 +142,62 @@
                     · <a class="ghlink sm" [href]="ts.runUrl" target="_blank" rel="noopener">details ↗</a>
                   }
                 </span>
+                @if (ts.run; as run) {
+                  <span class="badge" [attr.data-tone]="bcRunTone(run.state)"
+                        [title]="'Suite run ' + run.state + (run.sha ? ' against ' + run.sha.slice(0,7) : '')">
+                    run: {{ bcRunLabel(run.state) }}
+                    @if (run.passed !== undefined) { · {{ run.passed }}✓ }
+                    @if (run.failed) { · {{ run.failed }}✗ }
+                    @if (run.runUrl) {
+                      · <a class="ghlink sm" [href]="run.runUrl" target="_blank" rel="noopener">report ↗</a>
+                    }
+                  </span>
+                  @if (run.state === 'PASSED' && !bcRunFresh(rc)) {
+                    <span class="badge" data-tone="warn"
+                          title="This run did not cover the current commit — push moved HEAD since it ran">
+                      run stale
+                    </span>
+                  }
+                }
+              }
+
+              <!-- Rollout approval — the NEW flow's single human gate. -->
+              @if (rc.rollout?.state === 'APPROVED') {
+                <span class="badge" data-tone="ok"
+                      [title]="'Approved by ' + (rc.rollout!.by || '—')">
+                  rollout: approved
+                  @if (rc.rollout!.prUrl) {
+                    · <a class="ghlink sm" [href]="rc.rollout!.prUrl" target="_blank" rel="noopener">PR ↗</a>
+                  }
+                </span>
+                @if (rc.rollout!.bypass; as bp) {
+                  <span class="badge" data-tone="warn"
+                        [title]="'Suite status bypassed by ' + bp.by + ' — ' + bp.reason">
+                    ⚠ bypassed
+                  </span>
+                }
+                @if (bcRolloutStale(rc)) {
+                  <span class="badge" data-tone="warn"
+                        title="Approved against an older commit — HEAD has moved since">
+                    approval stale
+                  </span>
+                }
+              } @else if (rc.testSuiteStatus) {
+                @if (canApproveRollout(rc)) {
+                  <button class="histbtn" (click)="approveRollout(rc)"
+                          title="Approve for rollout — opens the PR to development">
+                    approve for rollout
+                  </button>
+                } @else if (canBypassRollout(rc)) {
+                  <button class="histbtn" (click)="bypassRollout(rc)"
+                          [title]="'Blocked: ' + bcRolloutBlockReason(rc) + ' — admin override, recorded'">
+                    ⚠ bypass &amp; approve
+                  </button>
+                } @else {
+                  <span class="badge" data-tone="none" [title]="bcRolloutBlockReason(rc) || ''">
+                    rollout: blocked
+                  </span>
+                }
               }
             </div>
           }

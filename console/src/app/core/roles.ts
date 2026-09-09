@@ -25,14 +25,17 @@ export type Capability =
   | 'SIGNOFF_DEV_PROD'      // tester/admin — "safe for prod" on the dev deploy
   | 'CREATE_PR_DEV'         // developer/admin — open PR feature → development
   | 'CREATE_PR_PROD'        // developer/admin — open PR development → production
-  | 'MANAGE_MEMBERS';       // admin — Settings screen
+  | 'MANAGE_MEMBERS'        // admin — Settings screen
+  // --- NEW FLOW (2026-09-09). Added ALONGSIDE the old capabilities; the old flow is still live.
+  | 'APPROVE_ROLLOUT'       // tester/admin — approve for rollout, which opens the PR → development
+  | 'BYPASS_SUITE_STATUS';  // admin ONLY — approve despite a non-PASSED suite status. Audited.
 
 /** The capability grant per role. (plan §2) NOTE: console NEVER merges (D3) — there is no merge capability. */
 export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   // Promotion to production is ADMIN-ONLY (D1, 2026-06-26): developers open feature→dev PRs from
   // Working Branches; only admins open development→production PRs from the Release Channel.
   developer: ['DEPLOY_PREVIEW', 'CREATE_PR_DEV'],
-  tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD'],
+  tester: ['SIGNOFF_PREVIEW_DEV', 'SIGNOFF_DEV_PROD', 'APPROVE_ROLLOUT'],
   admin: [
     'DEPLOY_PREVIEW',
     'CREATE_PR_DEV',
@@ -40,6 +43,8 @@ export const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
     'SIGNOFF_PREVIEW_DEV',
     'SIGNOFF_DEV_PROD',
     'MANAGE_MEMBERS',
+    'APPROVE_ROLLOUT',
+    'BYPASS_SUITE_STATUS',
   ],
 };
 

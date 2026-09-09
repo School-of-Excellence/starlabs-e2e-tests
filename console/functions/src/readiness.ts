@@ -28,10 +28,30 @@ import * as logger from 'firebase-functions/logger';
 import { getFirestore } from 'firebase-admin/firestore';
 import type { Request, Response } from 'express';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { Octokit } from '@octokit/rest';
+import { createAppAuth } from '@octokit/auth-app';
 import { PATHS, candidateId } from './model';
 
 const region = 'us-central1';
 const CONSOLE_INGEST_TOKEN = defineSecret('CONSOLE_INGEST_TOKEN');
+const GITHUB_APP_PRIVATE_KEY = defineSecret('GITHUB_APP_PRIVATE_KEY');
+
+// Duplicated from index.ts rather than imported — index.ts does `export * from './readiness'`, so
+// importing back would be a cycle. Same values, same env vars.
+const GITHUB_ORG = process.env.GITHUB_ORG ?? 'School-of-Excellence';
+const GITHUB_APP_ID = process.env.GITHUB_APP_ID ?? 'TODO_APP_ID';
+const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID ?? 'TODO_INSTALLATION_ID';
+
+/**
+ * The NEW flow's test lane. A separate file from preview-e2e.yml ON PURPOSE: handleWorkflowRun
+ * matches tracked lanes by workflow FILE, falling back to display NAME containing
+ * preview / deploy / e2e. `branch-suites.yml`, displayed as "branch suites", matches none of those,
+ * so its runs are logged "not a tracked lane" and cannot touch gateRun / testSummary / preview.*
+ * — the old flow's fields.
+ *
+ * ⚠️ Do NOT rename this workflow to anything containing preview, deploy or e2e.
+ */
+const BRANCH_SUITES_WORKFLOW = 'branch-suites.yml';
 
 /** Mirrors INGEST_REPO_ALLOWLIST in index.ts — kept local so this module has no import cycle. */
 const REPO_ALLOWLIST = new Set(['starlabs-angular', 'starlabs-cloud-function', 'starlabs-e2e-tests']);
@@ -44,6 +64,8 @@ const REPO_ALLOWLIST = new Set(['starlabs-angular', 'starlabs-cloud-function', '
  * PREVIEW_URL_RE only knows the dev form, which is why these endpoints validate their own.
  */
 const CHANNEL_URL_RE = /^https:\/\/(breakthroughs-test|star-labs)--[a-z0-9-]+\.web\.app\/?$/;
+
+const RUN_STATES = new Set(['RUNNING', 'PASSED', 'FAILED']);
 
 const ENVS = new Set(['dev', 'prod']);
 const CHANNEL_STATUSES = new Set(['BUILDING', 'SUCCESS', 'FAILED']);
@@ -226,7 +248,7 @@ export const recordBranchChannel = onRequest(
 // and later the Approve button — never re-implements the rules.
 
 export const recordSuiteStatus = onRequest(
-  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  { region, secrets: [CONSOLE_INGEST_TOKEN, GITHUB_APP_PRIVATE_KEY], cors: false },
   async (req: Request, res: Response) => {
     const who = guard(req, res);
     if (!who) return;
@@ -257,6 +279,9 @@ export const recordSuiteStatus = onRequest(
         details: {
           uncovered: list(rawDetails.uncovered),
           fenced: list(rawDetails.fenced),
+          // Dead code (manifest `retired.appPaths`). Never blocks — carried so the console can say
+          // WHY a commit passed: "deprecated screen" must not read the same as "docs only".
+          deprecated: list(rawDetails.deprecated),
           drift: list(rawDetails.drift),
           missingTestCases: list(rawDetails.missingTestCases),
           unhookedElements: list(rawDetails.unhookedElements),
@@ -269,13 +294,160 @@ export const recordSuiteStatus = onRequest(
     };
 
     try {
+      // Read the CURRENT run before overwriting the check, so the dispatcher can tell "already ran
+      // for this sha" from "never ran". recordSuiteStatus never writes `run`, so this survives.
+      const db = getFirestore();
+      const snap = await db
+        .collection(PATHS.releaseCandidates)
+        .doc(candidateId(repo, branch))
+        .get();
+      const existingRunSha = (
+        snap.data()?.testSuiteStatus as { run?: { sha?: string } } | undefined
+      )?.run?.sha;
+
       await mergeIntoCandidate(repo, branch, patch);
       logger.info(
         `recordSuiteStatus ${repo}/${branch} → ${state} (canProceed=${body.canProceed === true})`,
       );
-      res.status(200).json({ ok: true });
+
+      // Green → run the suites. Never throws; a dispatch failure must not lose the verdict.
+      const dispatched = await maybeDispatchSuites(
+        repo,
+        branch,
+        state,
+        patch.testSuiteStatus.suites as string[],
+        sha,
+        existingRunSha,
+      );
+      res.status(200).json({ ok: true, dispatched });
     } catch (err) {
       logger.error('recordSuiteStatus failed', err);
+      res.status(500).json({ ok: false, error: 'internal' });
+    }
+  },
+);
+
+// ===========================================================================
+// Dispatch the suites when the check goes green
+// ===========================================================================
+//
+// WHY HERE and not in the workflow: `GITHUB_TOKEN` cannot start another workflow run — GitHub
+// deliberately suppresses runs triggered by it, to stop recursion. The GitHub App can. This
+// function already runs on every check, so it is the natural trigger, and the console's future
+// Recheck button re-enters through the same path — one code path, not two.
+
+/** Local Octokit — see the GITHUB_ORG note above for why this is not imported from index.ts. */
+function appOctokit(): Octokit {
+  return new Octokit({
+    authStrategy: createAppAuth,
+    auth: {
+      appId: GITHUB_APP_ID,
+      privateKey: GITHUB_APP_PRIVATE_KEY.value(),
+      installationId: GITHUB_APP_INSTALLATION_ID,
+    },
+  });
+}
+
+/**
+ * Fire `branch-suites.yml` for this branch, but only when running the suites is both meaningful
+ * and not already done. Every guard here is a decision taken with the operator:
+ *
+ *   • state MUST be MATCHED — NOT_APPLICABLE also has canProceed:true but carries ZERO suites
+ *     (docs/css/deprecated-only commits), and dispatching it would start a run with nothing to run.
+ *   • suites MUST be non-empty — belt and braces on the same hole.
+ *   • the sha MUST be new — a developer pushing ten times an hour must not launch ten matrices.
+ *
+ * NEVER throws: the alignment verdict is the valuable part of this request and must land even if
+ * GitHub is down or the App is not configured. A failed dispatch is logged and the run simply is
+ * not started — the console shows MATCHED with no run, which is honest.
+ */
+async function maybeDispatchSuites(
+  repo: string,
+  branch: string,
+  state: string,
+  suites: string[],
+  sha: string | undefined,
+  existingRunSha: string | undefined,
+): Promise<boolean> {
+  if (state !== 'MATCHED') return false;
+  if (!suites.length) return false;
+  if (sha && existingRunSha === sha) {
+    logger.info(`suites already dispatched for ${repo}/${branch} @ ${sha.slice(0, 7)} — skipping`);
+    return false;
+  }
+  if (GITHUB_APP_ID.startsWith('TODO') || !GITHUB_APP_PRIVATE_KEY.value()) {
+    logger.warn('GitHub App not configured — cannot dispatch branch-suites.yml');
+    return false;
+  }
+  try {
+    await appOctokit().actions.createWorkflowDispatch({
+      owner: GITHUB_ORG,
+      repo,
+      workflow_id: BRANCH_SUITES_WORKFLOW,
+      ref: branch,
+      inputs: { suites: JSON.stringify(suites), ref: branch },
+    });
+    logger.info(`dispatched ${BRANCH_SUITES_WORKFLOW} ${repo}/${branch} suites=${suites.join(',')}`);
+    return true;
+  } catch (err: unknown) {
+    // Non-fatal by design — see the doc comment.
+    logger.error('branch-suites dispatch failed (non-fatal)', err);
+    return false;
+  }
+}
+
+// ===========================================================================
+// recordSuiteRun — the OUTCOME of the suites that recordSuiteStatus dispatched
+// ===========================================================================
+//
+// Called by branch-suites.yml: once at the start (RUNNING) and once by the aggregation job at the
+// end (PASSED/FAILED). PASSED means EVERY matrix leg passed — the workflow collapses the legs, so
+// this endpoint stores a verdict rather than computing one.
+//
+// Writes ONLY testSuiteStatus.run. A later re-check overwrites `state`/`details` but never `run`
+// (recordSuiteStatus does not write that key), so the two can interleave without clobbering.
+
+export const recordSuiteRun = onRequest(
+  { region, secrets: [CONSOLE_INGEST_TOKEN], cors: false },
+  async (req: Request, res: Response) => {
+    const who = guard(req, res);
+    if (!who) return;
+    const { repo, branch } = who;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const state = str(body.state, 20);
+    if (!state || !RUN_STATES.has(state)) {
+      res.status(400).json({ ok: false, error: `invalid run state: ${state ?? '(missing)'}` });
+      return;
+    }
+    const sha =
+      typeof body.sha === 'string' && /^[0-9a-f]{40}$/i.test(body.sha) ? body.sha : undefined;
+    const num = (v: unknown): number | undefined =>
+      typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : undefined;
+    const now = Date.now();
+
+    const run: Record<string, unknown> = {
+      state,
+      sha: sha ?? null,
+      reportRunId: str(body.reportRunId, 50) ?? null,
+      runUrl: str(body.runUrl, 300) ?? null,
+      suites: Array.isArray(body.suites) ? body.suites.slice(0, 50) : [],
+    };
+    if (state === 'RUNNING') run.startedAt = now;
+    else run.finishedAt = now;
+    const passed = num(body.passed);
+    const failed = num(body.failed);
+    const skipped = num(body.skipped);
+    if (passed !== undefined) run.passed = passed;
+    if (failed !== undefined) run.failed = failed;
+    if (skipped !== undefined) run.skipped = skipped;
+
+    try {
+      await mergeIntoCandidate(repo, branch, { testSuiteStatus: { run } });
+      logger.info(`recordSuiteRun ${repo}/${branch} → ${state}`);
+      res.status(200).json({ ok: true });
+    } catch (err) {
+      logger.error('recordSuiteRun failed', err);
       res.status(500).json({ ok: false, error: 'internal' });
     }
   },

@@ -119,6 +119,7 @@ function main() {
     covered: classified.covered,
     uncovered: classified.uncovered,
     fenced: classified.fenced,
+    deprecated: classified.deprecated,
     neutral: classified.neutral,
     crossCutting: classified.crossCutting,
     selectorsChecked: drift.checked,
@@ -151,6 +152,7 @@ function main() {
         details: {
           uncovered: result.uncovered,
           fenced: result.fenced.map((f) => f.file),
+          deprecated: result.deprecated.map((d) => d.file),
           drift: result.drift.map((d) => ({ id: d.id, usedBy: d.usedBy })),
           missingTestCases: result.elements
             .filter((e) => e.untestedNew.length)
@@ -202,6 +204,13 @@ function render(r, md = false) {
   if (r.fenced.length) {
     L.push(`**Fenced — cannot be covered by an automated suite:**`);
     for (const f of r.fenced) L.push(`- \`${f.file}\` (matched \`${f.glob}\`)`);
+    L.push('');
+  }
+  if (r.deprecated && r.deprecated.length) {
+    L.push(`**Deprecated — dead code, does not need a suite:**`);
+    for (const d of r.deprecated) L.push(`- \`${d.file}\` (matched \`${d.glob}\`)`);
+    L.push('');
+    L.push('_Listed in `retired` — the fix is to DELETE the route and its component._');
     L.push('');
   }
   if (r.drift.length) {

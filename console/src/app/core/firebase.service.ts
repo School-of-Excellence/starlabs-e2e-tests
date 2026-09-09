@@ -519,6 +519,24 @@ export class FirebaseService {
     );
   }
 
+  /**
+   * NEW FLOW — approve a branch for rollout. On success the backend opens the PR → development;
+   * a GitHub admin merges it (the console never merges).
+   *
+   * The server is the fence, not this method: it re-checks APPROVE_ROLLOUT, that
+   * `testSuiteStatus.run.state === 'PASSED'`, and that the run covers the CURRENT head. Pass
+   * `bypass` only for an admin override — it needs BYPASS_SUITE_STATUS and a reason of at least
+   * 10 characters, and is recorded on the candidate for good.
+   */
+  approveRollout(rc: ReleaseCandidate, bypass?: { reason: string }): Promise<ActionResult> {
+    return this.invoke(
+      'approveRollout',
+      { repo: rc.repo, branch: rc.branch, ...(bypass ? { bypass } : {}) },
+      () => this.applyRolloutApproval(rc.id, bypass),
+      `approve rollout for ${rc.branch}${bypass ? ' (BYPASS)' : ''}`,
+    );
+  }
+
   /** Tester sign-off on the dev deploy (safe for prod, D4). → `signoff` stage=prod. */
   signoffProd(
     rc: ReleaseCandidate,
@@ -852,6 +870,34 @@ export class FirebaseService {
   }
 
   /** MOCK: a dispatched test run — gateRun QUEUED → RUNNING → PASSED with a demo report id. */
+  /**
+   * MOCK-MODE only — optimistically show the rollout as approved so the board advances offline.
+   * The PR number is not faked: in mock mode no PR exists, and inventing one would make the card
+   * link somewhere that isn't there.
+   */
+  private applyRolloutApproval(id: string, bypass?: { reason: string }): void {
+    this.patch(id, (rc) => ({
+      ...rc,
+      rollout: {
+        state: 'APPROVED' as const,
+        by: '(me)',
+        at: Date.now(),
+        sha: rc.headSha,
+        ...(bypass
+          ? {
+              bypass: {
+                by: '(me)',
+                at: Date.now(),
+                reason: bypass.reason,
+                suiteState: rc.testSuiteStatus?.state,
+                runState: rc.testSuiteStatus?.run?.state,
+              },
+            }
+          : {}),
+      },
+    }));
+  }
+
   private applyGateQueued(id: string): void {
     const at = new Date().toISOString();
     this.patch(id, (rc) => ({

@@ -161,3 +161,166 @@ router can never reach. `profiles` remains reachable only via `src/app/ProfilePi
 The spec also locates by `locator('tr')`, `locator('input[type="checkbox"]')` and
 `getByRole('button', { name: /Update Role/i })` — no `data-testid` — so the alignment check indexes
 zero selectors for it and `NEEDS_UPDATE` can never fire for this suite.
+
+## 9. Addendum — ATC un-fenced (operator decision, 2026-09-08)
+
+`fenced.appPaths` emptied. Removed: `src/app/ATC/**`, `src/app/ATC-Ops/**`,
+`src/app/view-ai-generated-atc/**`.
+
+**Operator's reasoning, stated explicitly:** the ATC restriction applies to the REAL database only;
+seeding into the emulator is allowed, so ATC components are not un-automatable.
+
+This REVERSES the 2026-09-03/04 fencing decisions and NARROWS a rule that two other records still
+state as absolute. The concern was raised before the change and the operator reaffirmed with the
+clarification above. Both records now contradict the manifest and should be updated, or a future
+session will re-fence these paths:
+
+- `starlabs-angular/CLAUDE.md:31` — *"Never read, write, or **seed** ATC Firestore collections… Exclude
+  all `src/app/ATC/**` components and ATC readers from the test pipeline."*
+- `profiles/profilelist.spec.ts` — cancels its Delete Profile case citing *"a standing rule, not an
+  emulator limitation."*
+
+**Consequences, all verified:**
+
+1. No suite claims `src/app/ATC/**`, so ATC now reports **SUITES_MISSING** — still blocked; only the
+   label and the reason change. Operator acknowledged this explicitly.
+2. `NO_COVERAGE_POSSIBLE` now has **no members** and is unreachable. The verdict is retained for
+   future use; `retired`/deprecated does NOT belong there (see §10).
+3. The second layer is untouched: `_support/excluded-routes.ts` (D-001) still blocks any spec from
+   NAVIGATING to ~30 ATC routes. Removing the fence does NOT by itself permit ATC testing — four
+   changes are needed for that (un-fence, map ATC paths to a suite, lift the route denylist, write
+   the specs). Only the first is done.
+4. `scripts/check-route-coverage.mjs:197` and `scripts/check-atc-coupling.mjs:75` read the same key to
+   drop paths from the coverage denominator. With it empty, ATC screens re-enter the denominator and
+   reported coverage will DROP. Safe by construction (`?? []`), but the numbers move.
+
+Verified: JSON valid · 66/66 unit tests pass (their fixtures declare their own `fenced`, so they are
+independent of the real manifest) · ATC paths → SUITES_MISSING · controls unchanged
+(quiz → SUITES_MISSING, queue → MATCHED, README → NOT_APPLICABLE).
+
+## 10. Verdict-condition redesign — decisions taken, not yet implemented
+
+- **Exercised-check scope: components only** (option (a), locked). `MATCHED` will additionally require
+  that a changed `.component.*` has ≥1 `data-testid` referenced by a spec in the SELECTED suite.
+  Services, pipes, guards, models and resolvers pass on path coverage alone. Rejected: proving a
+  service via its consuming components — measured 0 of 26 services could pass under "all consumers
+  exercised" (`authguard.service.ts` alone has 237 consumers, 14 exercised), and 2 of 26 under "any",
+  which is a green that means nothing.
+- **Deprecated → NOT_APPLICABLE**, `canProceed: true`. NOT `NO_COVERAGE_POSSIBLE`: deprecated code
+  COULD be tested and simply should not exist. Needs `retired` re-keyed from ROUTES to FILE-PATH globs
+  and read by `classifyChanges` — it is read only by check-route-coverage today.
+- **Blast radius measured, gating deferred:** of 439 components, only 18 (4%) satisfy the new MATCHED
+  rule, all in `queue` — the only suite whose specs use testids. Recommendation on the table:
+  ship the rule as a REPORT field first, gate once the number climbs.
+
+---
+
+# 2026-09-09 — Workflow rollout, increment 1
+
+Operator: "implement it now and lets test". Built steps 2b and 3 of the agreed flow.
+
+## D2 — no tester gate on production (operator decision, 2026-09-09)
+
+The dev→prod PR is created automatically at merge and approved by a GitHub admin. There is NO
+console tester sign-off on it. The concern was put to the operator explicitly — today every
+successful dev deploy resets `prodGate` to NONE, forcing a tester to re-validate the MERGED
+development state — and the operator chose "accept it, git admin only". Consequence, accepted: the
+only test evidence for a production release comes from each feature branch BEFORE merge. Two
+features that break each other after merging are caught by nothing. Rejected alternatives: a tester
+sign-off on the prod PR, and re-running the suites against `development` after the dev deploy.
+
+## Step 2b — deprecated files (SHIPPED)
+
+`retired.appPaths` is the FILE-PATH twin of `retired.routes` (which is route-keyed and read only by
+check-route-coverage). `classifyChanges` now matches it BEFORE `fenced` and before any suite, into
+its own bucket. A deprecated file is neither a coverage gap nor manual-only — it does not
+participate. Deprecated-only commit → NOT_APPLICABLE, proceeds. Seeded with the one known dead
+screen, `userprofile_old`.
+
+Verified on the real app: deprecated-only → NOT_APPLICABLE · deprecated+covered → MATCHED ·
+deprecated+uncovered → SUITES_MISSING (the gap is NOT masked) · controls unchanged.
+Carried through `readiness.cjs` → payload → `recordSuiteStatus` ingest → frontend
+`SuiteStatusDetails.deprecated`, so the console can say "deprecated screen" rather than "docs only".
+
+## Step 3 — dispatch + run result (BUILT, not yet run)
+
+- **`maybeDispatchSuites()`** in `readiness.ts`, fired from `recordSuiteStatus`. Guards, each a
+  decision already taken: state MUST be `MATCHED` (NOT_APPLICABLE is also canProceed:true but
+  carries ZERO suites, so dispatching it would start a run with nothing to run); suites MUST be
+  non-empty; the sha MUST differ from `run.sha` (ten pushes an hour must not launch ten matrices).
+  NEVER throws — the alignment verdict must land even if GitHub is down.
+  WHY in the backend: `GITHUB_TOKEN` cannot start a workflow run (GitHub suppresses runs it
+  triggers), and the console's future Recheck button re-enters the same path — one code path.
+- **`recordSuiteRun`** — new ingest endpoint, writes ONLY `testSuiteStatus.run`. `recordSuiteStatus`
+  never writes that key, so a re-check cannot erase a run result, and the two interleave safely.
+  The flip side: a stale run can outlive its check, so the UI must compare `run.sha` with
+  `testSuiteStatus.sha` before trusting it.
+- **`branch-suites.yml`** (app repo, NEW) — display name `branch suites`, containing none of
+  preview/deploy/e2e, so `handleWorkflowRun` logs it "not a tracked lane" and it cannot touch
+  `gateRun`/`testSummary`/`preview.*`. Four jobs: `start` (RUNNING) → `resolve` (suite names →
+  configs from the hub manifest, the SAME mapping preview-e2e.yml uses so the lanes cannot
+  disagree) → `suite` (matrix on the hub's `web-e2e.yml`, `stage: branch-suite` to keep these out
+  of the old flow's cicd-audit ledger) → `report` (collapses the legs; PASSED iff
+  `needs.suite.result == 'success'`).
+
+Verified: 75/75 unit tests · both tsc configs clean · both workflow YAMLs parse · workflow display
+name contains none of the three tracked words.
+
+## ⚠️ Blocker for testing step 3
+
+`createWorkflowDispatch` resolves `workflow_id` against the repo's DEFAULT branch. `branch-suites.yml`
+currently exists only where it is pushed — it MUST be on `starlabs-angular`'s default branch (`main`)
+before the dispatcher can fire, or the API returns 404. Pushing it to `feature/cicd-rollout` alone is
+not enough. (`main` is in branch-channels.yml's `branches-ignore`, so landing it there triggers
+nothing.)
+
+Also: `recordSuiteStatus` now binds `GITHUB_APP_PRIVATE_KEY`, so the redeploy must include it, and
+`recordSuiteRun` is new.
+
+## Not yet built
+
+Steps 4–7: `approveRollout` callable (tester/admin, requires `run.state === PASSED`), the
+`BYPASS_SUITE_STATUS` capability + audit fields, the auto PR→development on approval, the
+find-or-create PR development→production on the merge webhook, and the console UI.
+
+Role tightening (developer → read-only) is deliberately NOT done: `ROLE_CAPABILITIES` is shared with
+the OLD flow, and removing `DEPLOY_PREVIEW`/`CREATE_PR_DEV` today would break the live path. It
+belongs at cutover, with the old-flow buttons.
+
+## Increment 2 — steps 4–7 (BUILT, hub side complete)
+
+- **Capabilities `APPROVE_ROLLOUT` (tester+admin) and `BYPASS_SUITE_STATUS` (admin only)** added to
+  BOTH copies (`functions/src/model.ts`, `src/app/core/roles.ts`). Added ALONGSIDE the old ones —
+  `developer` keeps `DEPLOY_PREVIEW`/`CREATE_PR_DEV` for now. Stripping them today would break the
+  OLD flow, which is still the live path; role tightening belongs at cutover.
+- **`RolloutFacet`** on the candidate (`rollout`), and the backend `ReleaseCandidate` finally gained
+  typed `previewStatus`/`testSuiteStatus` (they existed only on the frontend, written as untyped
+  patches). NONE are read by `deriveStatus()` — the new flow still cannot move a status.
+- **`approveRollout` callable** (in index.ts, where requireAuth/requireCapability/appOctokit live —
+  readiness.ts cannot import index.ts without a cycle). Enforces server-side: APPROVE_ROLLOUT,
+  `run.state === 'PASSED'`, AND `run.sha === headSha`. That last test matters because a re-check
+  overwrites state/details but deliberately leaves `run` alone, so a stale PASS can outlive the
+  check that produced it. Admin override needs BYPASS_SUITE_STATUS plus a reason of ≥10 chars,
+  recorded permanently in `rollout.bypass`. Opens the PR FIRST and only then records the approval —
+  an approval with no PR is a lie the console would keep showing.
+  NOTE: opening this PR advances the OLD flow's `derivedStatus` to PR_TO_DEV via the pull_request
+  webhook. Unavoidable while both flows share one document; harmless because the old flow is going.
+- **`ensureDevToProdPr()`** — find-or-create, called on every feature→development merge. Idempotent
+  because a release batch is several merges: an open PR short-circuits, "no commits between" means
+  nothing to ship, anything else is logged and swallowed (a webhook must never 500 over this).
+- **Console UI** — run badge (with pass/fail counts and a report link), "run stale" warning,
+  approve button, admin "bypass & approve" (mandatory reason via prompt), and the approved state
+  with its PR link, bypass warning and "approval stale" flag.
+- **Mock fixture** — the all-green candidate's `run.sha` now matches its `headSha`, so mock mode
+  actually exercises the approve path.
+
+Verified: 75/75 unit tests · functions tsc clean · frontend tsc clean · **full AOT production build
+clean**.
+
+## Still to do before the old flow can be removed
+
+1. `branch-suites.yml` must reach `starlabs-angular`'s DEFAULT branch or the dispatch 404s.
+2. Nothing has RUN yet — steps 3–7 are built and typechecked, never executed.
+3. Old-flow removal: `deployPreview`/`signoff`/`createPullRequest` + their buttons, `preview.yml`,
+   `preview-e2e.yml`, and the projection's dependence on the old facets. Deliberately NOT started —
+   removing the live path before the replacement has run once would leave no working flow at all.
