@@ -47,7 +47,17 @@
   },
   "crossCutting": {
     "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
+    "_sharedUi2026_09_09": "loading-progress and ProfilePicture are SHARED UI: they live under profiles' appPaths but are imported by 9 systems each (measured, not assumed — loading-progress by queue/journey/support/events/appointments/content/business/workshops/comms; profile-picture by queue/journey/support/events/appointments/business/workshops/evomap/modes). Routing them to profiles alone meant a spinner change ran ONE gate while nine systems rendered it. They are NOT relocated to src/app/shared/** (operator decision 2026-09-09 — no file moves); listing them here gives the same routing without touching the tree. Narrower shared components (video-player, participants-analytics inputs, Product Designer delivery-set widgets, channel-communication) are deliberately NOT here: they are consumed by 1-4 named systems, so they are listed in those suites' appPaths instead, which is more precise than making every PR run everything.",
     "appPaths": [
+      "src/app/loading-progress/**",
+      "src/app/ProfilePicture/**",
+      "src/app/authguard.service.ts",
+      "src/app/custompipe.pipe.ts",
+      "src/app/wati.service.ts",
+      "src/app/DialogBox/**",
+      "src/app/form-element/**",
+      "src/app/Service/**",
+      "src/environments/**",
       "src/app/**/*.guard.ts",
       "src/app/shared/**",
       "src/app/app.routes.ts",
@@ -72,7 +82,25 @@
         "src/app/queue system/**",
         "src/app/big/**",
         "src/app/OpenVidu/**",
-        "src/app/LiveKit/**"
+        "src/app/LiveKit/**",
+        "src/app/Participants Profile Management/participants-analytics/wati-input/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Participants Profile Management/participants-analytics/manage-participantlist-dialog/**",
+        "src/app/Participants Profile Management/participants-analytics/tag-participants/**",
+        "src/app/Participants Profile Management/participants-analytics/add-queue-tag/**",
+        "src/app/Participants Profile Management/participants-analytics/bulk-add-products/**",
+        "src/app/Participants Profile Management/participants-analytics/map-recommendedplaylist-toparticipant.component/**",
+        "src/app/AppEngagement/app-action-pending/**",
+        "src/app/Product Designer/delivery-set/form-option/**",
+        "src/app/Product Designer/delivery-set/form-template-preview/**",
+        "src/app/Product Designer/delivery-set/formtemplate/**",
+        "src/app/Channel Communication/channel-communication/**",
+        "src/app/Events/events-stage-data/**",
+        "src/app/EvolutionMapping/evolution-mapping/participant-evolution-mapping/**",
+        "src/app/video-player/**",
+        "src/app/instance-status.service.ts",
+        "src/app/web-studio-invitation/**"
       ],
       "cfPaths": [
         "functions/components/queuesystem.js",
@@ -135,7 +163,9 @@
         "src/app/Participants Profile Management/journey-product-purchase/**",
         "src/app/Participants Profile Management/participant-product/**",
         "src/app/Participants Profile Management/participant-delivery-sequence/**",
-        "src/app/Product Designer/**"
+        "src/app/Product Designer/**",
+        "src/app/Participants Profile Management/new-profile/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**"
       ],
       "cfPaths": [
         "functions/components/participantmetadata.js"
@@ -154,7 +184,8 @@
         "src/app/main-dashboard/**",
         "src/app/quiz/**",
         "src/app/hpc/**",
-        "src/app/Zone Management/**"
+        "src/app/Zone Management/**",
+        "src/app/New-Workshop/quiz/**"
       ],
       "cfPaths": [
         "functions/components/interimreport.js",
@@ -172,7 +203,8 @@
       "appPaths": [
         "src/app/Communication Center/**",
         "src/app/Channel Communication/**",
-        "src/app/in-app-message-input/**"
+        "src/app/in-app-message-input/**",
+        "src/app/Customer Support/releaselogdialog/**"
       ],
       "cfPaths": [
         "functions/components/communication.js"
@@ -219,7 +251,10 @@
       "appPaths": [
         "src/app/participant-touchpoint/**",
         "src/app/Participants Profile Management/**",
-        "src/app/quiz/**"
+        "src/app/quiz/**",
+        "src/app/New-Workshop/quiz/**",
+        "src/app/video-player/**",
+        "src/app/Customer Support/add-issue/**"
       ],
       "cfPaths": [
         "functions/components/participantmode.js"
@@ -236,7 +271,8 @@
       "appPaths": [
         "src/app/login/**",
         "src/app/exceptionalrouting/**",
-        "src/app/route-configuration/**"
+        "src/app/route-configuration/**",
+        "src/app/icon-list.ts"
       ],
       "cfPaths": [
         "functions/components/user_registration.js"
@@ -253,7 +289,13 @@
         "src/app/Workshop/**",
         "src/app/New-Workshop/**",
         "src/app/tv-auth.component.ts",
-        "src/app/eiflix-telemetry/**"
+        "src/app/eiflix-telemetry/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Product Designer/delivery-set/form-option/**",
+        "src/app/Product Designer/delivery-set/form-template-preview/**",
+        "src/app/Product Designer/delivery-set/update-delivery/**",
+        "src/app/content/episodes-dashboard/upload-episode-dialog/**"
       ],
       "cfPaths": [
         "functions/components/workshop.js"
@@ -285,7 +327,13 @@
       "ciReady": true,
       "appPaths": [
         "src/app/Events/**",
-        "src/app/Diagnostics Tool/**"
+        "src/app/Diagnostics Tool/**",
+        "src/app/Participants Profile Management/participants-analytics/wati-input/**",
+        "src/app/Participants Profile Management/participants-analytics/email-input/**",
+        "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
+        "src/app/Participants Profile Management/participants-analytics/bulk-add-products/**",
+        "src/app/Participants Profile Management/participants-analytics/tag-participants/**",
+        "src/app/Channel Communication/channel-communication/**"
       ],
       "cfPaths": []
     },
@@ -304,7 +352,9 @@
         "src/app/loading-progress/**",
         "src/app/New-Workshop/workshop-dashboard/sendmessages/**",
         "src/app/New-Workshop/whatsapp-progress-dialog.component.ts",
-        "src/app/participant-videoask/**"
+        "src/app/participant-videoask/**",
+        "src/app/video-player/**",
+        "src/app/Customer Support/add-issue/**"
       ],
       "cfPaths": [
         "functions/components/participantmetadata.js"
