@@ -14,7 +14,7 @@
     "reviewNote": "globs are a first draft — operator review pass pending (plan §7.4)"
   },
   "neutral": {
-    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.) CSS added by operator decision 2026-09-08: stylesheets never make a suite mandatory. TRADE-OFF STATED AND ACCEPTED — a global stylesheet change can break layout on any screen, and this exempts ALL of it (a .css-only commit now reports NOT_APPLICABLE and would dispatch nothing). The trigger was src/app/app.component.css blocking a branch as 'uncovered': the app shell sits at the ROOT of src/app, where every suite's `src/app/<Folder>/**` glob fails to reach. Narrower alternatives (fencing only the shell, or adding the shell to crossCutting) were available and NOT chosen.",
+    "_why": "Files that are not app code. They never make a suite mandatory and never count as uncovered — a README commit must not read as 'untested'. Used by scripts/readiness (NOT by the console mirror, which only carries version/crossCutting/cfPredeploy). NOTE: `**/*.md` compiles to `^.*/[^/]*\\.md$` and therefore requires a directory — root-level files need the bare `*.md` form too. Keep BOTH; do not 'simplify' this list. (globToRegex semantics are shared with console/functions/src/suites.ts and must not diverge.) Operator decision 2026-09-09 added: firebase.json + package-lock.json (config/lockfile — note package.json itself stays crossCutting, a dependency CHANGE still fans out to every suite), scripts/** (build/tooling, never shipped to a user), and 'src/app/LiveKit Cloud/**' (declared out of scope for automated coverage — this is the LiveKit Cloud component only; plain 'src/app/LiveKit/**' is NOT listed and still reports SUITES_MISSING). Operator decision 2026-09-09 also added: src/assets/** (vendored third-party binaries — MediaPipe .tflite/.wasm and friends; no Playwright suite can cover a wasm blob) and src/coi-serviceworker.js (vendored COI service worker). CSS added by operator decision 2026-09-08: stylesheets never make a suite mandatory. TRADE-OFF STATED AND ACCEPTED — a global stylesheet change can break layout on any screen, and this exempts ALL of it (a .css-only commit now reports NOT_APPLICABLE and would dispatch nothing). The trigger was src/app/app.component.css blocking a branch as 'uncovered': the app shell sits at the ROOT of src/app, where every suite's `src/app/<Folder>/**` glob fails to reach. Narrower alternatives (fencing only the shell, or adding the shell to crossCutting) were available and NOT chosen.",
     "appPaths": [
       "*.md",
       "**/*.md",
@@ -22,6 +22,12 @@
       "**/*.txt",
       "*.css",
       "**/*.css",
+      "firebase.json",
+      "package-lock.json",
+      "scripts/**",
+      "src/app/LiveKit Cloud/**",
+      "src/assets/**",
+      "src/coi-serviceworker.js",
       ".github/**",
       "docs/**",
       "specs/**",
@@ -47,12 +53,17 @@
     ]
   },
   "crossCutting": {
-    "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory.",
+    "_why": "narrow map, broad fallback (preview-time-gate journal 2026-06-29): a match here can affect ANYTHING, so ALL ciReady suites become mandatory. Operator decision 2026-09-09 added the ROOT of src/app, which no suite glob could reach (every suite is shaped src/app/<Folder>/**): the app shell (app.component.*) and three app-wide root services. BUG FIX in the same pass — `src/app/**/*.guard.ts` compiles to ^src/app/.*/[^/]*\\.guard\\.ts$ and therefore REQUIRES a directory, so the two root guards (auth.guard.ts, role.guard.ts) never matched and were reported as uncovered rather than cross-cutting. The bare `src/app/*.guard.ts` form fixes it — exactly the `*.md` / `**/*.md` precedent documented in `neutral`. Keep BOTH forms. TRADE-OFF: a change to any of these now fans out to all 12 suites, which is expensive but is the safe direction for the app shell and the authorization gate. NOTE src/main.ts, src/index.html and src/app/app.*.server.ts share the same root-level blind spot and are still NOT listed.",
     "appPaths": [
       "src/app/**/*.guard.ts",
+      "src/app/*.guard.ts",
       "src/app/shared/**",
       "src/app/app.routes.ts",
       "src/app/app.config.ts",
+      "src/app/app.component.*",
+      "src/app/authguard.service.ts",
+      "src/app/instance-status.service.ts",
+      "src/app/nav-drawer.service.ts",
       "angular.json",
       "package.json"
     ],

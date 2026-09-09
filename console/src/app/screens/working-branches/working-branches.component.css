@@ -434,3 +434,123 @@
       .muted-row .link:hover {
         background: var(--chip);
       }
+
+/* ══ NEW FLOW PIPELINE (cutover 2026-09-09) ═══════════════════════════════════════════════════
+   Four equal stages, left to right, in the order they happen. The stage number stays visible so
+   the card reads as a SEQUENCE rather than four unrelated badges — you should be able to tell
+   where a branch is from three feet away.
+
+   Colours come from the global dark palette in styles.css (--panel-2 / --border / --st-*). Do NOT
+   reintroduce literal hex or a light fallback here: the console is dark-only, and a `#fff`
+   fallback is exactly what made these cards render as white slabs. */
+.pipe {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 8px;
+}
+
+.stage {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  border-left-width: 3px;
+  min-width: 0; /* lets a long suite list ellipsis instead of blowing out the grid */
+}
+
+/* The left edge carries the state — the fastest signal on a dense board. */
+.stage[data-tone='ok']     { border-left-color: var(--st-ok); }
+.stage[data-tone='bad']    { border-left-color: var(--danger); }
+.stage[data-tone='warn']   { border-left-color: var(--st-pr-prod); }
+.stage[data-tone='active'] { border-left-color: var(--accent); }
+.stage[data-tone='none']   { border-left-color: var(--border); opacity: 0.6; }
+
+.st-n {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  background: var(--chip);
+  color: var(--muted);
+}
+.stage[data-tone='ok'] .st-n     { background: var(--st-ok); color: var(--bg); }
+.stage[data-tone='bad'] .st-n    { background: var(--danger); color: var(--bg); }
+.stage[data-tone='warn'] .st-n   { background: var(--st-pr-prod); color: var(--bg); }
+.stage[data-tone='active'] .st-n { background: var(--accent); color: var(--bg); }
+
+.st-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+
+.st-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.st-val {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+.st-sub,
+.st-links {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.st-warn { font-size: 10px; font-weight: 700; color: var(--st-pr-prod); }
+.st-fail { font-size: 11px; color: var(--danger); }
+
+/* Stage 4 is the only place on this screen where a human acts, so it carries the one
+   emphasised control on the card. */
+.approve {
+  margin-top: 3px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--st-ok);
+  background: color-mix(in srgb, var(--st-ok) 18%, transparent);
+  color: var(--st-ok);
+  cursor: pointer;
+}
+.approve:hover:not(:disabled) {
+  background: var(--st-ok);
+  color: var(--bg);
+}
+.approve:disabled { opacity: 0.45; cursor: not-allowed; }
+.approve.warn {
+  border-color: var(--st-pr-prod);
+  background: color-mix(in srgb, var(--st-pr-prod) 18%, transparent);
+  color: var(--st-pr-prod);
+}
+.approve.warn:hover:not(:disabled) {
+  background: var(--st-pr-prod);
+  color: var(--bg);
+}
+
+.cardfoot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.cardfoot .ts { margin-left: auto; }
+
+/* Below ~900px four columns become unreadable; stack to two. */
+@media (max-width: 900px) {
+  .pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

@@ -1,6 +1,9 @@
     <header class="head">
       <h2>Working Branches</h2>
-      <p class="muted">Per-feature dev lane: deploy a preview, get it signed off, open a PR → development. Developers act here.</p>
+      <p class="muted">
+        Every push builds two preview channels and checks that a test suite covers what you changed.
+        When the suites pass, a tester approves the rollout and the PR to <code>development</code> opens.
+      </p>
     </header>
 
     <rc-filter-bar [candidates]="rcs()" (changed)="filter.set($event)" />
@@ -45,13 +48,6 @@
               </div>
             </div>
             <div class="top-right">
-              <rc-status-chip [status]="rc.derivedStatus" />
-              @if (shipping(rc); as sb) {
-                <span class="shipbadge" title="Production lane (derived from the development entry)">
-                  <span class="ship-lbl">prod</span>
-                  <rc-status-chip [status]="sb" />
-                </span>
-              }
               <div class="menu-wrap">
                 <button class="kebab" title="Branch menu" (click)="toggleMenu(rc.id, $event)">⋮</button>
                 @if (openMenu() === rc.id) {
@@ -64,143 +60,108 @@
             </div>
           </div>
 
-          <!-- Status progression: the last 3 lifecycle stages ending at the current one -->
-          <div class="trail">
-            @for (s of recentStatuses(rc); track s; let last = $last; let first = $first) {
-              @if (!first) { <span class="trail-sep">›</span> }
-              <span class="trail-pill" [class.cur]="last" [style.--c]="statusColor(s)">{{ statusLabel(s) }}</span>
-            }
-          </div>
-
-          <div class="statemsg" [attr.data-tone]="stateMessage(rc).tone">{{ stateMessage(rc).text }}</div>
-
-          <!-- Facet badges (dev lane only) -->
-          <div class="facets">
-            @if (isFlutter(rc)) {
-              <!-- Flutter: native delivery (both envs → App Distribution), no web preview URL. -->
-              <span class="badge" [attr.data-tone]="buildTone(rc)">
-                build: {{ buildStateLabel(rc) }}
-              </span>
-              @for (p of mobilePlatforms(rc); track p) {
-                @for (env of MOBILE_ENVS; track env) {
-                  @if (mobileEnv(rc, p, env); as d) {
-                    <span class="badge" [attr.data-tone]="buildTone(rc)">
-                      {{ p }}/{{ env }}: {{ d.status }}
-                      @if (d.distUrl) { · <a class="ghlink sm" [href]="d.distUrl" target="_blank" rel="noopener">install ↗</a> }
-                    </span>
-                  }
-                }
-              }
-            } @else {
-              <span class="badge" [attr.data-tone]="buildTone(rc)">
-                preview: {{ rc.preview.buildState }}
-                @if (previewStale(rc)) { <em class="stale">stale</em> }
-              </span>
-            }
-            <span class="badge" [attr.data-tone]="gateTone(rc.devGate.verdict)">
-              dev gate: {{ rc.devGate.verdict }}
-              @if (signoffStale(rc.devGate, rc.headSha)) { <em class="stale">stale</em> }
-            </span>
-            @if (rc.prDev.state !== 'NONE') {
-              <span class="badge" [attr.data-tone]="prTone(rc.prDev.state)">
-                PR→dev #{{ rc.prDev.number }}: {{ rc.prDev.state }}
-                @if (rc.prDev.mergeable === false) { · not mergeable }
-                @if (rc.prDev.checksState) { · checks {{ rc.prDev.checksState }} }
-                @if (prHasUnreviewed(rc.prDev, rc.devGate)) { <em class="stale">unreviewed</em> }
-              </span>
-            }
-          </div>
-
-          <!-- NEW branch-channels flow (2026-08-19): informational only. Written by
-               branch-channels.yml via the `readiness` codebase and read by nothing that gates —
-               the block simply does not render until that workflow has reported for this branch. -->
-          @if (rc.previewStatus || rc.testSuiteStatus) {
-            <div class="facets">
-              @if (rc.previewStatus; as ps) {
-                @for (env of BC_ENVS; track env) {
-                  @if (bcChannel(ps, env); as ch) {
-                    <span class="badge" [attr.data-tone]="bcChannelTone(ch)">
-                      {{ env }} channel: {{ ch.status }}
-                      @if (ch.url) {
-                        · <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener">open ↗</a>
+          <!-- ══ NEW FLOW PIPELINE ══════════════════════════════════════════════════════
+               Four stages, left to right, in the order they happen. The old flow's
+               preview/devGate/prDev badges, gate block and action buttons were REMOVED here
+               (cutover 2026-09-09) — the backend callables still exist until the old flow is
+               retired, but this screen no longer offers them. -->
+          <div class="pipe">
+            <!-- ① two preview channels -->
+            <div class="stage" [attr.data-tone]="nfPreviewTone(rc)">
+              <span class="st-n">1</span>
+              <div class="st-body">
+                <span class="st-label">Preview</span>
+                <span class="st-val">{{ nfPreviewLabel(rc) }}</span>
+                @if (rc.previewStatus; as ps) {
+                  <span class="st-links">
+                    @for (env of BC_ENVS; track env) {
+                      @if (bcChannel(ps, env); as ch) {
+                        @if (ch.url) {
+                          <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener"
+                             [title]="env + ' channel · ' + (ch.project || '')">{{ env }} ↗</a>
+                        } @else {
+                          <span class="st-fail" [title]="env + ' channel failed'">{{ env }} ✕</span>
+                        }
                       }
-                    </span>
-                  }
-                }
-                @if (bcStaleSha(rc); as staleSha) {
-                  <span class="badge" data-tone="warn"
-                        [title]="'Channels were built from ' + staleSha + ' — HEAD has moved since'">
-                    channels stale
+                    }
                   </span>
                 }
-              }
-              @if (rc.testSuiteStatus; as ts) {
-                <span class="badge" [attr.data-tone]="bcSuiteTone(ts.state)" [title]="bcSuiteDetail(ts)">
-                  test suites: {{ bcSuiteLabel(ts.state) }}
-                  @if (ts.canProceed && ts.suites?.length) { · {{ ts.suites!.join(', ') }} }
-                  @if (ts.runUrl) {
-                    · <a class="ghlink sm" [href]="ts.runUrl" target="_blank" rel="noopener">details ↗</a>
-                  }
-                </span>
-                @if (ts.run; as run) {
-                  <span class="badge" [attr.data-tone]="bcRunTone(run.state)"
-                        [title]="'Suite run ' + run.state + (run.sha ? ' against ' + run.sha.slice(0,7) : '')">
-                    run: {{ bcRunLabel(run.state) }}
-                    @if (run.passed !== undefined) { · {{ run.passed }}✓ }
+                @if (bcStaleSha(rc); as staleSha) {
+                  <span class="st-warn" [title]="'Built from ' + staleSha + ' — HEAD has moved'">stale</span>
+                }
+              </div>
+            </div>
+
+            <!-- ② does a suite cover every worked component? -->
+            <div class="stage" [attr.data-tone]="rc.testSuiteStatus ? bcSuiteTone(rc.testSuiteStatus.state) : 'none'">
+              <span class="st-n">2</span>
+              <div class="st-body">
+                <span class="st-label">Suite check</span>
+                @if (rc.testSuiteStatus; as ts) {
+                  <span class="st-val" [title]="bcSuiteDetail(ts)">{{ bcSuiteLabel(ts.state) }}</span>
+                  @if (ts.suites?.length) { <span class="st-sub">{{ ts.suites!.join(', ') }}</span> }
+                } @else {
+                  <span class="st-val">—</span>
+                }
+              </div>
+            </div>
+
+            <!-- ③ did those suites actually run, and pass? -->
+            <div class="stage" [attr.data-tone]="nfRunTone(rc)">
+              <span class="st-n">3</span>
+              <div class="st-body">
+                <span class="st-label">Test run</span>
+                @if (rc.testSuiteStatus?.run; as run) {
+                  <span class="st-val">{{ bcRunLabel(run.state) }}</span>
+                  <span class="st-sub">
+                    @if (run.passed !== undefined) { {{ run.passed }}✓ }
                     @if (run.failed) { · {{ run.failed }}✗ }
                     @if (run.runUrl) {
                       · <a class="ghlink sm" [href]="run.runUrl" target="_blank" rel="noopener">report ↗</a>
                     }
                   </span>
                   @if (run.state === 'PASSED' && !bcRunFresh(rc)) {
-                    <span class="badge" data-tone="warn"
-                          title="This run did not cover the current commit — push moved HEAD since it ran">
-                      run stale
-                    </span>
+                    <span class="st-warn" title="This run did not cover the current commit">stale</span>
                   }
+                } @else {
+                  <span class="st-val">not run</span>
                 }
-              }
+              </div>
+            </div>
 
-              <!-- Rollout approval — the NEW flow's single human gate. -->
-              @if (rc.rollout?.state === 'APPROVED') {
-                <span class="badge" data-tone="ok"
-                      [title]="'Approved by ' + (rc.rollout!.by || '—')">
-                  rollout: approved
-                  @if (rc.rollout!.prUrl) {
-                    · <a class="ghlink sm" [href]="rc.rollout!.prUrl" target="_blank" rel="noopener">PR ↗</a>
-                  }
-                </span>
-                @if (rc.rollout!.bypass; as bp) {
-                  <span class="badge" data-tone="warn"
-                        [title]="'Suite status bypassed by ' + bp.by + ' — ' + bp.reason">
-                    ⚠ bypassed
+            <!-- ④ the one human gate -->
+            <div class="stage" [attr.data-tone]="nfRolloutTone(rc)">
+              <span class="st-n">4</span>
+              <div class="st-body">
+                <span class="st-label">Rollout</span>
+                @if (rc.rollout?.state === 'APPROVED') {
+                  <span class="st-val" [title]="'Approved by ' + (rc.rollout!.by || '—')">approved</span>
+                  <span class="st-sub">
+                    @if (rc.rollout!.prUrl) {
+                      <a class="ghlink sm" [href]="rc.rollout!.prUrl" target="_blank" rel="noopener">PR ↗</a>
+                    }
+                    @if (rc.rollout!.bypass; as bp) {
+                      <span class="st-warn" [title]="'Bypassed by ' + bp.by + ' — ' + bp.reason">⚠ bypassed</span>
+                    }
                   </span>
-                }
-                @if (bcRolloutStale(rc)) {
-                  <span class="badge" data-tone="warn"
-                        title="Approved against an older commit — HEAD has moved since">
-                    approval stale
-                  </span>
-                }
-              } @else if (rc.testSuiteStatus) {
-                @if (canApproveRollout(rc)) {
-                  <button class="histbtn" (click)="approveRollout(rc)"
-                          title="Approve for rollout — opens the PR to development">
-                    approve for rollout
+                } @else if (canApproveRollout(rc)) {
+                  <button class="approve" [disabled]="busy() === rc.id" (click)="approveRollout(rc)">
+                    Approve for rollout
                   </button>
                 } @else if (canBypassRollout(rc)) {
-                  <button class="histbtn" (click)="bypassRollout(rc)"
-                          [title]="'Blocked: ' + bcRolloutBlockReason(rc) + ' — admin override, recorded'">
-                    ⚠ bypass &amp; approve
+                  <button class="approve warn" [disabled]="busy() === rc.id"
+                          [title]="'Blocked: ' + bcRolloutBlockReason(rc) + ' — admin override, recorded permanently'"
+                          (click)="bypassRollout(rc)">
+                    ⚠ Bypass &amp; approve
                   </button>
                 } @else {
-                  <span class="badge" data-tone="none" [title]="bcRolloutBlockReason(rc) || ''">
-                    rollout: blocked
-                  </span>
+                  <span class="st-val" [title]="bcRolloutBlockReason(rc) || ''">waiting</span>
                 }
-              }
+              </div>
             </div>
-          }
+          </div>
+
+          <div class="statemsg" [attr.data-tone]="nfNextStep(rc).tone">{{ nfNextStep(rc).text }}</div>
 
           @if (rc.lastActivity; as la) {
             <div class="lastact">
@@ -216,85 +177,8 @@
             </div>
           }
 
-          @if (rc.gateRun && rc.gateRun.status !== 'NONE') {
-            <div class="gate" [attr.data-tone]="gateRunTone(rc.gateRun.status)">
-              <span class="gdot"></span>
-              <strong>Test suite</strong>
-              <span>{{ gateRunLabel(rc.gateRun.status) }}</span>
-              @if (rc.testSummary && (rc.gateRun.status === 'PASSED' || rc.gateRun.status === 'FAILED')) {
-                <span class="muted">· {{ rc.testSummary.passed ?? 0 }}/{{ rc.testSummary.total ?? 0 }} passed</span>
-              }
-              @if (rc.gateRun.status === 'PASSED') { <span class="verdict ok">safe to merge</span> }
-              @if (rc.gateRun.status === 'FAILED') { <span class="verdict bad">do not merge</span> }
-              @if (noTestOnBuild(rc)) { <em class="stale">report is for an older build</em> }
-              @if (reportUrl(rc); as url) {
-                @if (reportIsRoute(url)) {
-                  <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ View report</a>
-                } @else {
-                  <a class="ghlink sm" [href]="url" target="_blank" rel="noopener">View report ↗</a>
-                }
-              }
-            </div>
-          } @else if (noTestOnBuild(rc)) {
-            <div class="gate" data-tone="none">
-              <span class="gdot"></span>
-              <strong>Test suite</strong>
-              <span>⚠ No test done on this build</span>
-            </div>
-          }
-
-          <div class="actions">
-            @for (a of actionsFor(rc); track a.action) {
-              @if (a.action === 'deployPreview') {
-                <!-- Deploy ▾ split (plan L5) — hidden for CF repos (no preview/gate workflow, L13/L17) -->
-                @if (!isCfRepo(rc)) {
-                  <div class="menu-wrap">
-                    <button
-                      [disabled]="!a.enabled || busy() === rc.id"
-                      [title]="a.reason || a.label"
-                      (click)="toggleDeployMenu(rc.id, $event)"
-                    >
-                      {{ a.label }} ▾
-                    </button>
-                    @if (deployMenu() === rc.id) {
-                      <div class="menu">
-                        <button (click)="runDeploy(rc, false)">Deploy without tests</button>
-                        <button (click)="runDeploy(rc, true)">Deploy with tests…</button>
-                        @if (isAdmin()) {
-                          <button class="shortcut" (click)="deployAndPrWithTests(rc)">Deploy (with tests) &amp; create PR → Dev</button>
-                          <button class="shortcut" (click)="deployAndPrNoTests(rc)">Deploy (without tests) &amp; create PR → Dev</button>
-                        }
-                      </div>
-                    }
-                  </div>
-                }
-              } @else {
-                <button
-                  [class.primary]="a.enabled"
-                  [disabled]="!a.enabled || busy() === rc.id"
-                  [title]="a.reason || a.label"
-                  (click)="run(rc, a.action)"
-                >
-                  {{ a.label }}
-                </button>
-              }
-            }
-            @if (kind(rc) === 'feature' && canAct() && !isCfRepo(rc)) {
-              <button
-                class="runtests"
-                [disabled]="busy() === rc.id"
-                title="Run test suites on this branch without redeploying (plan L6)"
-                (click)="runTestsFor(rc)"
-              >
-                Run tests…
-              </button>
-            }
-            @if (isCfRepo(rc)) {
-              <span class="muted" title="CF quality gate = the local predeploy loop-guard. Deploy tracking lives on the CF Board.">
-                CF branch — gate runs locally at deploy · track on CF Board · test via an Angular card’s CF picker
-              </span>
-            }
-            @if (openPrUrl(rc); as url) {
+          <div class="cardfoot">
+            @if (rc.rollout?.prUrl; as url) {
               <a class="ghlink" [href]="url" target="_blank" rel="noopener">Open PR on GitHub ↗</a>
             }
             <span class="ts muted">updated {{ rc.updatedAt | date: 'MMM d, HH:mm' }}</span>
@@ -306,8 +190,8 @@
     </div>
 
     <!-- Closes any open kebab / deploy menu on an outside click. -->
-    @if (openMenu() || deployMenu()) {
-      <div class="menu-backdrop" (click)="openMenu.set(null); deployMenu.set(null)"></div>
+    @if (openMenu()) {
+      <div class="menu-backdrop" (click)="openMenu.set(null)"></div>
     }
 
     @if (selected(); as s) {

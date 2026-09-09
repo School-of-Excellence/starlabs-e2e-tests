@@ -32,7 +32,6 @@ import {
   isFresh,
   gateReason,
 } from '../../core/action-gating';
-import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent, ACTIVITY_LABEL } from '../../shared/activity-drawer/activity-drawer.component';
 import {
   FilterBarComponent,
@@ -43,7 +42,6 @@ import {
 import { ToastService } from '../../shared/toast.service';
 import { ConfirmService } from '../../shared/confirm.service';
 import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
-import { RouterLink } from '@angular/router';
 import { repoTypeOf } from '../../core/repos';
 
 /** Which lane a candidate belongs to (promotion-chain architecture, 2026-06-24). */
@@ -52,19 +50,26 @@ type BranchKind = 'feature' | 'development' | 'production';
 /**
  * Working Branches (promotion-chain architecture, plan 2026-06-24).
  *
- * Three sections:
- *  - Feature branches — per-feature dev lane (Deploy preview → Create PR → dev). Terminal DEV_MERGED.
- *  - Development — lists incoming feature→development PRs + their gate reports; the only action is
- *    Create PR → production (the promotion, head='development').
- *  - Production — shows the incoming development→production PR + its report. No action (terminal).
+ * CUTOVER 2026-09-09 — this screen now renders the NEW flow ONLY. Each feature branch is one card
+ * showing a four-stage pipeline:
  *
- * The console never merges (D3): it issues PR-create intents; humans accept/deny on GitHub and the
- * webhook mirrors the result back here.
+ *   ① Preview      two hosting channels, built on every push          (previewStatus)
+ *   ② Suite check  does a suite cover every component you touched?    (testSuiteStatus)
+ *   ③ Test run     did those suites run, and pass?                    (testSuiteStatus.run)
+ *   ④ Rollout      the ONE human gate — tester/admin approves         (rollout)
+ *
+ * REMOVED from this screen: the derivedStatus chip, the status trail, the preview/devGate/prDev
+ * badges, the old gateRun block, and every old-flow action button (Deploy ▾, sign-off, Create PR,
+ * Run tests). The backend callables still exist — the old flow is retired screen by screen — but
+ * this screen no longer offers them, so the new flow is the only path a developer can take.
+ *
+ * The console never merges (D3): approving opens the PR; a GitHub admin accepts it and the webhook
+ * mirrors the result back here.
  */
 @Component({
   selector: 'rc-working-branches',
   standalone: true,
-  imports: [DatePipe, StatusChipComponent, FilterBarComponent, ActivityDrawerComponent, RouterLink],
+  imports: [DatePipe, FilterBarComponent, ActivityDrawerComponent],
   templateUrl: './working-branches.component.html',
   styleUrl: './working-branches.component.css',
 })
@@ -369,6 +374,74 @@ export class WorkingBranchesComponent {
       FAILED: 'failed',
     };
     return LABELS[state] ?? state;
+  }
+
+  // ── NEW FLOW — the four-stage pipeline shown on each card (2026-09-09) ────────────────────────
+  // preview → check → run → rollout. Every helper is PURE DISPLAY; the server re-enforces every
+  // rule these reflect (see approveRollout). Nothing here reads the old flow's facets.
+
+  /** Stage 1 — both hosting channels. `ok` only when BOTH published. */
+  nfPreviewTone(rc: ReleaseCandidate): string {
+    const ps = rc.previewStatus;
+    if (!ps) return 'none';
+    const legs = [ps.dev, ps.prod].filter(Boolean) as ChannelFacet[];
+    if (!legs.length) return 'none';
+    if (legs.some((l) => l.status === 'FAILED')) return 'bad';
+    if (legs.every((l) => l.status === 'SUCCESS')) return 'ok';
+    return 'active';
+  }
+
+  nfPreviewLabel(rc: ReleaseCandidate): string {
+    const ps = rc.previewStatus;
+    if (!ps) return 'not built';
+    const ok = [ps.dev, ps.prod].filter((l) => l?.status === 'SUCCESS').length;
+    return `${ok}/2 channels`;
+  }
+
+  /** Stage 3 — the suite run. Distinct from stage 2: the check says CAN they run, this says DID. */
+  nfRunTone(rc: ReleaseCandidate): string {
+    const run = rc.testSuiteStatus?.run;
+    if (!run) return 'none';
+    if (run.state === 'PASSED' && !this.bcRunFresh(rc)) return 'warn';
+    return this.bcRunTone(run.state);
+  }
+
+  nfRolloutTone(rc: ReleaseCandidate): string {
+    const r = rc.rollout;
+    if (r?.state !== 'APPROVED') return this.canApproveRollout(rc) ? 'active' : 'none';
+    return r.bypass || this.bcRolloutStale(rc) ? 'warn' : 'ok';
+  }
+
+  /**
+   * The single line that tells whoever opens this card what to DO. Ordered by what blocks first,
+   * so the message always names the nearest obstacle rather than the final goal.
+   */
+  nfNextStep(rc: ReleaseCandidate): { text: string; tone: string } {
+    const ts = rc.testSuiteStatus;
+    const run = ts?.run;
+    if (rc.rollout?.state === 'APPROVED') {
+      return this.bcRolloutStale(rc)
+        ? { text: 'Approved, but HEAD has moved since — re-check before merging.', tone: 'warn' }
+        : { text: 'Approved. A GitHub admin merges the PR → development.', tone: 'ok' };
+    }
+    if (!ts) return { text: 'Waiting for the first push to report.', tone: 'none' };
+    if (ts.state === 'CHECKING') return { text: 'Checking suite coverage…', tone: 'active' };
+    if (ts.state === 'NOT_APPLICABLE') {
+      return { text: 'No app code changed — nothing to test.', tone: 'none' };
+    }
+    if (!ts.canProceed) return { text: `Blocked — ${this.bcSuiteDetail(ts)}`, tone: 'bad' };
+    if (!run) return { text: 'Coverage matched. Dispatching the test suites…', tone: 'active' };
+    if (run.state === 'RUNNING') return { text: 'Test suites running…', tone: 'active' };
+    if (run.state === 'FAILED') {
+      return { text: 'Test suites failed — fix and push again.', tone: 'bad' };
+    }
+    if (!this.bcRunFresh(rc)) {
+      return { text: 'The passing run predates the current commit — push again to re-run.', tone: 'warn' };
+    }
+    const blocked = this.bcRolloutBlockReason(rc);
+    return blocked
+      ? { text: blocked, tone: 'none' }
+      : { text: 'Ready — approve for rollout.', tone: 'ok' };
   }
 
   // ── NEW FLOW — rollout approval (2026-09-09) ──────────────────────────────────────────────────
