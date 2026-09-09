@@ -409,3 +409,43 @@ or silently ignores the input and rebuilds the channels anyway. Edited in the
 
 Verified: 75/75 unit tests · functions tsc clean · full AOT production build clean · both workflow
 YAMLs parse (`branch-channels.yml` inputs = ref, skip_channels).
+
+## Increment 5 — first real branch-suites run, and why it failed (2026-09-09)
+
+`feature/cicd-rollout` (Starlabs 19) reached the test lane: two channels SUCCESS, check MATCHED
+(4 files — 3 neutral, `profilelist.component.ts` → `modes`), auto-dispatch fired, suites RAN. Then
+the run failed — **for a reason entirely outside this project**.
+
+```
+Run cd e2e && npx playwright install --with-deps chromium
+Err: https://dl.google.com/linux/chrome-stable/deb stable/main amd64 Packages — Hash Sum mismatch
+E: Failed to fetch .../Packages.gz   Failed to install browsers   exit code 100
+```
+
+Google's Chrome apt repo served a `Packages.gz` whose hash did not match its `Release` file — the
+log's own timestamps show the lag (Release created 17:16 UTC, Packages last modified 09:41). A CDN
+propagation inconsistency on Google's side. The job died before a single test ran, so nothing about
+the branch, the `modes` suite or the app was involved.
+
+**Fix — `.github/workflows/web-e2e.yml:142`, dropped `--with-deps`.** That flag runs
+`apt-get update && apt-get install` for browser system libraries. GitHub's ubuntu runner images
+already ship all of them, so on this runner the flag buys nothing and costs an apt round-trip against
+every source on the image — including a Google Chrome repo we never use (we run Playwright's BUNDLED
+chromium). Removing it takes apt off the critical path entirely. If a future image ever lacks a
+library the failure surfaces at browser LAUNCH with a named missing library, and the fix is to
+install that one library rather than re-enable a full apt update.
+
+⚠️ **SHARED FILE — 12 callers.** `web-e2e.yml` is the engine for `preview-e2e.yml` (the OLD flow),
+the ten per-suite `*-e2e.yml` workflows, and `branch-suites.yml`. This change makes the install step
+do strictly LESS, so the blast radius is a reduction in what runs, but every lane is affected and it
+should be watched on the next old-flow run too.
+
+**Also fixed in this increment (found while diagnosing):** `branch-suites.yml`'s `report` job took
+`needs: [suite]` only, so a `resolve` failure skipped the matrix and `needs.suite.result == 'skipped'`
+was reported as FAILED — a lane that NEVER RAN looked identical to genuinely failing tests. It now
+takes `needs: [resolve, suite]`, distinguishes failure / cancelled / skipped-after-resolve-failure /
+empty-matrix, and sends a plain-English `note` through `recordSuiteRun` to Firestore. Stage ③ shows
+that note inline in red on failure and in the tooltip otherwise. `note` added to both model copies
+and accepted (capped at 300 chars) by the endpoint.
+
+Verified: 75/75 unit tests · functions tsc clean · full AOT build clean · both workflow YAMLs parse.

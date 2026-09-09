@@ -174,6 +174,8 @@ export interface TestSuiteStatusFacet {
     finishedAt?: number;
     reportRunId?: string | null;
     runUrl?: string | null;
+    /** Why the run ended as it did — distinguishes failed tests from a lane that never ran. */
+    note?: string | null;
   };
   recheck?: { requestedBy?: string; requestedAt?: number; count?: number };
 }

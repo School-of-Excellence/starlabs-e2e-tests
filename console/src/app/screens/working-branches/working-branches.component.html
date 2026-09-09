@@ -123,7 +123,13 @@
               <div class="st-body">
                 <span class="st-label">Test run</span>
                 @if (rc.testSuiteStatus?.run; as run) {
-                  <span class="st-val">{{ bcRunLabel(run.state) }}</span>
+                  <span class="st-val"
+                        [title]="(run.note || ('Suite run ' + run.state)) + (run.sha ? ' · ' + run.sha.slice(0,7) : '')">
+                    {{ bcRunLabel(run.state) }}
+                  </span>
+                  @if (run.note && run.state === 'FAILED') {
+                    <span class="st-sub st-fail">{{ run.note }}</span>
+                  }
                   <span class="st-sub">
                     @if (run.passed !== undefined) { {{ run.passed }}✓ }
                     @if (run.failed) { · {{ run.failed }}✗ }

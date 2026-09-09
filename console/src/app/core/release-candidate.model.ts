@@ -153,6 +153,8 @@ export interface TestSuiteStatusFacet {
     finishedAt?: number;
     reportRunId?: string | null;
     runUrl?: string | null;
+    /** Why the run ended as it did — 'tests failed' vs 'the lane never ran'. Shown in the tooltip. */
+    note?: string | null;
   };
   /** Set by the console's Recheck button; re-dispatches the workflow for this ref. */
   recheck?: { requestedBy?: string; requestedAt?: number; count?: number };

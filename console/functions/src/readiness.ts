@@ -431,6 +431,10 @@ export const recordSuiteRun = onRequest(
       sha: sha ?? null,
       reportRunId: str(body.reportRunId, 50) ?? null,
       runUrl: str(body.runUrl, 300) ?? null,
+      // WHY the run ended as it did. Set by branch-suites.yml's report job, which distinguishes
+      // "tests failed" from "the lane never ran" (a resolve failure skips the matrix, and a skipped
+      // matrix used to look identical to a genuine failure in the console).
+      note: str(body.note, 300) ?? null,
       suites: Array.isArray(body.suites) ? body.suites.slice(0, 50) : [],
     };
     if (state === 'RUNNING') run.startedAt = now;

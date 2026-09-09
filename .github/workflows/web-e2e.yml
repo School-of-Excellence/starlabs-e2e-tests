@@ -138,8 +138,25 @@ jobs:
       - name: Install e2e deps
         run: cd e2e && npm ci
 
+      # NO `--with-deps` — deliberate, 2026-09-09.
+      #
+      # `--with-deps` runs `apt-get update && apt-get install` for browser system libraries. GitHub's
+      # ubuntu runner images ALREADY ship every one of those libraries, so on this runner the flag
+      # buys nothing and costs an apt round-trip against every source configured on the image —
+      # including Google's Chrome repo, which we do not need and never use (we run Playwright's
+      # BUNDLED chromium, not apt's google-chrome).
+      #
+      # On 2026-09-09 that repo served a Packages.gz whose hash did not match its Release file
+      # ("Hash Sum mismatch"; Release created 17:16 UTC vs Packages last modified 09:41 — a CDN
+      # propagation lag on Google's side). apt returned 100, Playwright reported "Failed to install
+      # browsers", and every suite in both lanes failed before a single test ran. Nothing about the
+      # branch, the suite or the app was involved.
+      #
+      # Dropping the flag removes apt from the critical path entirely. If a future runner image ever
+      # lacks a library, the failure surfaces at browser LAUNCH with a clear missing-library message
+      # — and the fix is then to install that one library, not to re-enable a whole apt update.
       - name: Install Playwright chromium
-        run: cd e2e && npx playwright install --with-deps chromium
+        run: cd e2e && npx playwright install chromium
 
       - name: Boot Firebase emulator + Cloud Functions
         run: |
