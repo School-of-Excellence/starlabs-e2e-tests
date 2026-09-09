@@ -215,21 +215,39 @@
                 }
               </span>
 
-              @if (prodPr(rc); as ppr) {
-                <span class="pr-pill" [attr.data-tone]="prPillTone(ppr.state)">
-                  <span class="pr-target">→ production</span>
-                  @if (ppr.number) { <span class="pr-num">#{{ ppr.number }}</span> }
-                  <span class="pr-state">{{ prPillLabel(ppr.state) }}</span>
-                  @if (ppr.url) {
-                    <a class="ghlink sm" [href]="ppr.url" target="_blank" rel="noopener">open ↗</a>
+              <!-- The production PR belongs to the BATCH, not to this branch — every branch in the
+                   open batch shares one PR, which is why it is labelled "(batch)". It is shown ONLY
+                   while this branch is actually inside that batch; once the batch ships, `prProd`
+                   moves on to the next one and linking it here would be false. -->
+              @switch (prodStage(rc)) {
+                @case ('in-batch') {
+                  @if (prodPr(rc); as ppr) {
+                    <span class="pr-pill" [attr.data-tone]="prPillTone(ppr.state)"
+                          title="One shared development → production PR carries the whole release batch">
+                      <span class="pr-target">→ production</span>
+                      <span class="pr-batch">batch</span>
+                      @if (ppr.number) { <span class="pr-num">#{{ ppr.number }}</span> }
+                      <span class="pr-state">{{ prPillLabel(ppr.state) }}</span>
+                      @if (ppr.url) {
+                        <a class="ghlink sm" [href]="ppr.url" target="_blank" rel="noopener">open ↗</a>
+                      }
+                    </span>
+                  } @else {
+                    <span class="pr-pill" data-tone="none"
+                          title="Opens automatically when a feature merges into development">
+                      <span class="pr-target">→ production</span>
+                      <span class="pr-state">not opened yet</span>
+                    </span>
                   }
-                </span>
-              } @else if (showProdPr(rc)) {
-                <span class="pr-pill" data-tone="none"
-                      title="Opened automatically when a feature merges into development">
-                  <span class="pr-target">→ production</span>
-                  <span class="pr-state">not opened yet</span>
-                </span>
+                }
+                @case ('shipped') {
+                  <!-- Terminal, and deliberately NOT a link: we do not record WHICH prod PR carried
+                       a given branch, so the fact of shipping is the only honest thing to show. -->
+                  <span class="pr-pill" data-tone="ok"
+                        title="The release batch containing this branch has merged to production">
+                    <span class="pr-target">✓ shipped to production</span>
+                  </span>
+                }
               }
             </div>
           }

@@ -608,3 +608,14 @@
 /* Stage 4 when an approval has been superseded by a new push: it is NOT a pass, so it must not
    read like one. */
 .st-warn-val { color: var(--st-pr-prod); }
+
+/* "batch" tag on the production pill — the shared PR number is intentional, not a duplicate. */
+.pr-batch {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--chip);
+  color: var(--muted);
+}

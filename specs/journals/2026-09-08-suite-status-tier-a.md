@@ -576,3 +576,35 @@ tracked.
 
 Verified: 75/75 unit tests · full AOT production build clean · stage ④ has no PR link · the PR row
 holds exactly two links.
+
+## Increment 9 — the production PR belongs to the BATCH, not the branch (2026-09-10)
+
+Operator noticed every feature card showed the SAME production PR and asked whether to keep it or
+move it to Release Channel. Investigating it exposed a bug in increment 7's PR row.
+
+`prProd` lives on the DEVELOPMENT candidate — one shared development→production PR carries the whole
+release batch — so every card reads the same record. That is TRUE while those branches are in the
+open batch. But `handlePullRequest` clears `unreleased` on every feature candidate when a
+development→production PR merges, while `prDev.state` stays MERGED for ever. Increment 7 gated on
+`prDev.state === 'MERGED' || unreleased`, so a branch released three batches ago kept displaying the
+CURRENT prod PR — one containing none of its code. It looked correct only because
+`feature/cicd-rollout` happened to be in the batch that had just merged.
+
+**Operator chose A: keep it on the card, but only while it is true.** New `prodStage()` returns:
+
+| stage | condition | shown |
+|---|---|---|
+| `in-batch` | `unreleased === true` | the prod PR, tagged **batch**, with number/state/link |
+| `shipped` | merged to dev, `unreleased` cleared | `✓ shipped to production` — deliberately NOT a link |
+| `none` | not merged to development yet | nothing |
+
+`unreleased` is the only correct key here; `prDev.state` cannot express it. The `shipped` state is
+not a link on purpose: we do not record WHICH prod PR carried a given branch, so the fact of
+shipping is the only honest thing to show. The `batch` tag makes the shared PR number read as
+intentional rather than as a duplicate.
+
+Rejected option B (move it to Release Channel only): correct about ownership, but it costs a round
+trip for the question people ask most — "did my change reach production?" — and Release Channel
+keeps the full batch view regardless.
+
+Verified: 75/75 unit tests · full AOT production build clean · `showProdPr` fully replaced.

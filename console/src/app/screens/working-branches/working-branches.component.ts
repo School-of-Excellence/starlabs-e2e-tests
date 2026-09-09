@@ -492,9 +492,25 @@ export class WorkingBranchesComponent {
     return { state: f.state, number: f.number, url: f.url };
   }
 
-  /** Only meaningful once this branch is actually part of the batch heading for production. */
-  showProdPr(rc: ReleaseCandidate): boolean {
-    return rc.prDev.state === 'MERGED' || !!rc.unreleased;
+  /**
+   * Where this branch sits relative to production.
+   *
+   *   'in-batch'  merged to development and NOT yet released — it is genuinely inside the open
+   *               development→production PR, so showing that PR here is TRUE.
+   *   'shipped'   the batch it belonged to has merged to production. The prod PR must NOT be shown
+   *               any more: `prProd` on the development entry has since moved on to the NEXT batch,
+   *               which contains none of this branch's code.
+   *   'none'      not merged to development yet — production is not part of its story.
+   *
+   * The distinction is `unreleased`, which handlePullRequest clears on EVERY feature candidate when
+   * a development→production PR merges. `prDev.state` stays MERGED for ever, so it cannot be used
+   * for this — keying off it is exactly the bug this replaces, where a branch released three
+   * batches ago still displayed the current prod PR.
+   */
+  prodStage(rc: ReleaseCandidate): 'none' | 'in-batch' | 'shipped' {
+    if (rc.unreleased) return 'in-batch';
+    if (rc.prDev?.state === 'MERGED') return 'shipped';
+    return 'none';
   }
 
   prPillTone(state: PrState): string {
