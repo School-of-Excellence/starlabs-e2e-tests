@@ -24,7 +24,11 @@
  */
 'use strict';
 
-const { seed, seedDashboardRoutes, TAG } = require('../lib/seed-common');
+// initAdminAuto is the SHARED emulator-aware admin init (lib/seed-common): emulator-pinned when
+// FIRESTORE_EMULATOR_HOST is set, otherwise the cloud test project via seed.initAdmin(). Switched from
+// seed.initAdmin() on 2026-09-09 so this suite can run on the hermetic emulator gate like the other six —
+// seed.initAdmin() hard-aborts off the cloud test project and cannot see the emulator partition.
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 
 const TESTRUNID = process.env.SUP_RUNID || 'sup';
 
@@ -90,7 +94,7 @@ const ROUTES = [
 ];
 
 async function seedSupport() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const auth = admin.auth();
   const T = admin.firestore.Timestamp;
@@ -239,7 +243,7 @@ const SEEDED = [
 ];
 
 async function teardownSupport() {
-  const admin = seed.initAdmin();
+  const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
   // Also delete the messages subcollections of any seeded clientissue docs (CFs create them on create).
