@@ -42,8 +42,16 @@ export function makeEmulatorConfig(opts: { suite: string }): PlaywrightTestConfi
       { name: `${suite}-desktop`, use: { ...devices['Desktop Chrome'] } },
     ],
     // Boots the EMULATOR-wired Angular app; reuses an already-running dev server locally (EMU_REUSE_APP=1).
+    //
+    // APP_PATH: where the Angular app lives, RELATIVE TO THIS REPO. The default `..` is the CI layout,
+    // where the hub is checked out INSIDE the app repo — unchanged for CI and for anyone using the `app`
+    // symlink ./setup.sh creates. It is wrong only when the two repos are SIBLINGS, which is how they sit
+    // in a plain local clone: `..` then resolves to the parent folder and npm dies with
+    //   "enoent Could not read package.json: ... angular-projects/package.json"
+    // which reads like a broken install rather than a path assumption. Same variable name and meaning as
+    // ci/setup-emulator-config.sh, so one export configures both. (2026-09-09)
     webServer: {
-      command: 'npm --prefix .. run start:emulator',
+      command: `npm --prefix ${process.env.APP_PATH || '..'} run start:emulator`,
       url: 'http://localhost:4200',
       reuseExistingServer: process.env.EMU_REUSE_APP === '1',
       timeout: 240_000,
