@@ -569,3 +569,38 @@
 }
 .recheck:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
 .recheck:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* The two PRs the branch travels through. Read-only by design — the console opens them, a GitHub
+   admin merges them (D3) — so these are pills, never buttons. */
+.prs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.prs-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.pr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+  font-size: 11px;
+}
+.pr-pill[data-tone='ok']     { border-color: var(--st-ok); }
+.pr-pill[data-tone='active'] { border-color: var(--accent); }
+.pr-pill[data-tone='bad']    { border-color: var(--danger); }
+.pr-pill[data-tone='none']   { opacity: 0.6; }
+.pr-target { color: var(--fg); font-weight: 600; }
+.pr-num    { color: var(--muted); }
+.pr-state  { text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.04em; color: var(--muted); }
+.pr-pill[data-tone='ok'] .pr-state     { color: var(--st-ok); }
+.pr-pill[data-tone='active'] .pr-state { color: var(--accent); }

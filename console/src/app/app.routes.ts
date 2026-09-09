@@ -37,6 +37,8 @@ function roleGuard(allow: (a: AuthService) => boolean) {
 const adminGuard = roleGuard((a) => a.isAdmin());
 const devOrAdminGuard = roleGuard((a) => a.isDeveloper() || a.isAdmin());
 const testerOrAdminGuard = roleGuard((a) => a.isTester() || a.isAdmin());
+/** Any assigned role. Membership itself is enforced upstream by the auth gate. */
+const anyMemberGuard = roleGuard((a) => a.isDeveloper() || a.isTester() || a.isAdmin());
 
 export const routes: Routes = [
   {
@@ -46,13 +48,21 @@ export const routes: Routes = [
     title: 'Overview · Release Console',
   },
   {
+    // CUTOVER 2026-09-10 — every role, not just dev/admin. This is the ONE screen the new flow runs
+    // on, and it carries the TESTER's only action (Approve for rollout). Under the old guard a pure
+    // tester was bounced to Overview and could not do their job at all.
+    // Widening the ROUTE grants no ACTION: each button is still gated by its capability
+    // (APPROVE_ROLLOUT / BYPASS_SUITE_STATUS) and every callable re-checks server-side.
     path: 'branches',
-    canActivate: [devOrAdminGuard],
+    canActivate: [anyMemberGuard],
     loadComponent: () =>
       import('./screens/working-branches/working-branches.component').then((m) => m.WorkingBranchesComponent),
     title: 'Working Branches · Release Console',
   },
   {
+    // NOT IN THE SIDE NAV as of 2026-09-10 (app.component.ts), and superseded by the Working
+    // Branches card. Route deliberately KEPT so the screen stays reachable by URL and nothing is
+    // deleted — remove it only once the old flow is retired for good.
     path: 'previews',
     canActivate: [testerOrAdminGuard],
     loadComponent: () =>
@@ -60,8 +70,12 @@ export const routes: Routes = [
     title: 'Preview Channels · Release Console',
   },
   {
+    // READ-ONLY and open to EVERY role as of 2026-09-10 (was adminGuard). Its actions are gone —
+    // ensureDevToProdPr opens the development → production PR automatically — so what remains is
+    // information every role needs: the dev/prod deploy links and which branches are in the batch.
+    // Working Branches filters protected branches out, so this is the only place that shows them.
     path: 'release-channel',
-    canActivate: [adminGuard],
+    canActivate: [anyMemberGuard],
     loadComponent: () =>
       import('./screens/release-channel/release-channel.component').then((m) => m.ReleaseChannelComponent),
     title: 'Release Channel · Release Console',

@@ -180,6 +180,40 @@
 
           <div class="statemsg" [attr.data-tone]="nfNextStep(rc).tone">{{ nfNextStep(rc).text }}</div>
 
+          <!-- Where the code has actually reached. Neither PR is a console action — the console
+               opens them and a GitHub admin merges (D3) — but every role needs to SEE both. -->
+          @if (devPr(rc); as dpr) {
+            <div class="prs">
+              <span class="prs-label">PRs</span>
+
+              <span class="pr-pill" [attr.data-tone]="prPillTone(dpr.state)">
+                <span class="pr-target">→ development</span>
+                @if (dpr.number) { <span class="pr-num">#{{ dpr.number }}</span> }
+                <span class="pr-state">{{ prPillLabel(dpr.state) }}</span>
+                @if (dpr.url) {
+                  <a class="ghlink sm" [href]="dpr.url" target="_blank" rel="noopener">open ↗</a>
+                }
+              </span>
+
+              @if (prodPr(rc); as ppr) {
+                <span class="pr-pill" [attr.data-tone]="prPillTone(ppr.state)">
+                  <span class="pr-target">→ production</span>
+                  @if (ppr.number) { <span class="pr-num">#{{ ppr.number }}</span> }
+                  <span class="pr-state">{{ prPillLabel(ppr.state) }}</span>
+                  @if (ppr.url) {
+                    <a class="ghlink sm" [href]="ppr.url" target="_blank" rel="noopener">open ↗</a>
+                  }
+                </span>
+              } @else if (showProdPr(rc)) {
+                <span class="pr-pill" data-tone="none"
+                      title="Opened automatically when a feature merges into development">
+                  <span class="pr-target">→ production</span>
+                  <span class="pr-state">not opened yet</span>
+                </span>
+              }
+            </div>
+          }
+
           @if (rc.lastActivity; as la) {
             <div class="lastact">
               <span class="la-label muted">Last activity</span>

@@ -44,9 +44,6 @@
               }
             }
             @if (!isCfRepo(rc)) {
-              <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against development (plan S5)" (click)="runTestsFor(rc)">
-                Run tests…
-              </button>
             }
           </div>
 
@@ -101,26 +98,15 @@
               }
             } @else if (releasedUpToDate(rc)) {
               <span class="badge" data-tone="ok">✓ Production is up to date — nothing to promote</span>
-            } @else if (canPromoteAndPr(rc)) {
-              <!-- Admin shortcut: the dev deploy succeeded but the tester hasn't validated yet — the
-                   admin self-validates AND opens the prod PR in one step (promoteAndPr). -->
-              <button
-                class="primary shortcut"
-                [disabled]="busy() === rc.id"
-                title="Self-validate the dev deploy and open the prod PR (admin shortcut)"
-                (click)="promoteAndPr(rc)"
-              >
-                Promote &amp; Create PR → prod
-              </button>
-            } @else {
-              <button
-                class="primary"
-                [disabled]="!canPromote(rc) || busy() === rc.id"
-                [title]="promoteReason(rc) || 'Create PR → prod'"
-                (click)="promote(rc)"
-              >
-                Create PR → prod
-              </button>
+            } @else if (rc.hasUnreleased) {
+              <!-- READ-ONLY as of 2026-09-10 (operator decision). The promote actions that lived
+                   here — promoteAndPr() and promote() — are gone: the development → production PR
+                   is opened AUTOMATICALLY by ensureDevToProdPr() when a feature merges into
+                   development, and a GitHub admin merges it. This screen shows the lane, it does
+                   not drive it. Both methods remain in the component, unused — nothing deleted. -->
+              <span class="badge" data-tone="active">
+                Unreleased changes on development — the prod PR opens automatically
+              </span>
             }
             <button class="histbtn" title="View activity log" (click)="openLog(rc)">
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4">
@@ -169,9 +155,6 @@
               }
             }
             @if (!isCfRepo(rc)) {
-              <button class="histbtn" [disabled]="busy() === rc.id" title="System test: run suites against production (plan S5)" (click)="runTestsFor(rc)">
-                Run tests…
-              </button>
             }
           </div>
 

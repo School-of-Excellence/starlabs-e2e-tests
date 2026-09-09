@@ -1,42 +1,63 @@
 
     <header class="head">
       <h2>Mission Control</h2>
-      <p class="muted">Live state of every tracked branch across the release pipeline.</p>
+      <p class="muted">Live state of every tracked branch: two preview channels, the suite check, the test run, and the rollout approval.</p>
     </header>
 
-    <!-- Stat cards -->
+    <!-- Stat cards — all NEW FLOW facets (cutover 2026-09-10). The old cards read preview
+         .buildState / devGate / testSummary / derivedStatus, none of which this flow writes, so
+         they showed zeros while suites were running and passing. -->
     <section class="stats">
       <a class="stat" routerLink="/branches">
         <div class="n">{{ rcs().length }}</div>
         <div class="l">Branches tracked</div>
       </a>
-      <a class="stat" routerLink="/previews">
-        <div class="n">{{ previewsLive() }}</div>
-        <div class="l">Previews live</div>
+      <a class="stat" routerLink="/branches" title="Both dev and prod channels published">
+        <div class="n">{{ channelsLive() }}</div>
+        <div class="l">Channels live</div>
+      </a>
+      <a class="stat warn" routerLink="/branches" [class.muted-card]="checkBlocked() === 0"
+         title="Blocked by the suite check — missing suites, stale selectors or missing test cases">
+        <div class="n">{{ checkBlocked() }}</div>
+        <div class="l">Suite check blocked</div>
+      </a>
+      <div class="stat" title="Branches whose dispatched suites passed / failed">
+        <div class="n">
+          <span class="ok">{{ runsPassed() }}</span
+          ><span class="sep">/</span><span class="bad">{{ runsFailed() }}</span>
+        </div>
+        <div class="l">Suites pass / fail</div>
+      </div>
+      <a class="stat" routerLink="/branches"
+         title="Green, covering the current commit, and nobody has approved yet — the tester's queue">
+        <div class="n">{{ awaitingApproval() }}</div>
+        <div class="l">Awaiting approval</div>
       </a>
       <a class="stat" routerLink="/branches">
         <div class="n">{{ prsOpen() }}</div>
         <div class="l">PRs open</div>
       </a>
-      <a class="stat warn" routerLink="/branches" [class.muted-card]="staleCount() === 0">
+      <a class="stat warn" routerLink="/branches" [class.muted-card]="staleCount() === 0"
+         title="A passing run or an approval that no longer covers HEAD">
         <div class="n">{{ staleCount() }}</div>
-        <div class="l">Stale / drifted</div>
+        <div class="l">Stale vs HEAD</div>
       </a>
-      <div class="stat">
-        <div class="n">
-          <span class="ok">{{ testsPassed() }}</span
-          ><span class="sep">/</span><span class="bad">{{ testsFailed() }}</span>
-        </div>
-        <div class="l">Tests pass / fail</div>
-      </div>
+      @if (bypassed()) {
+        <a class="stat warn" routerLink="/branches"
+           title="Approved with the suite status overridden by an admin">
+          <div class="n">{{ bypassed() }}</div>
+          <div class="l">Bypassed</div>
+        </a>
+      }
     </section>
 
     <div class="grid">
       <!-- Pipeline funnel -->
       <section class="panel">
         <h3>Pipeline funnel</h3>
+        <p class="muted sub">Branches that reached at least each stage. The biggest drop is the bottleneck.</p>
         <div class="funnel">
-          @for (row of funnel(); track row.status) {
+          @for (row of funnel(); track row.label) {
             <div class="frow">
               <div class="flabel" [style.--c]="'var(' + row.varName + ')'">{{ row.label }}</div>
               <div class="ftrack">
@@ -61,15 +82,15 @@
             <span class="hbadge prod">{{ prodDeploys() }} shipped</span>
           </div>
           <div class="hrow">
-            <span class="hlabel">Preview builds failing</span>
-            <span class="hbadge" [class.bad]="previewsFailed() > 0" [class.ok]="previewsFailed() === 0">
-              {{ previewsFailed() }}
+            <span class="hlabel">Preview channels failing</span>
+            <span class="hbadge" [class.bad]="channelsFailed() > 0" [class.ok]="channelsFailed() === 0">
+              {{ channelsFailed() }}
             </span>
           </div>
           <div class="hrow">
-            <span class="hlabel">Needs a human decision</span>
-            <span class="hbadge" [class.bad]="needsDecision() > 0" [class.ok]="needsDecision() === 0">
-              {{ needsDecision() }}
+            <span class="hlabel">Approved with a bypass</span>
+            <span class="hbadge" [class.bad]="bypassed() > 0" [class.ok]="bypassed() === 0">
+              {{ bypassed() }}
             </span>
           </div>
         </div>

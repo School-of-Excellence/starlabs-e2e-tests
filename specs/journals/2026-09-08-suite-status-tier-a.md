@@ -490,3 +490,54 @@ blind); declaring the five peers as devDependencies in the app (correct and dura
 the app repo's package.json + lock, which is the operator's call, not a CI fix).
 
 ⚠️ SHARED FILE — the same 12 callers as increment 5. This change is purely additive.
+
+## Increment 7 — screen cutover (operator decisions, 2026-09-10)
+
+First fully green run of the new flow landed on `feature/cicd-rollout` (Starlabs 19): two channels
+SUCCESS → check MATCHED (suites `["modes"]`) → auto-dispatch → **suites PASSED**. End to end.
+
+**Route guard — a live bug, fixed.** `/branches` was `devOrAdminGuard`. Working Branches is now the
+ONLY screen carrying the TESTER's single action (Approve for rollout), so a pure tester was bounced
+to Overview and could not do their job at all. Now `anyMemberGuard` (developer | tester | admin).
+Widening the ROUTE grants no ACTION — every button is still capability-gated and each callable
+re-checks server-side.
+
+**Preview Channels — off the nav, code kept.** Fully superseded by the card's stages ① and ④, and
+actively harmful: `rc.preview.url ?? previewUrlFor(...)` always fell through to the reconstruction
+(the new flow never writes `preview.url`), which builds `breakthroughs-test-<branch>.web.app` —
+single dash, no hash, a link that CANNOT resolve. Route and component untouched and reachable by URL.
+
+**Release Channel — kept, opened to everyone, actions stripped.** Operator: it exists so admin,
+tester and developer can see the dev/prod links and which branches actually merged. Guard
+adminGuard → anyMemberGuard; `promoteAndPr()` / `promote()` / `runTestsFor()` buttons removed from
+the template (methods left in the component, unused, nothing deleted); the `canPromoteAndPr` branch
+replaced by a plain statement that the prod PR opens automatically. Only `openLog` remains. It stays
+essential because Working Branches filters protected branches out (`!isProtectedBranch`), so this is
+the ONLY view of the development/production lanes and the release batch.
+
+**Overview — re-pointed at the new flow.** Every old counter read `preview.buildState`, `devGate`,
+`prodGate`, `testSummary` or `derivedStatus` — none of which the new flow writes. `testSummary` in
+particular is only written by `handleWorkflowRun` when the workflow name contains `e2e`, and
+`branch suites` deliberately does not, so the pass/fail card would have sat at ZERO forever while
+suites ran and passed. New cards: Channels live (both legs SUCCESS) · Suite check blocked ·
+Suites pass/fail · **Awaiting approval** (green, fresh, unapproved — the tester's actual queue) ·
+PRs open · Stale vs HEAD · Bypassed (only when non-zero). The status funnel became a STAGE funnel
+(Pushed → Channels live → Suite check passed → Suites passed → Approved → Merged to development),
+each row counting branches that reached at least that stage so the biggest drop names the
+bottleneck. Deploy health re-pointed at `prDev`/`prProd` merges and channel failures.
+
+**Working Branches — both PRs now visible to every role.** Operator: "any user can know whether the
+PR is opened or approved to the dev and prod." A new PR row under the pipeline shows
+`→ development` and `→ production` pills with number, state (open/merged/closed) and a GitHub link.
+The prod PR is NOT on the feature candidate: `handlePullRequest` writes `prProd` against the PR's
+HEAD branch, which for a promotion is `development` — so `prodPr()` looks it up from the repo's
+development entry, one shared PR the whole batch travels in. Before the webhook lands, the dev pill
+falls back to `rollout.prUrl` so the link never disappears in that gap.
+
+**Recheck narrowed** (operator rule): offered only while the check is BLOCKING — hidden on MATCHED
+and NOT_APPLICABLE. On MATCHED the dispatcher would refuse anyway (a run already exists for that
+sha), so the button was misleading there.
+
+Verified: 75/75 unit tests · full AOT production build clean · nav = Overview · Working Branches ·
+Release Channel · CF Board · Test Suites · Settings · Release Channel's only remaining action is
+`openLog`.

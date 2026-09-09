@@ -48,21 +48,30 @@ export class AppComponent {
 
   readonly nav: NavItem[] = [
     { path: '', label: 'Overview', icon: '◎', visible: () => true },
-    // Working Branches = developer workspace (dev/admin). Preview Channels = tester workspace
-    // (tester/admin) — testers sign off there. Role split, usability plan 2026-07-02.
+    // CUTOVER 2026-09-10 — Working Branches is now the ONE screen the whole flow runs on, so every
+    // role sees it: a developer views + rechecks, a tester approves for rollout, an admin bypasses.
+    // The buttons on the card are still capability-gated and the server re-checks each one, so
+    // widening this entry grants nobody an action they did not already hold.
     {
       path: 'branches',
       label: 'Working Branches',
       icon: '⎇',
-      visible: () => this.auth.isDeveloper() || this.auth.isAdmin(),
+      visible: () => this.auth.isDeveloper() || this.auth.isTester() || this.auth.isAdmin(),
     },
+    // Release Channel is READ-ONLY as of 2026-09-10 and visible to EVERY role: it is the only view
+    // of the development/production lanes — which Working Branches filters out
+    // (!isProtectedBranch) — so it is where anyone goes to see the dev/prod deploy links and which
+    // branches actually made it into the current release batch. It drives nothing: the
+    // development → production PR is opened automatically by ensureDevToProdPr.
     {
-      path: 'previews',
-      label: 'Preview Channels',
-      icon: '◷',
-      visible: () => this.auth.isTester() || this.auth.isAdmin(),
+      path: 'release-channel',
+      label: 'Release Channel',
+      icon: '🚀',
+      visible: () => this.auth.isDeveloper() || this.auth.isTester() || this.auth.isAdmin(),
     },
-    { path: 'release-channel', label: 'Release Channel', icon: '🚀', visible: () => this.auth.isAdmin() },
+    // REMOVED FROM THE NAV (not deleted — route and component are intact and reachable by URL):
+    //   'previews'  Preview Channels — fully superseded by the card's stage ① / ④, and its URL
+    //               fallback previewUrlFor() builds a link that cannot resolve.
     // CF Board (master plan 2026-07-02, L17): CF branches + Dev/Prod function matrix — dev/admin.
     {
       path: 'cf-board',

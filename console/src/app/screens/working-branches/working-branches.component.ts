@@ -6,6 +6,7 @@ import { AuthService } from '../../core/auth.service';
 import {
   ReleaseCandidate,
   RcStatus,
+  PrState,
   ActivityType,
   previewStale,
   signoffStale,
@@ -444,14 +445,60 @@ export class WorkingBranchesComponent {
       : { text: 'Ready — approve for rollout.', tone: 'ok' };
   }
 
+  // ── The two PRs a branch travels through (2026-09-10) ────────────────────────────────────────
+  // Everyone — developer, tester, admin — should be able to see, from the card, whether the code
+  // has reached development and whether it has reached production. Neither is a console action:
+  // the console opens PRs and a GitHub admin merges them (D3).
+
+  /** feature → development. `prDev` is filled by the pull_request webhook; before it lands, the
+   *  approval itself carries the URL, so the link never disappears in that gap. */
+  devPr(rc: ReleaseCandidate): { state: PrState; number?: number; url?: string } | null {
+    const f = rc.prDev;
+    if (f && f.state !== 'NONE') return { state: f.state, number: f.number, url: f.url };
+    if (rc.rollout?.prNumber) {
+      return { state: 'OPEN', number: rc.rollout.prNumber, url: rc.rollout.prUrl };
+    }
+    return null;
+  }
+
   /**
-   * Re-run the suite check. Shown on Stage 2 whenever a check has reported — including on a green
-   * one, because the hub can change under a branch that has not moved.
-   * Hidden while a check is already in flight.
+   * development → production. NOT on this candidate: the webhook writes `prProd` against the PR's
+   * HEAD branch, which for a promotion is `development`. So a feature card reads it from its repo's
+   * development entry — one shared PR that the whole release batch travels in.
+   */
+  prodPr(rc: ReleaseCandidate): { state: PrState; number?: number; url?: string } | null {
+    const dev = this.rcs().find((c) => c.repo === rc.repo && c.branch === 'development');
+    const f = dev?.prProd;
+    if (!f || f.state === 'NONE') return null;
+    return { state: f.state, number: f.number, url: f.url };
+  }
+
+  /** Only meaningful once this branch is actually part of the batch heading for production. */
+  showProdPr(rc: ReleaseCandidate): boolean {
+    return rc.prDev.state === 'MERGED' || !!rc.unreleased;
+  }
+
+  prPillTone(state: PrState): string {
+    return state === 'MERGED' ? 'ok' : state === 'OPEN' ? 'active' : state === 'CLOSED' ? 'bad' : 'none';
+  }
+
+  prPillLabel(state: PrState): string {
+    return state === 'MERGED' ? 'merged' : state === 'OPEN' ? 'open' : state === 'CLOSED' ? 'closed' : '—';
+  }
+
+  /**
+   * Re-run the suite check — offered ONLY while the check is BLOCKING (operator decision
+   * 2026-09-10). MATCHED and NOT_APPLICABLE already let the branch proceed, so a recheck there is
+   * noise at best; and on MATCHED the dispatcher would refuse anyway, because a run already exists
+   * for that sha. Hidden while a check is in flight.
+   *
+   * The loop this exists for: blocked → fix the hub (a stale selector, a widened appPaths) → recheck
+   * → MATCHED → recordSuiteStatus auto-dispatches the suites → stage ③.
    */
   canRecheck(rc: ReleaseCandidate): boolean {
     const st = rc.testSuiteStatus?.state;
-    return !!st && st !== 'CHECKING';
+    if (!st || st === 'CHECKING') return false;
+    return st !== 'MATCHED' && st !== 'NOT_APPLICABLE';
   }
 
   async recheckSuites(rc: ReleaseCandidate): Promise<void> {
