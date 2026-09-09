@@ -444,6 +444,25 @@ export class WorkingBranchesComponent {
       : { text: 'Ready — approve for rollout.', tone: 'ok' };
   }
 
+  /**
+   * Re-run the suite check. Shown on Stage 2 whenever a check has reported — including on a green
+   * one, because the hub can change under a branch that has not moved.
+   * Hidden while a check is already in flight.
+   */
+  canRecheck(rc: ReleaseCandidate): boolean {
+    const st = rc.testSuiteStatus?.state;
+    return !!st && st !== 'CHECKING';
+  }
+
+  async recheckSuites(rc: ReleaseCandidate): Promise<void> {
+    this.busy.set(rc.id);
+    try {
+      await this.fb.recheckSuites(rc);
+    } finally {
+      this.busy.set(null);
+    }
+  }
+
   // ── NEW FLOW — rollout approval (2026-09-09) ──────────────────────────────────────────────────
 
   bcRunTone(state: 'RUNNING' | 'PASSED' | 'FAILED'): string {

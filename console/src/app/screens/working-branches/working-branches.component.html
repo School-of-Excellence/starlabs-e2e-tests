@@ -100,6 +100,17 @@
                 @if (rc.testSuiteStatus; as ts) {
                   <span class="st-val" [title]="bcSuiteDetail(ts)">{{ bcSuiteLabel(ts.state) }}</span>
                   @if (ts.suites?.length) { <span class="st-sub">{{ ts.suites!.join(', ') }}</span> }
+                  <span class="st-sub">
+                    @if (canRecheck(rc)) {
+                      <button class="recheck" [disabled]="busy() === rc.id"
+                              title="Re-run the check against the current hub — skips the channel builds (~1 min)"
+                              (click)="recheckSuites(rc)">↻ recheck</button>
+                    }
+                    @if (ts.recheck; as rk) {
+                      <span [title]="'Last requested by ' + (rk.requestedBy || '—')">·
+                        {{ rk.count }}×</span>
+                    }
+                  </span>
                 } @else {
                   <span class="st-val">—</span>
                 }

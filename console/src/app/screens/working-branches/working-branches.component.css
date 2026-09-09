@@ -554,3 +554,18 @@
 @media (max-width: 900px) {
   .pipe { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* Stage 2's recheck control. Deliberately quiet — a link-weight button, not a call to action:
+   the only emphasised control on the card is Approve (stage 4). */
+.recheck {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.recheck:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
+.recheck:disabled { opacity: 0.45; cursor: not-allowed; }

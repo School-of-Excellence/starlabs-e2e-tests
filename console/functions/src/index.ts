@@ -102,6 +102,13 @@ const DEPLOY_WORKFLOW = 'deploy_19.yml';
 /** Flutter feature-stage build+distribute workflow, dispatched by Deploy for flutter repos
  *  (plan 2026-07-14). Builds both envs → App Distribution; no web preview channel. */
 const MOBILE_PREVIEW_WORKFLOW = 'mobile-preview.yml';
+/**
+ * NEW FLOW — the push-triggered channels + suite-status workflow. Dispatched by `recheckSuites`
+ * with skip_channels:'true', so a recheck runs the ~1-minute check alone instead of two full AOT
+ * builds and a 7-day republish of the PROD channel.
+ * ⚠️ Its display name must never contain preview/deploy/e2e — see handleWorkflowRun.
+ */
+const BRANCH_CHANNELS_WORKFLOW = 'branch-channels.yml';
 /** Workflow_run "name" substring that identifies the e2e gate run. */
 const E2E_GATE_HINT = 'e2e';
 
@@ -1196,10 +1203,6 @@ export const createPullRequest = onCall<CreatePullRequestData>(
 );
 
 // ===========================================================================
-// 5. setMember (callable) — admin-only member management (D1)
-// ===========================================================================
-
-// ===========================================================================
 // 4b. approveRollout (callable) — the NEW FLOW's single human gate
 // ===========================================================================
 //
@@ -1342,6 +1345,89 @@ export const approveRollout = onCall<ApproveRolloutData>(
         (bypass ? ' (BYPASSED)' : ''),
     );
     return { ok: true, prNumber: pr.number, prUrl: pr.html_url, bypassed: !!bypass };
+  },
+);
+
+// ===========================================================================
+// 4c. recheckSuites (callable) — re-run the suite-status check for a branch
+// ===========================================================================
+//
+// WHY IT EXISTS: the check runs on APP pushes and clones the hub at `main` at run time. So when the
+// fix is on the HUB side — a stale selector corrected, a suite's appPaths widened — pushing the hub
+// re-triggers NOTHING, and the only way to re-check was an empty commit on the app branch.
+//
+// OPTION A (operator decision 2026-09-09): dispatch branch-channels.yml with skip_channels:'true'.
+// The `channels` job is skipped, so a recheck costs ~1 minute instead of two full AOT builds — and
+// crucially does NOT republish the prod channel against the live project for another 7 days.
+//
+// WHO: any signed-in, active member. Rechecking is idempotent and only re-evaluates a diff, and it
+// is usually the DEVELOPER who just fixed the mismatch — who under the new flow holds no other
+// capability. Deliberately NOT gated on APPROVE_ROLLOUT.
+
+interface RecheckSuitesData {
+  repo: string;
+  branch: string;
+}
+
+export const recheckSuites = onCall<RecheckSuitesData>(
+  { region, secrets: [GITHUB_APP_PRIVATE_KEY] },
+  async (req: CallableRequest<RecheckSuitesData>) => {
+    const caller = requireAuth(req);
+    const { repo, branch } = req.data ?? ({} as RecheckSuitesData);
+    if (!repo || !branch) {
+      throw new HttpsError('invalid-argument', 'repo and branch are required.');
+    }
+    // Membership, not capability — see WHO above. This throws for a non-member.
+    await loadMemberCanonical(caller);
+
+    const ref = db.collection(PATHS.releaseCandidates).doc(candidateId(repo, branch));
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError('failed-precondition', `No candidate for ${repo}/${branch}.`);
+    }
+    const cand = snap.data() as ReleaseCandidate;
+    const prev = cand.testSuiteStatus?.recheck;
+
+    // Cheap anti-double-click guard. The workflow is idempotent, but two runs racing to write the
+    // same field make for confusing UI, and a held-down button should not queue ten runs.
+    if (prev?.requestedAt && Date.now() - prev.requestedAt < 60_000) {
+      throw new HttpsError(
+        'resource-exhausted',
+        'A recheck was requested less than a minute ago — give it a moment.',
+      );
+    }
+
+    try {
+      await appOctokit().actions.createWorkflowDispatch({
+        owner: GITHUB_ORG,
+        repo,
+        workflow_id: BRANCH_CHANNELS_WORKFLOW,
+        ref: branch,
+        inputs: { ref: branch, skip_channels: 'true' },
+      });
+    } catch (err: any) {
+      logger.error('recheckSuites dispatch failed', err);
+      throw new HttpsError('internal', `Recheck dispatch failed: ${err?.message ?? err}`);
+    }
+
+    // Written directly rather than via mutateCandidate: `recheck` lives inside the new-flow facet,
+    // which the projection does not read, and re-projecting would stamp updatedAt and reorder the
+    // board for what is only a request.
+    await ref.set(
+      {
+        testSuiteStatus: {
+          recheck: {
+            requestedBy: callerLabel(caller),
+            requestedAt: Date.now(),
+            count: (prev?.count ?? 0) + 1,
+          },
+        },
+      },
+      { merge: true },
+    );
+
+    logger.info(`recheckSuites ${repo}/${branch} by ${callerLabel(caller)}`);
+    return { ok: true };
   },
 );
 

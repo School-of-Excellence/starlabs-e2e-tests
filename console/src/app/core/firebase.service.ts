@@ -520,6 +520,25 @@ export class FirebaseService {
   }
 
   /**
+   * NEW FLOW — re-run the suite-status check for a branch.
+   *
+   * Needed because the check runs on APP pushes but reads the hub at `main`: after a HUB-side fix
+   * (a corrected selector, a widened appPaths) nothing re-triggers on its own. The backend
+   * dispatches branch-channels.yml with `skip_channels`, so this costs ~1 minute and does NOT
+   * rebuild or republish the two hosting channels.
+   *
+   * Open to any signed-in member — it is usually the developer who just fixed the mismatch.
+   */
+  recheckSuites(rc: ReleaseCandidate): Promise<ActionResult> {
+    return this.invoke(
+      'recheckSuites',
+      { repo: rc.repo, branch: rc.branch },
+      () => this.applyRecheckRequested(rc.id),
+      `recheck suite status for ${rc.branch}`,
+    );
+  }
+
+  /**
    * NEW FLOW — approve a branch for rollout. On success the backend opens the PR → development;
    * a GitHub admin merges it (the console never merges).
    *
@@ -875,6 +894,24 @@ export class FirebaseService {
    * The PR number is not faked: in mock mode no PR exists, and inventing one would make the card
    * link somewhere that isn't there.
    */
+  /** MOCK-MODE only — show the check as re-running so the card visibly reacts offline. */
+  private applyRecheckRequested(id: string): void {
+    this.patch(id, (rc) => ({
+      ...rc,
+      testSuiteStatus: rc.testSuiteStatus
+        ? {
+            ...rc.testSuiteStatus,
+            state: 'CHECKING' as const,
+            recheck: {
+              requestedBy: '(me)',
+              requestedAt: Date.now(),
+              count: (rc.testSuiteStatus.recheck?.count ?? 0) + 1,
+            },
+          }
+        : rc.testSuiteStatus,
+    }));
+  }
+
   private applyRolloutApproval(id: string, bypass?: { reason: string }): void {
     this.patch(id, (rc) => ({
       ...rc,

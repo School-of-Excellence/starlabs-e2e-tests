@@ -373,3 +373,39 @@ already drives `/notificationrecord` but suite paths are frozen by operator inst
 `Customer Support/customer-support-dashboard` (1 — `support` claims it but `ciReady:false`, so
 classifyChanges skips it; needs `playwright.support.emulator.config.ts`), and the `bp-event-select`
 drift (one-line app fix at `big-planner.component.html:17`).
+
+## Increment 4 — Recheck button, option A (operator decision 2026-09-09)
+
+**Problem it solves:** the check runs on APP pushes but clones the hub at `main` at run time. After a
+HUB-side fix — a corrected selector, a widened appPaths — nothing re-triggers, and the only recourse
+was `git commit --allow-empty` on the app branch.
+
+**Option A chosen over B/C:** dispatch `branch-channels.yml` with a new `skip_channels` input rather
+than re-running it whole. B (dispatch as-is) would cost two full AOT builds per click AND republish
+the PROD channel against the live project for another 7 days — an unacceptable price for a
+~1-minute check, and a button that silently redeploys production is the wrong button.
+
+- `branch-channels.yml` — new `skip_channels` dispatch input (default `'false'`); the `channels` job
+  carries `if: ${{ inputs.skip_channels != 'true' }}`. `inputs.skip_channels` is EMPTY on a push
+  event, so every normal run is unchanged.
+- `recheckSuites` callable (index.ts, beside approveRollout — readiness.ts cannot import the auth
+  helpers without a cycle). Dispatches via the GitHub App, then writes `testSuiteStatus.recheck`
+  {requestedBy, requestedAt, count}. Written with a direct `set(merge)` rather than mutateCandidate:
+  re-projecting would stamp `updatedAt` and reorder the board for what is only a request.
+  60-second anti-double-click guard — the workflow is idempotent but racing writes make confusing UI.
+- **WHO — decided, flag if wrong:** any signed-in ACTIVE member, gated on membership not capability.
+  Rechecking only re-evaluates a diff, and it is usually the DEVELOPER who just fixed the mismatch —
+  who under the new flow holds no other capability. Deliberately NOT gated on APPROVE_ROLLOUT.
+- Console: quiet link-weight `↻ recheck` on Stage 2 (the emphasised control on the card stays
+  Approve, stage 4), plus a `N×` counter. Hidden while state is CHECKING.
+
+Also removed a duplicate `// 5. setMember` section header left behind by the approveRollout insert.
+
+⚠️ DEPLOY/PROPAGATION: `createWorkflowDispatch` resolves `workflow_id` against the repo's DEFAULT
+branch, and the RUN uses the workflow file from the dispatched `ref`. So the `skip_channels` input
+must exist on BOTH `starlabs-angular`'s default branch and the feature branch, or the dispatch 404s
+or silently ignores the input and rebuilds the channels anyway. Edited in the
+`Starlabs - VideoConference` checkout only — `Starlabs 19` still has the old file.
+
+Verified: 75/75 unit tests · functions tsc clean · full AOT production build clean · both workflow
+YAMLs parse (`branch-channels.yml` inputs = ref, skip_channels).
