@@ -361,12 +361,39 @@ async function handlePush(deliveryId: string, payload: any): Promise<boolean> {
   if (isProtected(branch)) return true;
 
   await mutateCandidate(repo, branch, lastActivityFrom(entry), (c) => {
+    const previousSha = c.headSha;
     c.headSha = headSha ?? c.headSha;
     c.headCommit = {
       msg: headCommit.message,
       author,
       at: eventTime,
     };
+
+    // NEW FLOW (2026-09-10): a push INVALIDATES a rollout approval.
+    //
+    // The approval is a statement about a specific commit — `rollout.sha`. Once new code lands it
+    // no longer covers HEAD, but the facet used to keep saying APPROVED with a live PR link, and
+    // `approveRollout` refuses to re-approve something already approved. The result was a branch
+    // stuck showing a green stage ④ for code nobody had signed off, with no way back: a tester
+    // could not re-approve and an admin could not bypass.
+    //
+    // Resetting to NONE puts the branch back in front of the gate — the suites re-run for the new
+    // sha, the tester approves again, or an admin bypasses. The approval is not lost: the
+    // activity log holds it, and the PR itself survives in `prDev` (the PR row keeps showing it,
+    // GitHub having advanced it to the new head automatically).
+    //
+    // Mirrors what the old flow already does for prodGate on every successful dev deploy.
+    if (
+      c.rollout?.state === 'APPROVED' &&
+      headSha &&
+      previousSha !== headSha &&
+      c.rollout.sha !== headSha
+    ) {
+      logger.info(
+        `push invalidates rollout approval for ${repo}/${branch}: approved ${c.rollout.sha?.slice(0, 7)} → head ${headSha.slice(0, 7)}`,
+      );
+      c.rollout = { state: 'NONE' };
+    }
   });
 
   // CF repo: keep the Branches-tab record current on every push (operator flow, 2026-07-03).

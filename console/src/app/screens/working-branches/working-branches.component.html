@@ -151,12 +151,32 @@
               <span class="st-n">4</span>
               <div class="st-body">
                 <span class="st-label">Rollout</span>
-                @if (rc.rollout?.state === 'APPROVED') {
+                @if (rolloutSupersededLabel(rc)) {
+                  <!-- Approved, then someone pushed. The approval described a commit that is no
+                       longer HEAD, so it is NOT shown as approved — the gate is open again. -->
+                  <span class="st-val st-warn-val"
+                        [title]="'Approved by ' + (rc.rollout!.by || '—') + ' for an earlier commit — superseded by a new push'">
+                    approval superseded
+                  </span>
+                  @if (canApproveRollout(rc)) {
+                    <button class="approve" [disabled]="busy() === rc.id" (click)="approveRollout(rc)">
+                      Re-approve
+                    </button>
+                  } @else if (canBypassRollout(rc)) {
+                    <button class="approve warn" [disabled]="busy() === rc.id"
+                            [title]="'Blocked: ' + bcRolloutBlockReason(rc) + ' — admin override, recorded permanently'"
+                            (click)="bypassRollout(rc)">
+                      ⚠ Bypass &amp; approve
+                    </button>
+                  } @else {
+                    <span class="st-sub" [title]="bcRolloutBlockReason(rc) || ''">waiting for the new run</span>
+                  }
+                } @else if (rolloutApproved(rc)) {
                   <span class="st-val" [title]="'Approved by ' + (rc.rollout!.by || '—')">approved</span>
+                  <!-- No PR link here: the PR row below owns both links, with their state. One link
+                       per PR, in one place (operator, 2026-09-10). -->
                   <span class="st-sub">
-                    @if (rc.rollout!.prUrl) {
-                      <a class="ghlink sm" [href]="rc.rollout!.prUrl" target="_blank" rel="noopener">PR ↗</a>
-                    }
+                    {{ rc.rollout!.by || '—' }}
                     @if (rc.rollout!.bypass; as bp) {
                       <span class="st-warn" [title]="'Bypassed by ' + bp.by + ' — ' + bp.reason">⚠ bypassed</span>
                     }
@@ -229,9 +249,9 @@
           }
 
           <div class="cardfoot">
-            @if (rc.rollout?.prUrl; as url) {
-              <a class="ghlink" [href]="url" target="_blank" rel="noopener">Open PR on GitHub ↗</a>
-            }
+            <!-- The old "Open PR on GitHub" link lived here. Removed 2026-09-10: it linked only to
+                 the DEV pr and now duplicates the PR row above, which shows both PRs with their
+                 state. One link per PR, in one place. -->
             <span class="ts muted">updated {{ rc.updatedAt | date: 'MMM d, HH:mm' }}</span>
           </div>
         </article>

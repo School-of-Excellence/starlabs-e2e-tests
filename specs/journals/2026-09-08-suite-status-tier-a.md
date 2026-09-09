@@ -541,3 +541,38 @@ sha), so the button was misleading there.
 Verified: 75/75 unit tests · full AOT production build clean · nav = Overview · Working Branches ·
 Release Channel · CF Board · Test Suites · Settings · Release Channel's only remaining action is
 `openLog`.
+
+## Increment 8 — stage ④ must never be green beside a red stage ③ (2026-09-10)
+
+Operator screenshot: TEST RUN **failed** (red) sitting next to ROLLOUT **approved** with a live PR
+link. Three separate defects behind one symptom.
+
+1. **A push did not invalidate the approval.** `rollout` stayed APPROVED for a commit it never
+   covered, `approveRollout` refused ("Already approved for rollout") and `canBypassRollout` required
+   `state !== 'APPROVED'` — so NEITHER a tester nor an admin could act. A dead end.
+   Fixed backend-side in `handlePush`: a push whose sha differs from `rollout.sha` resets the facet
+   to `{ state: 'NONE' }`, mirroring the old flow's prodGate reset on every successful dev deploy.
+   Nothing is lost — the activity log keeps the approval and the PR survives in `prDev`.
+
+2. **"Approved" was defined only by staleness.** The first frontend fix treated an approval as
+   superseded only when its sha ≠ headSha. That still leaves green-beside-red when the sha matches
+   but the run FAILED. `rolloutSuperseded()` now means: approval predates HEAD **OR** the evidence
+   behind it is not a fresh PASS. Stage ④ may say "approved" only while a fresh passing run stands
+   behind it. `nfRolloutTone` and `nfNextStep` were reading the old rule and are now consistent — a
+   superseded approval is amber and falls through to a message naming what has to happen
+   ("Approved earlier, but the suites have since FAILED — fix them, or an admin must bypass").
+
+3. **Three links to two PRs.** Stage ④ carried a `PR ↗` and the card footer carried
+   "Open PR on GitHub ↗", both pointing at the dev PR only, while the new PR row already showed both
+   PRs with their state. Operator: "only the bottom two PR button is enough." Both removed; the PR
+   row is now the single place either PR is linked.
+
+**Also this session, and my fault:** `console/node_modules` and `console/functions/node_modules` were
+emptied while I was running a typecheck from the wrong directory (`npx tsc` in `console/functions`
+pulled the unrelated `tsc@2.0.4` package). Restored with `npm install --legacy-peer-deps` (console,
+509 packages) and `npm install` (functions); source untouched and both builds green. NOTE
+`console/package-lock.json` is absent afterwards — the operator should confirm whether it was
+tracked.
+
+Verified: 75/75 unit tests · full AOT production build clean · stage ④ has no PR link · the PR row
+holds exactly two links.

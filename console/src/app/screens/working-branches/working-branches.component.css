@@ -604,3 +604,7 @@
 .pr-state  { text-transform: uppercase; font-size: 9.5px; letter-spacing: 0.04em; color: var(--muted); }
 .pr-pill[data-tone='ok'] .pr-state     { color: var(--st-ok); }
 .pr-pill[data-tone='active'] .pr-state { color: var(--accent); }
+
+/* Stage 4 when an approval has been superseded by a new push: it is NOT a pass, so it must not
+   read like one. */
+.st-warn-val { color: var(--st-pr-prod); }

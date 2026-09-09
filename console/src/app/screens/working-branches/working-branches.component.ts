@@ -410,7 +410,10 @@ export class WorkingBranchesComponent {
   nfRolloutTone(rc: ReleaseCandidate): string {
     const r = rc.rollout;
     if (r?.state !== 'APPROVED') return this.canApproveRollout(rc) ? 'active' : 'none';
-    return r.bypass || this.bcRolloutStale(rc) ? 'warn' : 'ok';
+    // GREEN only when the approval genuinely holds. A superseded one is amber — it must never sit
+    // green beside a red stage ③.
+    if (this.rolloutSuperseded(rc)) return 'warn';
+    return r.bypass ? 'warn' : 'ok';
   }
 
   /**
@@ -420,10 +423,26 @@ export class WorkingBranchesComponent {
   nfNextStep(rc: ReleaseCandidate): { text: string; tone: string } {
     const ts = rc.testSuiteStatus;
     const run = ts?.run;
+    // Only a STANDING approval short-circuits. A superseded one falls through to the run/check
+    // messages below, which name what actually has to happen next.
+    if (this.rolloutApproved(rc)) {
+      return { text: 'Approved. A GitHub admin merges the PR → development.', tone: 'ok' };
+    }
     if (rc.rollout?.state === 'APPROVED') {
-      return this.bcRolloutStale(rc)
-        ? { text: 'Approved, but HEAD has moved since — re-check before merging.', tone: 'warn' }
-        : { text: 'Approved. A GitHub admin merges the PR → development.', tone: 'ok' };
+      const run = rc.testSuiteStatus?.run;
+      if (this.bcRolloutStale(rc)) {
+        return {
+          text: 'The earlier approval no longer covers this commit — it needs approving again.',
+          tone: 'warn',
+        };
+      }
+      if (run?.state === 'FAILED') {
+        return {
+          text: 'Approved earlier, but the suites have since FAILED — fix them, or an admin must bypass.',
+          tone: 'bad',
+        };
+      }
+      return { text: 'The approval is no longer backed by a passing run.', tone: 'warn' };
     }
     if (!ts) return { text: 'Waiting for the first push to report.', tone: 'none' };
     if (ts.state === 'CHECKING') return { text: 'Checking suite coverage…', tone: 'active' };
@@ -536,10 +555,31 @@ export class WorkingBranchesComponent {
     return r?.state === 'APPROVED' && !!r.sha && !!rc.headSha && r.sha !== rc.headSha;
   }
 
+  /**
+   * True while the card still SAYS approved but the approval no longer covers HEAD. The push
+   * webhook resets `rollout` to NONE, so this is the gap before that lands — and a safety net if it
+   * never does. Everywhere else treats a stale approval as no approval at all.
+   */
+  private rolloutSuperseded(rc: ReleaseCandidate): boolean {
+    if (rc.rollout?.state !== 'APPROVED') return false;
+    // (a) the approval describes a commit that is no longer HEAD.
+    if (this.bcRolloutStale(rc)) return true;
+    // (b) the evidence behind it no longer holds: stage ④ may only say "approved" while a FRESH
+    // PASSING run stands behind it. A failed or stale run means the approval is unsupported, even
+    // if its sha still matches — which is exactly the case that showed a green stage ④ next to a
+    // red stage ③.
+    const run = rc.testSuiteStatus?.run;
+    return !(run?.state === 'PASSED' && this.bcRunFresh(rc));
+  }
+
   /** Null when the tester may approve; otherwise the reason, shown as the button's tooltip. */
   bcRolloutBlockReason(rc: ReleaseCandidate): string | null {
     if (!this.auth.hasCapability('APPROVE_ROLLOUT')) return 'Your role does not grant this action.';
-    if (rc.rollout?.state === 'APPROVED') return 'Already approved for rollout.';
+    // A superseded approval must NOT block re-approval — that was the dead end: green stage ④ for
+    // code nobody signed off, and neither tester nor admin able to act.
+    if (rc.rollout?.state === 'APPROVED' && !this.rolloutSuperseded(rc)) {
+      return 'Already approved for rollout.';
+    }
     const run = rc.testSuiteStatus?.run;
     if (!run) return 'The test suites have not run yet.';
     if (run.state === 'RUNNING') return 'The test suites are still running.';
@@ -556,9 +596,23 @@ export class WorkingBranchesComponent {
   canBypassRollout(rc: ReleaseCandidate): boolean {
     return (
       this.auth.hasCapability('BYPASS_SUITE_STATUS') &&
-      rc.rollout?.state !== 'APPROVED' &&
+      !this.rolloutApproved(rc) &&
       this.bcRolloutBlockReason(rc) !== null
     );
+  }
+
+  /**
+   * The ONE question stage ④ asks: is this branch approved FOR THE CODE THAT IS THERE NOW?
+   * A superseded approval answers no — so the stage stops showing "approved", the PR link moves to
+   * the PR row where it belongs, and approve/bypass become available again.
+   */
+  rolloutApproved(rc: ReleaseCandidate): boolean {
+    return rc.rollout?.state === 'APPROVED' && !this.rolloutSuperseded(rc);
+  }
+
+  /** Approved, but for an older commit — shown instead of "approved". */
+  rolloutSupersededLabel(rc: ReleaseCandidate): boolean {
+    return this.rolloutSuperseded(rc);
   }
 
   async approveRollout(rc: ReleaseCandidate): Promise<void> {
