@@ -449,3 +449,44 @@ that note inline in red on failure and in the tooltip otherwise. `note` added to
 and accepted (capped at 300 chars) by the endpoint.
 
 Verified: 75/75 unit tests · functions tsc clean · full AOT build clean · both workflow YAMLs parse.
+
+## Increment 6 — second failure: @zoom/meetingsdk peers dropped by --legacy-peer-deps
+
+The `--with-deps` fix worked; the run got past browser install and died at the app-serve step:
+
+```
+Run nohup npm run start:emulator > /tmp/app.log 2>&1 &
+Error: app failed to serve on :4200
+✘ [ERROR] Could not resolve "react"        node_modules/@zoom/meetingsdk/dist/zoomus-websdk.umd.min.js
+✘ [ERROR] Could not resolve "redux"
+✘ [ERROR] Could not resolve "redux-thunk"
+```
+
+**Root cause, verified against the app's lockfile:**
+
+- `@zoom/meetingsdk ^6.1.0` is a real dependency; its peers are `react@18.2.0 react-dom@18.2.0
+  react-redux@8.1.2 redux@4.2.1 redux-thunk@2.4.2 lodash@^4.18.1`.
+- Those peers ARE in `package-lock.json` (lockfileVersion 3) — each marked **`"peer": true`**.
+- `web-e2e.yml` installed the app with `npm ci --legacy-peer-deps`. That flag restores npm 6
+  behaviour: peer dependencies are NOT installed. So `npm ci` reproduced the lock MINUS every
+  peer-marked entry, and react/redux/redux-thunk were simply absent from node_modules.
+- `zoomus-websdk.umd.min.js` `require()`s them at BUILD time, so `ng serve --configuration emulator`
+  failed to bundle, the app never reached :4200, and every suite failed without running a test.
+
+**Why it never showed up before:** `branch-channels.yml`'s channels job uses plain `npm install`
+(npm 7+ DOES install peers) and its production build succeeded on the same commit — which is exactly
+why both channels went green while the test lane died. The asymmetry between the two install
+commands is the whole bug.
+
+**Fix — `.github/workflows/web-e2e.yml`,** after `npm ci --legacy-peer-deps`, reinstall the SDK's
+peers explicitly with `npm i --no-save --legacy-peer-deps`. Versions are READ FROM THE INSTALLED SDK
+(`require('@zoom/meetingsdk/package.json').peerDependencies`) rather than hardcoded, so a Zoom bump
+cannot silently reintroduce the failure; `--no-save` leaves package.json and the lock untouched.
+Verified the extraction against the real node_modules — it emits exactly the versions the lock pins.
+
+Rejected alternatives: dropping `--legacy-peer-deps` (one word, but it is presumably there for a
+peer conflict elsewhere, and this is a file shared by 12 workflows — too broad a change to make
+blind); declaring the five peers as devDependencies in the app (correct and durable, but it modifies
+the app repo's package.json + lock, which is the operator's call, not a CI fix).
+
+⚠️ SHARED FILE — the same 12 callers as increment 5. This change is purely additive.

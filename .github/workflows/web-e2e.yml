@@ -130,7 +130,29 @@ jobs:
         run: npm i -g firebase-tools@latest
 
       - name: Install app deps
-        run: npm ci --legacy-peer-deps
+        run: |
+          npm ci --legacy-peer-deps
+          # --- @zoom/meetingsdk peer deps, restored explicitly (2026-09-09) ------------------
+          # `--legacy-peer-deps` restores npm 6 behaviour: peer dependencies are NOT installed.
+          # In lockfileVersion 3 the Zoom SDK's peers are recorded with `"peer": true`, so
+          # `npm ci --legacy-peer-deps` OMITS react, react-dom, react-redux, redux and redux-thunk
+          # even though the lock pins exact versions for all of them.
+          #
+          # That is fatal here and nowhere else: zoomus-websdk.umd.min.js `require()`s them at BUILD
+          # time, so `ng serve` fails with `Could not resolve "react"` and the app never reaches
+          # :4200 — every suite then fails without running a test. It does NOT reproduce in
+          # branch-channels.yml, which uses plain `npm install` (npm 7+ installs peers) and builds
+          # fine; that asymmetry is why this only ever breaks the e2e lanes.
+          #
+          # Versions are READ FROM THE INSTALLED SDK rather than hardcoded, so a Zoom bump cannot
+          # silently reintroduce the failure. --no-save keeps package.json/lock untouched.
+          if [ -f node_modules/@zoom/meetingsdk/package.json ]; then
+            PEERS=$(node -p "Object.entries(require('./node_modules/@zoom/meetingsdk/package.json').peerDependencies||{}).map(([k,v])=>k+'@'+v).join(' ')")
+            if [ -n "$PEERS" ]; then
+              echo "Installing @zoom/meetingsdk peers: $PEERS"
+              npm i --no-save --legacy-peer-deps $PEERS
+            fi
+          fi
 
       - name: Install Cloud Functions deps
         run: cd starlabs-cloud-function/functions && npm ci
