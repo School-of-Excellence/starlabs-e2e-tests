@@ -83,6 +83,7 @@ const ID = {
   // journeysupport renders the "Mark as Onboarded" button (gated off for p0 by paymentplan:null).
   PJP_ONB: `${TESTRUNID}_PJP_ONB`,  // participantjourneyproduct (journeyref J1, initiated, paymentplan set, NOT onboarded) — JP-08 + JP-09 (the single deterministic onboard target for p1)
   SL1: `${TESTRUNID}_SL1`,          // salesleads doc (status null) — JP-10 reject (test-project-only, no Watson)
+  SL2: `${TESTRUNID}_SL2`,          // salesleads doc (pending, initial payment APPROVED) — JP-27..32 approve
   DF1: `${TESTRUNID}_DF1`,          // delivery forms doc with a formarray — formtemplate render (JP-16) + a deliverysequence-authoring activity option (JP-AUTH)
   APT1: `${TESTRUNID}_APT1`,        // appointmenttype doc — a second deliverysequence-authoring activity option
   EMT1: `${TESTRUNID}_EMT1`,        // email templates doc (active:true) — JP-09 onboarding email template
@@ -311,6 +312,34 @@ async function seedJourney() {
     journey: ID.J1, journeytype: 'new', status: null, salespersonname: 'E2E Seeder',
     date: T.fromMillis(Date.now()), purchasedate: T.fromMillis(Date.now()),
     totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, ...tag,
+  });
+
+  //    JP-27..32 salesleads doc for the APPROVAL path. Same pending shape as SL1, plus
+  //    initialpaymentapproved:true — a deliberate operator decision (option A, 2026-09-10). Why it is
+  //    seeded rather than driven through the UI:
+  //
+  //      saleslead.component.ts initialPayment() gates that flag on a HARDCODED UID ALLOWLIST keyed by
+  //      Firebase project — six literal uids for fir-sample-aae4a, two for starlabs-test. The emulator
+  //      project (starlabs-cicd) matches NEITHER branch, so `users` stays empty, every test actor fails
+  //      `users.includes(guard.uid)` and gets alert("Your Roll is not eligible..."). Without the flag the
+  //      approval path is simply unreachable in the gate: submitValidation() keeps Submit disabled.
+  //
+  //    ANTI-CIRCULARITY: this is a PRECONDITION, never an assertion. The approval cases assert what the
+  //    APP writes on submit (status 'Approved', statusupdateddate, the balance fields) — not this flag.
+  //    What they consciously do NOT cover is the payment-approval gate itself; covering that needs the
+  //    allowlist moved into roles data, which is an app change and a separate decision.
+  //
+  //    SL1 is deliberately left untouched: JP-10 depends on it staying pending and unapproved.
+  //
+  //    All four fields validateApprove() requires are present, so the Review button renders ENABLED
+  //    (saleslead.component.ts:1838 — purchasedate, totalpurchasevalue, initialpayment, installmentamount).
+  await db.collection('salesleads').doc(ID.SL2).set({
+    docid: ID.SL2, profileid: PF.p0, name: `Lead Approve Test ${TESTRUNID}`, email: EMAIL.p0,
+    journey: ID.J1, journeytype: 'new', status: null, salespersonname: 'E2E Seeder',
+    date: T.fromMillis(Date.now()), purchasedate: T.fromMillis(Date.now()),
+    totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300,
+    initialpaymentapproved: true,
+    ...tag,
   });
 
   //    delivery forms doc with a formarray — formtemplate route (?id=DF1) builds the form from this

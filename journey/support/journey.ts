@@ -57,6 +57,8 @@ export const journeyIds = {
   PKG1: `${RUN}_PKG1`, J2P1: `${RUN}_J2P1`, PDS1: `${RUN}_PDS1`,
   // deep
   PJP_ONB: `${RUN}_PJP_ONB`, SL1: `${RUN}_SL1`,
+  /** Approval-path lead: pending, but with the initial payment pre-approved (JP-27..32). */
+  SL2: `${RUN}_SL2`,
   DF1: `${RUN}_DF1`, APT1: `${RUN}_APT1`, EMT1: `${RUN}_EMT1`,
   // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks). Mirrors seed-journey.js.
   JOD1: `${RUN}_JOD1`, JOD2: `${RUN}_JOD2`,
@@ -77,6 +79,7 @@ export const journeyNames = {
   product2: `Test Product Two ${RUN}`,
   package1: `Test Package ${RUN}`,
   salesLead: `Lead Reject Test ${RUN}`,
+  salesLeadApprove: `Lead Approve Test ${RUN}`,
   deliveryForm: `Test Delivery Form ${RUN}`,
   apptType: `Test Appt Type ${RUN}`,
   emailTemplate: `Test Onboarding Template ${RUN}`,
@@ -218,6 +221,30 @@ export async function resetSalesLeadPending(slId: string): Promise<void> {
  * key (profileid). Anti-circular: this is teardown of the test's own scaffolding, never an assertion.
  * Returns counts so the spec can assert "0 before" deterministically.
  */
+/**
+ * Reset the APPROVAL lead (SL2) to its seeded pre-state.
+ *
+ * Clears everything reviewLead()'s updateDoc writes — status, statusupdateddate and the two balance
+ * fields — and re-asserts initialpaymentapproved:true, which is the seeded PRECONDITION that makes the
+ * Submit button reachable at all (see seed-journey.js: the app's own initialPayment() gate gives every
+ * emulator actor "Your Roll is not eligible", so the flag can only come from the seed).
+ *
+ * Anti-circular: this restores a precondition; it is never the thing a case asserts.
+ */
+export async function resetSalesLeadForApproval(slId: string): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('salesleads').doc(slId).update({
+    status: null,
+    initialpaymentapproved: true,
+    statusupdateddate: admin.firestore.FieldValue.delete(),
+    initialpaymentbalance: admin.firestore.FieldValue.delete(),
+    pendingbalanceamount: admin.firestore.FieldValue.delete(),
+    rejectnotes: admin.firestore.FieldValue.delete(),
+    cancelled: admin.firestore.FieldValue.delete(),
+  }).catch(() => {});
+}
+
 export async function cleanAppPurchaseWrites(profileId: string): Promise<void> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
