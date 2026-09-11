@@ -28,21 +28,20 @@ import {
   resetRecommendedMix, createRecommendedMix, resetHlsEpisode, resetHlsContentUrl,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.CONT_RUNID || 'cont';
 const ROW = 'tr.mat-mdc-row, tr[mat-row]';
 
-// open a Material mat-select panel robustly: the floating <mat-label> notched-outline overlays the
-// trigger and intercepts a normal click, so force-click and RETRY until an option is visible (Material
-// overlays can open slowly on the cloud build — same .toPass() pattern as events-deep's pickMatOption).
+// open a Material mat-select panel robustly. WHY it needs a helper at all: the floating <mat-label>
+// notched-outline overlays the trigger and intercepts a normal click, but the `click({ force: true })`
+// that gets past it ALSO skips actionability — a click landing before Material wires the overlay is
+// dispatched and silently opens nothing. _shared/mat-select.ts owns that problem now (keyboard-first
+// open, asserts the panel, retries); callers keep picking their own options out of the open panel.
 async function openSelect(page: Page, trigger: ReturnType<Page['locator']>) {
   await expect(trigger).toBeVisible({ timeout: 20_000 });
-  const anyOption = page.locator('.cdk-overlay-pane mat-option').first();
-  await expect(async () => {
-    await trigger.click({ force: true });
-    await expect(anyOption).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 30_000 });
+  await openMatSelect(page, trigger);
 }
 
 test.describe('Content — deep write/CF cases (real UI / component / CF, anti-circular)', () => {

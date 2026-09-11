@@ -26,6 +26,7 @@ import {
   resetChatGroup, resetEmailArchiveCf, resetEmailTemplateCf,
 } from './support/comms';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.COMM_RUNID || 'comm';
@@ -172,14 +173,13 @@ test.describe('Comms — email template create (real UI write, anti-circular)', 
 
     // Category / Sub-Category / Server are Material mat-selects fed by seeded config docs (email validators/
     // templateCategories + classify/postmarkserver). Open each and pick the seeded option. The floating
-    // <mat-label> intercepts a plain click on the trigger → click({force}) (queue/appt mat-select gotcha).
+    // <mat-label> intercepts a plain click on the trigger (queue/appt mat-select gotcha), and the forced
+    // click that gets past it can itself be swallowed before Material wires the overlay — so the open +
+    // pick goes through _shared/mat-select.ts, which asserts the panel and picks inside the open listbox.
     const pickSelect = async (controlName: string, optionText: RegExp) => {
       const trigger = page.locator(`mat-select[formControlName="${controlName}"]`);
       await expect(trigger, `CN-04b: the ${controlName} select must render`).toBeVisible({ timeout: 20_000 });
-      await trigger.click({ force: true });
-      const option = page.getByRole('option', { name: optionText });
-      await expect(option, `CN-04b: the seeded ${controlName} option must be selectable`).toBeVisible({ timeout: 10_000 });
-      await option.click();
+      await selectMatOption(page, trigger, optionText);
     };
     await pickSelect('category', /^Test$/);
     await pickSelect('subCategory', /^Unit$/);

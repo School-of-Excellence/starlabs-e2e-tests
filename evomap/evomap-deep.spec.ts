@@ -26,6 +26,7 @@ import {
   countNonDeletedFor, hasNonDeletedTitleFor,
 } from './support/evomap';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const ROW = 'tr.mat-mdc-row, tr[mat-row]';
@@ -38,10 +39,11 @@ const ROW = 'tr.mat-mdc-row, tr[mat-row]';
 // are located page-wide (not inside the dialog/overlay container).
 // ---------------------------------------------------------------------------------------------------
 async function pickSearchSelectOption(page: Page, trigger: ReturnType<Page['locator']>, search: string, optionText: string) {
-  // Open the panel. force: the floating <mat-label>/notched-outline overlays the trigger and would
-  // otherwise intercept the click (same reason appointments/status.spec.ts forces the reason select).
+  // Open the panel through _shared/mat-select.ts: the floating <mat-label>/notched-outline overlays the
+  // trigger so the click has to be forced, but force also skips actionability — a click landing before
+  // Material wires the overlay is dispatched and silently opens nothing.
   await trigger.scrollIntoViewIfNeeded().catch(() => {});
-  await trigger.click({ force: true });
+  await openMatSelect(page, trigger);
   // The ngx-mat-select-search input lives in the open select PANEL (a body-level CDK overlay), NOT the
   // dialog. It renders TWO `.mat-select-search-input`s — a hidden aux input AND the real one (aria-label
   // "dropdown search", placeholder "Search …"); we must target the VISIBLE one (the :not(.hidden) input).
@@ -49,6 +51,8 @@ async function pickSearchSelectOption(page: Page, trigger: ReturnType<Page['loca
   const searchBox = panel.locator('.mat-select-search-input:not(.mat-select-search-hidden)').first();
   await expect(async () => {
     if (!(await searchBox.isVisible().catch(() => false))) {
+      // Recovery only: the panel is open (openMatSelect asserted it) but the ngx search input has not
+      // rendered yet — re-poke the trigger. NOT an initial open, so it stays a bare forced click.
       await trigger.click({ force: true }).catch(() => {});
     }
     await expect(searchBox).toBeVisible({ timeout: 2_000 });
@@ -276,7 +280,10 @@ test.describe('Evolution Mapping — participant_videos_mapping write depth (rea
     // shut and leave a detached, un-selected option — so we open deterministically and assert the result).
     const typeSelect = panel.locator('.form-group', { hasText: 'Type' }).locator('mat-select').first();
     await typeSelect.scrollIntoViewIfNeeded().catch(() => {});
-    await typeSelect.click({ force: true });
+    // Open through _shared/mat-select.ts (a bare forced click can be swallowed before Material wires the
+    // overlay and open nothing). The PICK stays local: the visible-only + anchored mat-option scoping
+    // below is what keeps a stale/hidden option out, and the trigger assertion after it is the proof.
+    await openMatSelect(page, typeSelect);
     const interviewOption = page.locator('mat-option', { hasText: /^\s*Interview\s*$/ }).filter({ visible: true }).first();
     await expect(interviewOption, 'EM-13: the Interview type option must appear').toBeVisible({ timeout: 15_000 });
     await interviewOption.click();

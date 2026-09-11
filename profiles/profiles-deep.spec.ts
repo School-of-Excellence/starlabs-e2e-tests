@@ -21,6 +21,7 @@
 import { test, expect } from '@playwright/test';
 import { profProfileIds, profNames, installProfileStubs, loginAsProfileAdmin } from './support/profiles';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 
 const RUN = process.env.PROF_RUNID || 'prof';
 // A token UNIQUE to this run's seeded participant names ("Profile Test User Zero prof", …). Typed into
@@ -136,9 +137,13 @@ test.describe('Profiles — analytics filter-builder + dashboards (deep, real UI
     await page.getByRole('button', { name: /^\s*Filters\s*$/ }).click();
     const statusSelect = page.locator('mat-select[name="customerstatus"]');
     await expect(statusSelect, 'PA-08: the Customer Status select must render in the Filters panel').toBeVisible({ timeout: 20_000 });
-    await statusSelect.click({ force: true });
-    // retry-until-option-visible (Material overlays can open slowly)
-    const activeOption = page.locator('mat-option').filter({ hasText: /^\s*active\s*$/i });
+    // Open through _shared/mat-select.ts: the forced click this used (the floating mat-label intercepts a
+    // plain one) also skips actionability, so a click arriving before Material wires the overlay is
+    // dispatched and silently opens nothing — that is what the retry-until-option-visible note below was
+    // for. The PICK stays local: it is anchored to the whole option text and takes .first() on this
+    // MULTI-select, and the Escape close after it is unchanged.
+    const statusPanel = await openMatSelect(page, statusSelect);
+    const activeOption = statusPanel.locator('mat-option').filter({ hasText: /^\s*active\s*$/i });
     await expect(activeOption.first(), 'PA-08: the "active" option must appear in the overlay').toBeVisible({ timeout: 15_000 });
     await activeOption.first().click();
     // close the overlay so the Search button is clickable, then run the filter.

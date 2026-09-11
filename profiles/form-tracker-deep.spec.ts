@@ -13,6 +13,7 @@
 import { test, expect } from '@playwright/test';
 import { profNames, installProfileStubs, loginAsProfileAdmin } from './support/profiles';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 
 const RUN = process.env.PROF_RUNID || 'prof';
 const TOLERATE = [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i];
@@ -65,8 +66,13 @@ test.describe('Profiles — form-tracker tabs + filters, app-flow-breaks chip fi
     // disabled on open, so we click the p0 option DIRECTLY (Material auto-scrolls it into view) instead of
     // typing. applyFilters() then re-runs fetchRecords() and buildQuery() adds where('profileid','==',p0.id)
     // (participant-form-tracker.component.ts:138,534). The list must then show ONLY p0's row.
-    await page.locator('mat-select').first().click({ force: true });
-    const opt = page.locator('mat-option').filter({ hasText: new RegExp(`^\\s*${profNames.p0.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
+    // The open goes through _shared/mat-select.ts — the forced click this used (the floating mat-label
+    // intercepts a plain one) also skips actionability, so a click landing before Material wires the
+    // overlay silently opens nothing and the option lookup below burns the whole timeout. The PICK stays
+    // local: it is anchored to the WHOLE option text (p0's exact name), which the by-name helper pick
+    // would not reproduce.
+    const ftPanel = await openMatSelect(page, page.locator('mat-select').first());
+    const opt = ftPanel.locator('mat-option').filter({ hasText: new RegExp(`^\\s*${profNames.p0.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`) });
     await expect(opt.first(), 'PA-FT-FILT: the p0 option must render in the overlay').toBeVisible({ timeout: 15_000 });
     await opt.first().click();
     await page.getByRole('button', { name: /^\s*Apply\s*$/ }).click();

@@ -5,22 +5,21 @@
 // the largest page-size option the paginator offers; if the collection is bigger than that the count
 // assertion fails loudly instead of silently comparing one page against the total.
 import { Page, Locator, expect } from '@playwright/test';
+import { openMatSelect } from '../../_shared/mat-select';
 
 /** MatTable data rows across the two Material row markups used in this app. */
 export const ROW = 'tr.mat-mdc-row, tr[mat-row], tr.data-row';
 
 /**
- * Open a mat-select panel robustly. The floating <mat-label> notched outline overlays the trigger and
- * intercepts a normal click, so force-click and RETRY until an option is visible (same `.toPass()`
- * pattern as content/deep.spec.ts openSelect and events-deep's pickMatOption).
+ * Open a mat-select panel robustly. The floating <mat-label> notched outline overlays the trigger, so a
+ * plain click lands on the label — but the `click({ force: true })` that gets past it skips Playwright's
+ * actionability checks too, so a click arriving before Material wires the overlay silently opens nothing.
+ * That is now _shared/mat-select.ts's job (keyboard-first open, asserts the panel, retries); callers here
+ * keep picking their own options (paginator page sizes, etc.) out of the open panel.
  */
 export async function openSelect(page: Page, trigger: Locator): Promise<void> {
   await expect(trigger).toBeVisible({ timeout: 20_000 });
-  const anyOption = page.locator('.cdk-overlay-pane mat-option').first();
-  await expect(async () => {
-    await trigger.click({ force: true });
-    await expect(anyOption).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 30_000 });
+  await openMatSelect(page, trigger);
 }
 
 /** Select the LARGEST page-size option of a mat-paginator (default: the first paginator on the page). */

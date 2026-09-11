@@ -16,6 +16,7 @@ import {
   commsActors, commsIds, installCommsStubs, loginAsCommsAdmin, resetNotificationCfDoc,
 } from './support/comms';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.COMM_RUNID || 'comm';
@@ -89,11 +90,12 @@ test.describe('Comms — notification record + zoom dashboard (real UI, anti-cir
     await expect(failRow, 'CN-11: failed row visible before filtering').toBeVisible({ timeout: 30_000 });
 
     // [REAL-UI] open the Status mat-select and pick "Completed" → filterPredicate keeps status=='completed'.
-    // Material gotcha: the floating <mat-label> intercepts a normal click on the combobox → click({force}).
+    // Material gotcha: the floating <mat-label> intercepts a normal click on the combobox, and the forced
+    // click that works around it can be dispatched before the overlay is wired and open nothing at all —
+    // so the open + pick goes through _shared/mat-select.ts (picks inside the open listbox).
     const statusSelect = page.getByRole('combobox', { name: /Status/i });
     await expect(statusSelect, 'CN-11: the Status filter must render').toBeVisible({ timeout: 20_000 });
-    await statusSelect.click({ force: true });
-    await page.getByRole('option', { name: /^Completed$/i }).click();
+    await selectMatOption(page, statusSelect, /^Completed$/i);
 
     // [ASSERT] the app's filterPredicate removed the failed row and kept the completed one.
     await expect(failRow, 'CN-11: the failed row must disappear under the Completed filter').toBeHidden({ timeout: 20_000 });

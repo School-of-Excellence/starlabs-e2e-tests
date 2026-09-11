@@ -13,6 +13,7 @@ import {
 } from './support/appt';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
+import { openMatSelect } from '../_shared/mat-select';
 
 const RUN = process.env.APPT_RUNID || 'appt';
 
@@ -101,10 +102,12 @@ test.describe('Appointments — status marking (real mark-status dialog → deli
     // Pick a cancellation reason (mat-select → first option).
     const reasonSelect = page.getByRole('combobox', { name: /Select Reason/i });
     await expect(reasonSelect, 'APPT-06: cancellation reason select must appear when not attended').toBeVisible({ timeout: 10_000 });
-    // force: the floating <mat-label> notched-outline overlays the combobox trigger and intercepts a
-    // normal click; force dispatches the click that opens the mat-select panel.
-    await reasonSelect.click({ force: true });
-    await page.locator('mat-option').first().click();
+    // The floating <mat-label> notched-outline overlays the combobox trigger and intercepts a normal
+    // click; the forced click that works around it can also be dispatched before Material wires the
+    // overlay, silently opening nothing. openMatSelect (see _shared/mat-select.ts) opens and ASSERTS the
+    // panel. We pick the FIRST option, now scoped to the open listbox (any reason is acceptable here).
+    const reasonPanel = await openMatSelect(page, reasonSelect);
+    await reasonPanel.locator('mat-option').first().click();
 
     await page.getByRole('button', { name: /Update Status/i }).click();
 

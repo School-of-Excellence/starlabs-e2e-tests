@@ -15,6 +15,7 @@ import {
 } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { countWhere, queryWhere } from '../queue/support/firestore-admin';
+import { selectMatOption, selectMatOptions } from '../_shared/mat-select';
 
 const RUN = process.env.JNY_RUNID || 'jny';
 
@@ -154,29 +155,28 @@ test.describe('Journey & Products — catalog authoring (real UI, anti-circular,
     await page.getByRole('button', { name: /Map Journey & Product/i }).click();
     await expect(dialog, 'JP-04: the mapping dialog must open').toBeVisible({ timeout: 20_000 });
 
-    // The dialog has exactly two mat-selects: [0]=Journey, [1]=Products. Drive each by its dialog-scoped
-    // index and click options inside the OPEN cdk overlay listbox (scoping avoids matching the table /
-    // paginator / the other select's options — the source builds journeyList from an unordered snapshot, so
-    // there are many journeys; a page-wide getByRole('option') is ambiguous). The floating <mat-label>
-    // intercepts a plain trigger click, so force it (Material gotcha).
+    // The dialog has exactly two mat-selects: [0]=Journey, [1]=Products. Both are driven through
+    // _shared/mat-select.ts rather than a bare `click({ force: true })`.
+    //
+    // WHY: the forced click is needed (the floating <mat-label> intercepts a plain one) but `force` also
+    // skips actionability, so a click landing before Material wires the overlay is dispatched and SILENTLY
+    // DOES NOTHING — the panel never opens and the following option lookup burns the whole 120s timeout.
+    // That is the documented JP-04 flake (docs/JOURNEY-PIPELINE-HANDOFF.md:97), previously papered over by
+    // `--retries 1`, which only applies in CI (the emulator configs set retries to 0 locally).
+    // The helper opens by KEYBOARD first, asserts the panel actually appeared, and retries before failing
+    // with a message that says what happened. Option scoping is unchanged: picks happen inside the open
+    // cdk overlay listbox, so the table / paginator / other select's options can never match.
     const selects = dialog.getByRole('combobox');
-    await selects.nth(0).click({ force: true });
-    await page.getByRole('listbox').getByRole('option', { name: journeyNames.journey2, exact: true }).click();
+    await selectMatOption(page, selects.nth(0), journeyNames.journey2);
     // J2 is seeded UNMAPPED → the "Already exists" validation must NOT appear (proves J2 was selected, not J1).
     await expect(selects.nth(0), 'JP-04: the Journey select shows journey 2 after picking it').toContainText(journeyNames.journey2);
     await expect(dialog.getByText(/Already.*exists/i), 'JP-04: journey 2 is unmapped — no exists error').toHaveCount(0);
-    // The single-select panel closes on pick — wait for the journey listbox to detach before opening Products
-    // (a leftover overlay backdrop would intercept the next trigger click).
-    await expect(page.getByRole('listbox'), 'JP-04: journey panel closed after selection').toHaveCount(0);
+    // selectMatOption already waited for the single-select panel to detach, so no leftover overlay backdrop
+    // can intercept the Products trigger below.
 
-    // Products multi-select — open the panel (the mat-select trigger toggles the listbox; force bypasses the
-    // floating <mat-label>), wait for the listbox, pick product 2, then Escape to close the panel so it does
-    // not cover the Submit button.
-    await selects.nth(1).click({ force: true });
-    const productListbox = page.getByRole('listbox');
-    await expect(productListbox, 'JP-04: the Products panel must open').toBeVisible({ timeout: 15_000 });
-    await productListbox.getByRole('option', { name: new RegExp(`^${journeyNames.product2}$`) }).click();
-    await page.keyboard.press('Escape');
+    // Products multi-select — same helper; it keeps the panel open between picks and closes with Escape so
+    // the overlay does not cover the Submit button.
+    await selectMatOptions(page, selects.nth(1), [new RegExp(`^${journeyNames.product2}$`)]);
 
     await dialog.getByRole('button', { name: /^Submit$/i }).click();
 

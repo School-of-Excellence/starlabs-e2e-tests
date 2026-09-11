@@ -11,6 +11,7 @@
 import { test, expect } from '@playwright/test';
 import { supActors, supProfileIds, SUP_CATEGORY, installSupportStubs, loginAsAgent, resetTicket } from './support/support';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 
 const RUN = process.env.SUP_RUNID || 'sup';
 const T = (id: string) => `${RUN}_${id}`;
@@ -129,10 +130,14 @@ test.describe('Customer Support — dashboard counts & filters (real UI, anti-ci
     await search.fill('');
 
     // [REAL-UI] open the "Assigned To" multi-select and pick agent0 (option label = agent0's name).
-    // force: the floating <mat-label> overlays the combobox trigger and intercepts a normal click.
+    // The floating <mat-label> overlays the combobox trigger and intercepts a normal click; the forced
+    // click that gets past it can also be dispatched before Material wires the overlay and silently open
+    // nothing — so the open goes through _shared/mat-select.ts. The PICK stays local: the option renders
+    // an avatar alongside the name, so it must stay a substring match (the helper's by-name pick is exact
+    // for strings). Multi-select → close with Escape, unchanged.
     const assignSelect = page.getByRole('combobox', { name: /Assigned To/i });
-    await assignSelect.click({ force: true });
-    await page.getByRole('option', { name: supActors.agent0 }).click();
+    const assignPanel = await openMatSelect(page, assignSelect);
+    await assignPanel.getByRole('option', { name: supActors.agent0 }).click();
     // close the overlay so the table is interactable
     await page.keyboard.press('Escape');
 

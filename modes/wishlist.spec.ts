@@ -19,6 +19,7 @@ import {
   resetWishlistInitiated, resetReinitiateSubject,
 } from './support/modes';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.MODE_RUNID || 'mode';
@@ -91,8 +92,9 @@ test.describe('Modes — Evolution Wishlist Log (real action → Firestore write
     await expect(page.getByText('Evolution Wish List'), 'PM-06: re-initiate dialog must open').toBeVisible({ timeout: 20_000 });
     const typeSelect = page.getByRole('combobox', { name: /Select Wishlist Type/i });
     await expect(typeSelect, 'PM-06: type select must render').toBeVisible({ timeout: 10_000 });
-    await typeSelect.click({ force: true }); // floating mat-label intercepts a normal click
-    await page.getByRole('option', { name: /Family and Peers/i }).click();
+    // The floating mat-label intercepts a normal click, and the forced click that gets past it can be
+    // dispatched before Material wires the overlay and silently open nothing — see _shared/mat-select.ts.
+    await selectMatOption(page, typeSelect, /Family and Peers/i);
     await page.getByRole('button', { name: /Send Evolution Wishlist/i }).click();
 
     // [ASSERT] the app's batch.set created exactly ONE new initiated doc for participant1. Polled — the

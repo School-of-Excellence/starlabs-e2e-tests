@@ -12,6 +12,7 @@ import {
   evtActors, evtIds, installEvtStubs, loginAsEvtAdmin, resetEprApproved, refTo,
 } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, countWhere, queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.EVT_RUNID || 'evt';
@@ -132,8 +133,10 @@ test.describe('Events — list / approve / attendance-log / layers (real UI, ant
     // (event-attendance-log.component.ts:154 uniqueParticipantList). Use a search-enabled mat-select.
     const eventSelect = page.getByRole('combobox', { name: /Select Event/i });
     await expect(eventSelect, 'EVT-09: the event select must render').toBeVisible({ timeout: 30_000 });
-    await eventSelect.click({ force: true });
-    await page.getByRole('option', { name: EVENT_NAME }).click();
+    // Open + pick via _shared/mat-select.ts: the floating <mat-label> needs the click forced, but a forced
+    // click also skips actionability and can be swallowed before Material wires the overlay (panel never
+    // opens, the option lookup then eats the whole test timeout). Picks inside the open listbox.
+    await selectMatOption(page, eventSelect, EVENT_NAME);
 
     // [ASSERT] the app rendered the unique-participant count it computed from its own stream. We seeded
     // exactly one log row (one distinct profileid), so the board must show "Unique Participant: 1".
@@ -154,8 +157,9 @@ test.describe('Events — list / approve / attendance-log / layers (real UI, ant
     // `arenalayers` where eventref==X and renders rows ordered by sequence (layers-screen.component.ts:100).
     const eventSelect = page.getByRole('combobox', { name: /Select Event/i });
     await expect(eventSelect, 'EVT-12: the event select must render').toBeVisible({ timeout: 30_000 });
-    await eventSelect.click({ force: true });
-    await page.getByRole('option', { name: EVENT_NAME }).click();
+    // Same deterministic open + pick as EVT-09 — see _shared/mat-select.ts for why a bare forced click on
+    // a mat-select trigger can silently do nothing.
+    await selectMatOption(page, eventSelect, EVENT_NAME);
 
     // [ASSERT] the seeded layer's title renders in the table row the component built from its stream.
     const layerRow = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: `TEST Layer ${RUN}` });

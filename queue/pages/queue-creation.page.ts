@@ -52,6 +52,7 @@
 
 import { Page, Locator, expect } from '@playwright/test';
 import { queryWhere, pollUntil, DocResult } from '../support/firestore-admin';
+import { openMatSelect } from '../../_shared/mat-select';
 
 /** Route of the admin queue-list screen — the only entry point that opens this dialog. */
 export const QUEUE_LIST_ROUTE = '/queuelist';
@@ -197,7 +198,10 @@ export class QueueCreationPage {
   async setVenue(location: string): Promise<void> {
     const select = this.host.locator(SEL.venue);
     await expect(select).toBeVisible({ timeout: 15_000 });
-    await select.click();
+    // Opening is delegated so a click that lands before Material wires the overlay cannot pass
+    // silently — see _shared/mat-select.ts. Picking stays here: options are matched by text inside
+    // the CDK overlay, which the helper's name-based pick does not reproduce.
+    await openMatSelect(this.page, select);
     const option = this.overlayOption().filter({ hasText: location }).first();
     await expect(option).toBeVisible({ timeout: 10_000 });
     await option.click();
@@ -287,7 +291,7 @@ export class QueueCreationPage {
   async pickFirstVenue(): Promise<string> {
     const select = this.host.locator(SEL.venue);
     await expect(select).toBeVisible({ timeout: 15_000 });
-    await select.click();
+    await openMatSelect(this.page, select);   // see _shared/mat-select.ts
     const options = this.overlayOption();
     // Venue options have NO ngx-mat-select-search box (html:100-104), so option[0] is a real venue.
     const first = options.first();
@@ -318,14 +322,16 @@ export class QueueCreationPage {
     await expect(select).toBeVisible({ timeout: 15_000 });
     await select.scrollIntoViewIfNeeded().catch(() => {});
     // The Material notched-outline label (`<mat-label>`) overlaps the mat-select trigger and intercepts
-    // the pointer, so a plain click can hang ("subtree intercepts pointer events"). Click the trigger
-    // element itself; fall back to a force-click (the overlay opens on the bound mousedown either way).
-    const trigger = select.locator('.mat-mdc-select-trigger');
-    if ((await trigger.count()) > 0) {
-      await trigger.first().click({ force: true });
-    } else {
-      await select.click({ force: true });
-    }
+    // the pointer, so a plain click can hang ("subtree intercepts pointer events") — which is why this
+    // used to force-click the trigger. `force` skips actionability too, so a click landing before
+    // Material wires the overlay is dispatched and SILENTLY does nothing, and the option lookup below
+    // then burns the whole test timeout. Opening goes through _shared/mat-select.ts instead: it opens by
+    // KEYBOARD first (no label to intercept), asserts the panel actually appeared, and re-issues a forced
+    // click before failing with a message that says what happened.
+    // Bare `openMatSelect` (not selectMatOption) because this method does NOT pick by visible name: it
+    // picks the first option with a non-empty Angular-bound `value`, so the panel-scoped option code
+    // below stays exactly as it was.
+    await openMatSelect(this.page, select);
     const options = this.overlayOption();
     await expect(options.first()).toBeVisible({ timeout: 10_000 });
     // Find the first option with a non-empty bound value (the search box has none).
@@ -537,7 +543,9 @@ export class QueueCreationPage {
    */
   private async selectMultiByValue(select: Locator, ids: string[], label: string): Promise<void> {
     await expect(select).toBeVisible({ timeout: 15_000 });
-    await select.click();
+    // Opening via the helper; picking stays here because options are resolved by their Angular-bound
+    // VALUE (findOptionByValue), not by visible text — see _shared/mat-select.ts.
+    await openMatSelect(this.page, select);
     const panelOptions = this.overlayOption();
     await expect(panelOptions.first()).toBeVisible({ timeout: 10_000 });
     for (const id of ids) {

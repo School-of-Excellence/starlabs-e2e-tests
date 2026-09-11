@@ -10,6 +10,7 @@ import {
   contentActors, contentText, analyticsProfiles, installContentStubs, loginAsContentAdmin,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { countWhere, queryWhere } from '../queue/support/firestore-admin';
 
 const ROW = 'tr.mat-mdc-row, tr[mat-row]';
@@ -75,11 +76,12 @@ test.describe('Content — read-path dashboards (real UI, anti-circular)', () =>
     await expect(exclRow, 'CN-05: exclusive series renders').toBeVisible({ timeout: 30_000 });
 
     // [REAL-UI] select the tier filter mat-select → "Free". The component's filterPredicate
-    // (series-dashboard.component.ts:64) narrows visible rows to type==='free'. force: the floating
-    // mat-label notched-outline overlays the trigger and intercepts a normal click.
+    // (series-dashboard.component.ts:64) narrows visible rows to type==='free'. The floating mat-label
+    // notched-outline overlays the trigger and intercepts a normal click; the forced click that gets past
+    // it can also be swallowed before Material wires the overlay, so the open + pick goes through
+    // _shared/mat-select.ts (picks inside the open listbox).
     const tierSelect = page.locator('mat-select').first();
-    await tierSelect.click({ force: true });
-    await page.getByRole('option', { name: /^Free$/i }).click();
+    await selectMatOption(page, tierSelect, /^Free$/i);
 
     // [ASSERT] after filtering the app shows the free series and HIDES the exclusive — the visible set
     // was computed by the app's filterPredicate from the SEEDED `type` values, not by the test. The

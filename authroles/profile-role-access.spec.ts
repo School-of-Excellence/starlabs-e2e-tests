@@ -19,6 +19,7 @@ import {
   resetDashboardProfileIds, dashDocId,
 } from './support/authroles';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
 
 const ADMIN_SCREEN = '/profile-role-access';
@@ -94,13 +95,14 @@ test.describe('profile-role-access — Screen Access render + edit-dialog write 
 
     // [REAL-UI] open the Profiles mat-select and ADD the participant. Options display the profile NAME
     // (seedAuthChain sets name == email), so we pick the participant by its email text. Material gotcha:
-    // the floating <mat-label> intercepts a normal click on the trigger → force the click.
+    // the floating <mat-label> intercepts a normal click on the trigger, and the forced click that works
+    // around it can land before Material wires the overlay and silently open nothing → openMatSelect
+    // (see _shared/mat-select.ts) opens and asserts the panel, then we pick inside it.
     const profileSelect = dialog.locator('mat-select');
-    await profileSelect.click({ force: true });
-    const panel = page.locator('.mat-mdc-select-panel, .cdk-overlay-pane mat-option').first();
-    await expect(panel, 'AR-09: the profile option panel must open').toBeVisible({ timeout: 10_000 });
-    // The participant's option (text = participant email). exact:false — the option also renders initials.
-    await page.locator('mat-option').filter({ hasText: authActors.participant0 }).first().click();
+    const panel = await openMatSelect(page, profileSelect);
+    // The participant's option (text = participant email). Substring match — the option also renders
+    // initials — so the pick stays this spec's own (the helper's by-name pick is exact for strings).
+    await panel.locator('mat-option').filter({ hasText: authActors.participant0 }).first().click();
     // Close the multi-select overlay so the Save button is hittable.
     await page.keyboard.press('Escape');
 

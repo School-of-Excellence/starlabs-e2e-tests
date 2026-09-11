@@ -17,6 +17,7 @@ import {
   evtActors, evtProfileIds, evtIds, installEvtStubs, loginAsEvtAdmin, resetEticketForP1,
 } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.EVT_RUNID || 'evt';
@@ -49,15 +50,13 @@ test.describe('Events — arena e-ticket issuance (real UI, anti-circular; no co
     // (eventref==X && status=='approved') [INDEX] and renders one row per approved participant.
     const eventSelect = page.getByRole('combobox', { name: /Select Event/i });
     await expect(eventSelect, 'EVT-05: the event select must render').toBeVisible({ timeout: 30_000 });
-    // Robust open: the floating <mat-label> overlays the trigger and a single force-click can be lost to a
-    // hydration race — retry until the seeded option actually shows (the event dropdown is now large because
-    // EVT-02's create-event runs accumulate app-created events on the shared project). Then pick it.
-    const eventOption = page.getByRole('option', { name: EVENT_NAME });
-    for (let i = 0; i < 4 && !(await eventOption.first().isVisible().catch(() => false)); i++) {
-      await eventSelect.click({ force: true });
-      await eventOption.first().waitFor({ state: 'visible', timeout: 7_000 }).catch(() => {});
-    }
-    await eventOption.first().click();
+    // Robust open: the floating <mat-label> overlays the trigger, and the forced click that gets past it
+    // skips actionability — landing before Material wires the overlay it silently opens nothing (the
+    // hydration race this used to retry around). _shared/mat-select.ts owns the open. The PICK stays local
+    // and keeps `.first()`: EVT-02's create-event runs accumulate app-created events on the shared project,
+    // so several options can carry this name and a strict single-option match would fail.
+    const panel = await openMatSelect(page, eventSelect);
+    await panel.getByRole('option', { name: EVENT_NAME }).first().click();
 
     // participant1's approved row (client name == seeded profile name == email). Click its Approve button.
     const p1Row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: evtActors.participant1 });

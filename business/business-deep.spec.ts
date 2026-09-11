@@ -19,6 +19,7 @@ import {
   resetAdsEditSingleLog, resetZoneWriteClean, computeInflowTotalsCurrentMonth,
 } from './support/business';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.BIZ_RUNID || 'biz';
@@ -239,15 +240,14 @@ test.describe('Business deep — zone-management assignment + submit WRITES (rea
   test.afterEach(() => assertNoFatal(guard, 'business zone-write: no fatal console errors / pageerrors'));
 
   // Robustly open the event mat-select and pick the seeded event (mirrors reporting.spec.ts BM-07).
+  // The open + pick is _shared/mat-select.ts: a bare `click({ force: true })` (needed past the floating
+  // <mat-label>) can be dispatched before Material wires the overlay and then silently opens nothing —
+  // which is what the retry loop here used to paper over. The option is still matched by the same
+  // run-unique RegExp, inside the open overlay listbox.
   async function selectSeededEvent(page: import('@playwright/test').Page) {
     const eventSelect = page.getByRole('combobox', { name: /Select Event/i });
     await expect(eventSelect, 'zone-write: the event mat-select must render').toBeVisible({ timeout: 30_000 });
-    const eventOption = page.getByRole('option', { name: new RegExp(`BIZ Test Event ${RUN}`) });
-    for (let i = 0; i < 4 && !(await eventOption.isVisible().catch(() => false)); i++) {
-      await eventSelect.click({ force: true });
-      await eventOption.waitFor({ state: 'visible', timeout: 7_000 }).catch(() => {});
-    }
-    await eventOption.click();
+    await selectMatOption(page, eventSelect, new RegExp(`BIZ Test Event ${RUN}`));
   }
 
   // BM-08 — assigning a cohort to the WRITE zone writes the cohort id into the zone's `cohorts` array and
@@ -277,12 +277,10 @@ test.describe('Business deep — zone-management assignment + submit WRITES (rea
     // The bulk "Assign to Zone" mat-select opens the zone list; pick our WRITE zone by its run-unique name.
     const assignSelect = page.getByRole('combobox', { name: /Assign to Zone/i });
     await expect(assignSelect, 'BM-08: the bulk Assign-to-Zone select must appear once a cohort is selected').toBeVisible({ timeout: 20_000 });
-    const zoneOption = page.getByRole('option', { name: new RegExp(`BIZ Zone Write ${RUN}`) });
-    for (let i = 0; i < 4 && !(await zoneOption.isVisible().catch(() => false)); i++) {
-      await assignSelect.click({ force: true });
-      await zoneOption.waitFor({ state: 'visible', timeout: 7_000 }).catch(() => {});
-    }
-    await zoneOption.click(); // → assignSelectedCohortsToZone(zoneId) → updateDoc(event zones/{id},{cohorts})
+    // Open + pick via _shared/mat-select.ts (the forced click alone can be swallowed before the overlay
+    // is wired); same run-unique zone RegExp, matched inside the open listbox.
+    // → assignSelectedCohortsToZone(zoneId) → updateDoc(event zones/{id},{cohorts})
+    await selectMatOption(page, assignSelect, new RegExp(`BIZ Zone Write ${RUN}`));
 
     // [ASSERT] the app wrote the cohort id into the zone's cohorts array (read the doc back by admin SDK).
     const after = await pollUntil(
@@ -390,11 +388,9 @@ test.describe('Business deep — HPC session detail, status filter, and delete (
     // [REAL-UI] set the Status filter to "Completed" → updateFilteredHpcData() drops the in-progress rows.
     const statusSelect = page.getByRole('combobox', { name: /Status/i });
     await expect(statusSelect, 'BM-11: the Status filter must render').toBeVisible({ timeout: 30_000 });
-    for (let i = 0; i < 4; i++) {
-      await statusSelect.click({ force: true });
-      const opt = page.getByRole('option', { name: /^Completed$/ });
-      if (await opt.isVisible().catch(() => false)) { await opt.click(); break; }
-    }
+    // Open + pick via _shared/mat-select.ts — it asserts the panel actually opened instead of retrying a
+    // forced click that can be dispatched into a not-yet-wired overlay. Same exact-anchored option RegExp.
+    await selectMatOption(page, statusSelect, /^Completed$/);
 
     // [ASSERT] now EVERY rendered card carries the COMPLETED chip (the in-progress cards were filtered out)
     // — the count the app computed by filtering its OWN loaded data, reconciled against the seed split.

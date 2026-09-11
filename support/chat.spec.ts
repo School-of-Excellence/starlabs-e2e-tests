@@ -14,6 +14,7 @@ import {
   supProfileIds, installSupportStubs, loginAsAgent, resetTicket,
 } from './support/support';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.SUP_RUNID || 'sup';
@@ -144,9 +145,10 @@ test.describe('Customer Support — chat screen (real UI, anti-circular)', () =>
     await page.locator('button.flag-btn.unflagged').click();
     const severity = page.getByRole('combobox', { name: /Severity/i });
     await expect(severity, 'CS-10: severity select appears after Flag click').toBeVisible({ timeout: 15_000 });
-    // force: the floating <mat-label> overlays the combobox trigger and intercepts a normal click.
-    await severity.click({ force: true });
-    await page.getByRole('option', { name: 'Escalation' }).click();
+    // The floating <mat-label> overlays the combobox trigger and intercepts a normal click; the forced
+    // click that gets past it can itself land before Material wires the overlay and silently open nothing
+    // — see _shared/mat-select.ts. The pick happens inside the open listbox.
+    await selectMatOption(page, severity, 'Escalation');
     await page.getByRole('button', { name: /Confirm Flag/i }).click();
 
     // [ASSERT] the app's updateDoc wrote flag:true with the chosen severity (chat-screen ts:646). App-written

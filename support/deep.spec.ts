@@ -25,6 +25,7 @@ import {
   resetTicket, getTicketCounter, countNotificationLogs, ticketCreateCFDeployed,
 } from './support/support';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { getDoc, countWhere, queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.SUP_RUNID || 'sup';
@@ -83,16 +84,18 @@ test.describe('Customer Support — deep cases (real UI / CF side-effects, anti-
       const pickFromSelect = async (label: RegExp, optionText: string, withSearch = true) => {
         const combo = dialog.getByRole('combobox', { name: label });
         await expect(combo, `CS-04: "${label}" select renders`).toBeVisible({ timeout: 15_000 });
-        // force: the floating <mat-label> overlays the combobox trigger and intercepts a normal click.
-        await combo.click({ force: true });
-        const panel = page.locator('.mat-mdc-select-panel');
-        await expect(panel).toBeVisible({ timeout: 10_000 });
+        // The floating <mat-label> overlays the combobox trigger and intercepts a normal click; the forced
+        // click that got past it also skips actionability, so it could be dispatched before Material wired
+        // the overlay and silently open nothing — the open is now _shared/mat-select.ts's job. The PICK
+        // stays local: these selects carry an ngx-mat-select-search typeahead that must be typed into
+        // first, and the options render an avatar beside the name so the match must stay a substring one.
+        const panel = await openMatSelect(page, combo);
         if (withSearch) {
           // ngx-mat-select-search typeahead narrows long profile/member lists to the option we want.
           const searchBox = panel.locator('input[type="text"], .mat-select-search-input').first();
           if (await searchBox.count()) await searchBox.fill(optionText);
         }
-        await page.getByRole('option', { name: optionText }).first().click();
+        await panel.getByRole('option', { name: optionText }).first().click();
       };
 
       // Client Name / Issue Reported By options render profile_data.name (= SUP_CLIENT_NAME after the seed

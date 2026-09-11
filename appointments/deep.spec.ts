@@ -30,20 +30,21 @@ import {
 } from './support/appt';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, db, pollUntil } from '../queue/support/firestore-admin';
+import { openMatSelect } from '../_shared/mat-select';
 
 const RUN = process.env.APPT_RUNID || 'appt';
 
 // The mark-status / book flows open Material panels whose floating <mat-label> notched-outline overlays
-// the trigger; force-click + retry-until-option dispatches the open reliably (matches status.spec.ts).
+// the trigger. The open itself is delegated to _shared/mat-select.ts: a bare `click({ force: true })` is
+// dispatched even when Material has not wired the overlay yet, so the panel silently never opens and the
+// option lookup below burns the whole test timeout. openMatSelect opens by keyboard first and ASSERTS the
+// panel, so we pick inside a panel we know is there. The option filter (substring / first) is unchanged,
+// only now scoped to the open overlay listbox so a table cell can never match.
 async function openSelectAndPick(page: Page, combobox: ReturnType<Page['getByRole']>, optionText?: RegExp) {
   await expect(combobox).toBeVisible({ timeout: 15_000 });
-  for (let i = 0; i < 5; i++) {
-    await combobox.click({ force: true });
-    const opt = optionText ? page.locator('mat-option').filter({ hasText: optionText }) : page.locator('mat-option').first();
-    if (await opt.first().isVisible().catch(() => false)) { await opt.first().click(); return; }
-    await page.waitForTimeout(400);
-  }
-  throw new Error('select panel did not open with a visible option');
+  const panel = await openMatSelect(page, combobox);
+  const opt = optionText ? panel.locator('mat-option').filter({ hasText: optionText }) : panel.locator('mat-option').first();
+  await opt.first().click();
 }
 
 /** Wait until the book-appointment component has an appointment selected AND its rolePersons resolved

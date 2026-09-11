@@ -28,22 +28,22 @@ import {
   cleanArenaSpaceForSummary, resetVideoAskTags, cleanStageOpportunity, refTo,
 } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { openMatSelect } from '../_shared/mat-select';
 import { getDoc, countWhere, queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.EVT_RUNID || 'evt';
 const EVENT1_NAME = `TEST Event ${RUN}`;
 
-// ---- Material mat-select helper: open the panel (force past the floating mat-label notched outline)
-// and pick the option by accessible name, retrying the open until the option is visible (flaky panels).
+// ---- Material mat-select helper: open the panel and pick the option by accessible name. The open is
+// _shared/mat-select.ts's job — forcing the click past the floating mat-label notched outline also skips
+// actionability, so a click landing before Material wires the overlay silently opens nothing (that is what
+// the retry-until-option-visible loop here was absorbing). The name match is unchanged, now scoped to the
+// open overlay listbox.
 async function pickMatOption(page: Page, comboboxName: RegExp, optionName: RegExp | string): Promise<void> {
   const combo = page.getByRole('combobox', { name: comboboxName });
   await expect(combo).toBeVisible({ timeout: 30_000 });
-  const option = page.getByRole('option', { name: optionName });
-  await expect(async () => {
-    await combo.click({ force: true });
-    await expect(option).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 30_000 });
-  await option.click();
+  const panel = await openMatSelect(page, combo);
+  await panel.getByRole('option', { name: optionName }).click();
 }
 
 // ---- EOD-v2 queue picker: the "Select queue" panel's options populate only AFTER getQueueData()
@@ -62,7 +62,11 @@ async function pickQueueOption(page: Page, queueName: string, queueId: string): 
   }, queueId);
   await expect(async () => {
     if (await alreadySelected()) return; // selection landed — done (don't re-open & toggle off)
-    await combo.click({ force: true });
+    // Deterministic open (see _shared/mat-select.ts — a bare forced click can be dispatched into a
+    // not-yet-wired overlay and open nothing at all). The picking below stays this spec's own: the
+    // option needs a FORCED click for an unrelated reason (instability, explained next), and re-opening
+    // a multiple-select would toggle the selection back off.
+    await openMatSelect(page, combo);
     await expect(option).toBeVisible({ timeout: 3_000 });
     // force: the <mat-option> is NOT STABLE — the EOD-v2 component's queue-token onSnapshot keeps re-emitting
     // ("Queue tokens loaded: 2" fires repeatedly) and reflows the option list, so a plain click fails
@@ -87,7 +91,7 @@ async function pickQueueOption(page: Page, queueName: string, queueId: string): 
 async function pickSearchableMulti(page: Page, comboboxName: RegExp, exactOptionText: string): Promise<void> {
   const combo = page.getByRole('combobox', { name: comboboxName });
   await expect(combo).toBeVisible({ timeout: 30_000 });
-  await combo.click({ force: true });
+  await openMatSelect(page, combo); // deterministic open — see _shared/mat-select.ts
   // The ngx-mat-select-search input only RENDERS VISIBLY when the option list is long; on the small
   // test project it carries `mat-select-search-hidden`. Type into it ONLY if visible (to narrow a long
   // list); otherwise click the exact option directly. Either way the match is exactly-anchored so a

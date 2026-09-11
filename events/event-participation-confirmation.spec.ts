@@ -17,6 +17,7 @@
 import { test, expect } from '@playwright/test';
 import { evtActors, evtIds, evtNames, evtProfileIds, installEvtStubs, loginAsEvtAdmin, refTo, resetPpEpc } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { countWhere, getDoc, pollUntil, queryWhere } from '../queue/support/firestore-admin';
 
 const RUN = process.env.EVT_RUNID || 'evt';
@@ -139,13 +140,13 @@ test.describe('Event Participation Confirmations — Approve (real UI, write-pat
     await expect(p6Row, 'EPC-02: p6\'s eligible row must render').toBeVisible({ timeout: 30_000 });
     await p6Row.locator('mat-checkbox, input[type="checkbox"]').first().click();
 
-    // Pick the seeded delivery sequence (required — canApprove() is false without it). force:true:
-    // the mat-form-field's floating <mat-label> sits over the mat-select trigger and intercepts a
-    // normal click (verified live against the emulator) — same class of CDK-overlay quirk as the
-    // existing EVT-09 case in events.spec.ts, which uses the identical force:true workaround.
+    // Pick the seeded delivery sequence (required — canApprove() is false without it). The mat-form-field's
+    // floating <mat-label> sits over the mat-select trigger and intercepts a normal click (verified live
+    // against the emulator), which is why this forced the click; but force also skips actionability, so the
+    // click can land before Material wires the overlay and silently open nothing. _shared/mat-select.ts
+    // opens, asserts the panel and picks inside it — same CDK-overlay quirk as EVT-09 in events.spec.ts.
     const deliverySelect = page.getByRole('combobox', { name: 'Delivery sequence' });
-    await deliverySelect.click({ force: true });
-    await page.getByRole('option', { name: evtNames.deliverySet }).click();
+    await selectMatOption(page, deliverySelect, evtNames.deliverySet);
 
     const approveBtn = page.getByRole('button', { name: 'Approve 1' });
     await expect(approveBtn, 'EPC-02: the Approve button must show readyCount==1').toBeEnabled({ timeout: 20_000 });

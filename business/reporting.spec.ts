@@ -10,6 +10,7 @@ import {
   bizActors, bizProfileIds, bizIds, bizQuizQuestion, bizTouchpointType, installBizStubs, loginAsBizAdmin,
 } from './support/business';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { selectMatOption } from '../_shared/mat-select';
 import { countWhere, queryWhere } from '../queue/support/firestore-admin';
 
 const RUN = process.env.BIZ_RUNID || 'biz';
@@ -46,17 +47,13 @@ test.describe('Business — read reconciliation (real UI, anti-circular)', () =>
     await expect(page).toHaveURL(/eventzonemanagement/, { timeout: 30_000 });
 
     // [REAL-UI] select the seeded event from the mat-select (bound to selectedEvent → onEventSelect()).
-    // The floating <mat-label> intercepts a normal click on the trigger → force the click.
+    // The floating <mat-label> intercepts a normal click on the trigger, so the old code forced it — but a
+    // forced click also skips actionability and can be swallowed before Material wires the overlay (the
+    // "panel doesn't open" race the retry loop here used to absorb). _shared/mat-select.ts opens the panel
+    // deterministically and picks the same run-unique option inside the open listbox.
     const eventSelect = page.getByRole('combobox', { name: /Select Event/i });
     await expect(eventSelect, 'BM-07: the event mat-select must render').toBeVisible({ timeout: 30_000 });
-    const eventOption = page.getByRole('option', { name: new RegExp(`BIZ Test Event ${RUN}`) });
-    // Robust open: a single force-click on the mat-select trigger can be lost to an Angular hydration race
-    // (the panel doesn't open) → retry until the option panel is actually showing, then pick it.
-    for (let i = 0; i < 4 && !(await eventOption.isVisible().catch(() => false)); i++) {
-      await eventSelect.click({ force: true });
-      await eventOption.waitFor({ state: 'visible', timeout: 7_000 }).catch(() => {});
-    }
-    await eventOption.click();
+    await selectMatOption(page, eventSelect, new RegExp(`BIZ Test Event ${RUN}`));
 
     // [ASSERT] the "Zones" stat the component computed from its OWN `event zones` stream
     // (zonesCreated == eventZoneList.length) equals the independent Firestore count.
