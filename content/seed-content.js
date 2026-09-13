@@ -285,7 +285,15 @@ async function seedContent() {
   // 10) PLAYLIST ADS (Flow 12 / CN-14): one ads row, available, future window.
   await db.collection('adsplaylist').doc(ID.ADS1).set({
     docid: ID.ADS1, adstitle: `TEST_AD_${TESTRUNID}`, adsdescription: 'seed ad', adslink: 'https://example.com',
-    adstype: 'banner', startdate: now(), enddate: future(7), available: true, playlist: [], ...tag,
+    // playlist carries ONE ref to CU1 (not []) on purpose: playlist-ads.component.html:54 renders
+    // <li>{{mapGeneralContent[list.id]}}</li> per entry, and mapGeneralContent is filled in the SAME
+    // getDocs(content_urls) loop that fills contentList (playlist-ads.component.ts:48-53). That rendered
+    // title is therefore the only observable proof the catalog the create dialog copies BY VALUE on open
+    // (ts:85 -> update-playlistads.component.ts:67) has actually loaded. With playlist:[] there is nothing
+    // on the parent screen tied to that getDocs, and CN-14 could only race it. A precondition, not an
+    // assertion — CN-14 still asserts the doc the APP writes.
+    adstype: 'banner', startdate: now(), enddate: future(7), available: true,
+    playlist: [contentUrlRef(ID.CU1)], ...tag,
   });
 
   // 11) CONTENT_URLS (referenced by playlist-ads contentMap; convertedtohls:true so the
