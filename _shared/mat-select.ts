@@ -32,34 +32,52 @@ import { Locator, Page, expect } from '@playwright/test';
  *
  * @param page     the page (the cdk overlay is a page-level sibling, not a child of the trigger)
  * @param trigger  the select's combobox locator, e.g. dialog.getByRole('combobox').nth(0)
- * @param attempts how many times to try before giving up (default 3)
+ * @param attempts how many times to try before giving up (default 6 — see the budget note below)
+ *
+ * BUDGET: each attempt waits up to 2s for the panel plus a 500ms backoff, so the default is ~15s. That is
+ * deliberately in the same order as the `.toPass({ timeout: 30_000 })` this helper replaced in
+ * content/deep.spec.ts and events-deep — those budgets existed because a dialog's selects can take real
+ * time to settle on a cold build. A 3-attempt (~7s) default was too tight and turned a slow settle into a
+ * failure. Still far below the 120s a missed click used to cost.
  */
-export async function openMatSelect(page: Page, trigger: Locator, attempts = 3): Promise<Locator> {
+export async function openMatSelect(page: Page, trigger: Locator, attempts = 6): Promise<Locator> {
   const panel = page.getByRole('listbox');
 
+  let last: unknown;
   for (let i = 1; i <= attempts; i++) {
-    if (i === 1) {
-      // Keyboard path: no label to intercept, so this is the reliable one where focus works.
-      await trigger.focus().catch(() => { /* not focusable — fall through to the click path */ });
-      await page.keyboard.press('Enter').catch(() => { /* ignore; the click path follows */ });
-    } else {
-      // Click path, forced past the floating <mat-label>.
-      await trigger.click({ force: true });
-    }
-
+    // The OPEN ACTION and the panel assertion are BOTH inside the try, deliberately.
+    //
+    // The action itself can throw for a reason that resolves on its own. The one that bit us: a trigger
+    // locator matching several elements while the dialog is still settling — Playwright raises a strict
+    // mode violation, and a moment later the DOM has collapsed to one element and the same locator is
+    // fine. content/deep.spec.ts CN-04 is exactly that: `mat-select.cat-select` resolves to 3 until the
+    // form type is chosen, then to 1. The code this helper replaced wrapped its click in
+    // `.toPass({ timeout: 30_000 })`, which retried through any error — including that one. Retrying
+    // only the assertion loses that tolerance and turns a self-healing wait into a hard failure.
     try {
+      if (i === 1) {
+        // Keyboard path: no label to intercept, so this is the reliable one where focus works.
+        await trigger.focus();
+        await page.keyboard.press('Enter');
+      } else {
+        // Click path, forced past the floating <mat-label>.
+        await trigger.click({ force: true });
+      }
       await panel.waitFor({ state: 'visible', timeout: 2_000 });
       return panel;
-    } catch {
-      // The open did not take. Material had not finished wiring the overlay, or focus went elsewhere.
-      // Loop and try the other route rather than letting the caller burn its whole timeout.
+    } catch (e) {
+      last = e;
+      // Either the open did not take (Material had not wired the overlay) or the action threw on a
+      // transient DOM state. Give the page a moment and try the other route.
+      await page.waitForTimeout(500);
     }
   }
 
   throw new Error(
     `openMatSelect: the panel did not open after ${attempts} attempts (keyboard + forced click). ` +
     'This is the JP-04 failure mode — see _shared/mat-select.ts. If it persists, the trigger locator is ' +
-    'probably wrong or the select is disabled, NOT flaky.',
+    'probably wrong, matches several elements that never collapse to one, or the select is disabled — ' +
+    `NOT flaky. Last error: ${(last as Error)?.message ?? last}`,
   );
 }
 

@@ -35,9 +35,9 @@ test.describe('Content — /accessscreen (real UI, anti-circular)', () => {
   // ===========================================================================================
   test('CN-28 the Tier tab lists one row per tier doc', async ({ page }) => {
     await openTab(page, 'Tier');
-    const table = page.locator('mat-tab-body').filter({ has: page.locator('#paginator_tier') });
+    const table = page.locator('mat-tab-body').filter({ has: page.locator('[data-testid="paginator_tier"]') });
     await expect(table.locator(ROW).first()).toBeVisible({ timeout: 30_000 });
-    await showAllRows(page, page.locator('#paginator_tier'));
+    await showAllRows(page, page.locator('[data-testid="paginator_tier"]'));
 
     const expected = await countWhere('tier');
     await expect(table.locator(ROW), 'CN-28: one row per `tier` doc (no client filter)').toHaveCount(expected, { timeout: 30_000 });
@@ -50,10 +50,10 @@ test.describe('Content — /accessscreen (real UI, anti-circular)', () => {
   // ===========================================================================================
   test('CN-29 the Assign Series tab resolves tier refs, rendering Unknown for a missing tier', async ({ page }) => {
     await openTab(page, 'Assign Series');
-    const table = page.locator('mat-tab-body').filter({ has: page.locator('#paginator_assigntier') });
+    const table = page.locator('mat-tab-body').filter({ has: page.locator('[data-testid="paginator_assigntier"]') });
     // the table is set only after Promise.all over every tier lookup resolves (ts:108-147)
     await expect(table.locator(ROW).first()).toBeVisible({ timeout: 30_000 });
-    await showAllRows(page, page.locator('#paginator_assigntier'));
+    await showAllRows(page, page.locator('[data-testid="paginator_assigntier"]'));
 
     const expected = await countWhere('series');
     await expect(table.locator(ROW), 'CN-29: one row per `series` doc').toHaveCount(expected, { timeout: 30_000 });
@@ -78,9 +78,9 @@ test.describe('Content — /accessscreen (real UI, anti-circular)', () => {
   // ===========================================================================================
   test('CN-30 the Assign Users tab lists the `user` collection, not user_data', async ({ page }) => {
     await openTab(page, 'Assign Users');
-    const table = page.locator('mat-tab-body').filter({ has: page.locator('#paginator_assignuser') });
+    const table = page.locator('mat-tab-body').filter({ has: page.locator('[data-testid="paginator_assignuser"]') });
     await expect(table.locator(ROW).first()).toBeVisible({ timeout: 30_000 });
-    await showAllRows(page, page.locator('#paginator_assignuser'));
+    await showAllRows(page, page.locator('[data-testid="paginator_assignuser"]'));
 
     const expected = await countWhere('user');
     await expect(table.locator(ROW), 'CN-30: one row per `user` doc').toHaveCount(expected, { timeout: 30_000 });
@@ -125,7 +125,7 @@ test.describe('Content — /accessscreen (real UI, anti-circular)', () => {
     expect(d.customersupport, 'CN-31: blank customersupport entries stripped').toEqual(['support@example.com']);
     expect(typeof d.date?.toMillis, 'CN-31: date stored as a Timestamp').toBe('function');
 
-    const table = page.locator('mat-tab-body').filter({ has: page.locator('#paginator_tier') });
+    const table = page.locator('mat-tab-body').filter({ has: page.locator('[data-testid="paginator_tier"]') });
     await expect(table.locator(ROW).filter({ hasText: NEW_TIER }), 'CN-31: the live table shows the new tier').toHaveCount(1, { timeout: 30_000 });
     await deleteCreatedTier(NEW_TIER); // tidy the app-created doc
   });
