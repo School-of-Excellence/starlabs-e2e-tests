@@ -102,11 +102,23 @@ export const evoVideoTypes = {
   testimonial: `EVOMTestimonial ${RUN}`,
 };
 
-/** Run-unique `participant metadata` display names (the /participant_videos_mapping filter search). */
+/**
+ * `participant metadata` DISPLAY names — the strings the /participant_videos_mapping participant
+ * searches actually filter on (the app filters `participantOptions[].name`, sourced from
+ * `participant metadata`.name: evolution-mapping-new.component.ts:382 / :753 / :1576).
+ *
+ * These are EMAILS, not our own labels, and that is not a shortcut: `participant metadata`.name is
+ * OWNED BY A CLOUD FUNCTION. profiledata_to_participantmetadata (participantmetadata.js:18) fires on
+ * every profile_data write and merge-sets name := profile_data.name, and seedAuthChain sets
+ * profile_data.name = the participant's email. Any other name a seed writes is overwritten by that
+ * async CF a moment later — so the email is the only name the screen can ever show. (This is what
+ * broke EM-13/EM-14: they searched for "EVOM Meta …" and the option list was always empty.)
+ * Each email is run-scoped + participant-unique, so a search still narrows to exactly one option.
+ */
 export const evoMetaNames = {
-  pNew: `EVOM Meta pNew ${RUN}`,
-  pVdel: `EVOM Meta pVdel ${RUN}`,
-  pToggle: `EVOM Meta pToggle ${RUN}`,
+  pNew: evoActors.participantNew,
+  pVdel: evoActors.participantVdel,
+  pToggle: evoActors.participantToggle,
 };
 
 /**

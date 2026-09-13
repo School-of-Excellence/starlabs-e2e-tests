@@ -258,8 +258,12 @@ test.describe('Evolution Mapping — participant_videos_mapping write depth (rea
     const panel = page.locator('.add-video-panel');
     await expect(panel, 'EM-13: the Add Video overlay must open').toBeVisible({ timeout: 20_000 });
 
-    // Participant — ngx-mat-select-search; filter by pNew's run-unique metadata name, click the option.
+    // Participant — ngx-mat-select-search; filter by pNew's `participant metadata`.name, click the option.
     // It is the FIRST mat-select in the panel (the per-entry Type/Event selects come after).
+    // NOTE (root cause of this case's earlier failure): the panel's filter matches ONLY on
+    // participantOptions[].name (evolution-mapping-new.component.ts:1576), and that name is CF-owned —
+    // profiledata_to_participantmetadata merge-sets it to profile_data.name (= the email) after the seed
+    // runs. evoMetaNames.pNew is therefore the EMAIL; see support/evomap.ts for the full derivation.
     const partSelect = panel.locator('mat-select').first();
     await expect(partSelect, 'EM-13: the participant select must render').toBeVisible({ timeout: 15_000 });
     await pickSearchSelectOption(page, partSelect, evoMetaNames.pNew, evoMetaNames.pNew);
@@ -331,6 +335,9 @@ test.describe('Evolution Mapping — participant_videos_mapping write depth (rea
     // [REAL-UI] filter the records list to pVdel via the Filter Participants search-select. With exactly
     // one participant selected, fetchRecords() queries `participant metadata` where __name__ in [id] and
     // renders that single row — deterministic regardless of the ~200 other participants.
+    // The search (component:753) and the rendered PARTICIPANT cell both read `participant metadata`.name,
+    // which the profiledata_to_participantmetadata CF owns and sets to profile_data.name (= the email);
+    // evoMetaNames.pVdel is that email — the only string this list can ever match. (See support/evomap.ts.)
     const filterSelect = page.locator('mat-select').first(); // the Filter Participants select
     await pickSearchSelectOption(page, filterSelect, evoMetaNames.pVdel, evoMetaNames.pVdel);
     // Close the still-open multi-select panel so it does not overlay the table (press Escape).

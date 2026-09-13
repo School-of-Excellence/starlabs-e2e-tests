@@ -257,17 +257,32 @@ async function seedEvomap() {
     uploadedon: now(), uploadedby: PF.admin, remarks: [], ...tag,
   });
 
-  // 6) participant metadata rows (the /participant_videos_mapping list + summaryStats source). Three
-  //    run-unique rows so the screen renders >= 3 and the stat is a real app-derived number (EM-12).
+  // 6) participant metadata rows (the /participant_videos_mapping list + summaryStats source). One row
+  //    per seeded participant so the screen renders >= 3 and the stat is a real app-derived number (EM-12).
+  //
+  //    `name` MUST be the participant's EMAIL — it is a CF-OWNED field, not ours to choose. The deployed
+  //    trigger profiledata_to_participantmetadata (starlabs-cloud-function/functions/components/
+  //    participantmetadata.js:18) fires on every profile_data write and merge-sets
+  //      participant metadata/{profileid}.{name,email,profileid,...} = profile_data.{name,email,...}
+  //    and seedAuthChain (step 1 above) sets profile_data.name = the email. That CF write is ASYNC and
+  //    lands AFTER this block, so any other `name` we wrote here is silently overwritten seconds later —
+  //    which is exactly what broke EM-13/EM-14: the Filter-Participants / Add-Video ngx-mat-select-search
+  //    filters on participant metadata.name (evolution-mapping-new.component.ts:753 / :1576) and no option
+  //    ever matched a "EVOM Meta …" string. Seeding the same value the CF will write makes the precondition
+  //    race-proof in BOTH orders, and {merge:true} additionally stops a late seed write from wiping the
+  //    CF-written email/profile fields the PARTICIPANT column renders.
+  //    Uniqueness is preserved: each email is run-scoped and participant-unique, so a search still narrows
+  //    to exactly one option / one row.
   const pmRef = (pf) => db.collection('participant metadata').doc(pf);
-  await pmRef(PF.p0).set({ docid: PF.p0, profileid: PF.p0, name: `EVOM Meta p0 ${TESTRUNID}`, ...tag });
-  await pmRef(PF.pLive).set({ docid: PF.pLive, profileid: PF.pLive, name: `EVOM Meta pLive ${TESTRUNID}`, ...tag });
-  await pmRef(PF.pDel).set({ docid: PF.pDel, profileid: PF.pDel, name: `EVOM Meta pDel ${TESTRUNID}`, ...tag });
-  // pNew (EM-13 add-video) + pVdel (EM-14 delete-video) — run-unique names so the /participant_videos_mapping
-  // Filter Participants search narrows to exactly one row deterministically.
-  await pmRef(PF.pNew).set({ docid: PF.pNew, profileid: PF.pNew, name: `EVOM Meta pNew ${TESTRUNID}`, ...tag });
-  await pmRef(PF.pVdel).set({ docid: PF.pVdel, profileid: PF.pVdel, name: `EVOM Meta pVdel ${TESTRUNID}`, ...tag });
-  await pmRef(PF.pToggle).set({ docid: PF.pToggle, profileid: PF.pToggle, name: `EVOM Meta pToggle ${TESTRUNID}`, ...tag });
+  const mkMeta = (pf, email) => pmRef(pf).set({ docid: pf, profileid: pf, name: email, ...tag }, { merge: true });
+  await mkMeta(PF.p0, EMAIL.p0);
+  await mkMeta(PF.pLive, EMAIL.pLive);
+  await mkMeta(PF.pDel, EMAIL.pDel);
+  // pNew (EM-13 add-video) + pVdel (EM-14 delete-video) — the /participant_videos_mapping filter search
+  // narrows to exactly one row deterministically by this (participant-unique, run-scoped) email.
+  await mkMeta(PF.pNew, EMAIL.pNew);
+  await mkMeta(PF.pVdel, EMAIL.pVdel);
+  await mkMeta(PF.pToggle, EMAIL.pToggle);
 
   // 7) Participant completion preconditions (Flow 6): queue generation + variation + queue_token.
   const qgenRef = db.collection('queue generation').doc(ID.QGEN);
