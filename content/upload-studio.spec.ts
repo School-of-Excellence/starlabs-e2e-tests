@@ -7,14 +7,18 @@
 // job has nothing to upload, so "Save change (1)" goes straight to saveEpisode() — a `setDoc(..., {merge:
 // true})` where every media field falls back to the source doc (ts:372-378, 424-463). That is the ONE
 // deterministic write path on this screen that needs no Storage, and CN-35 proves the "no Storage" part
-// with a request counter rather than trusting the code comment.
+// with a request watch rather than trusting the code comment. The watch is SCOPED to the save (see
+// watchStorageRequests): firebasestorage.googleapis.com is ALSO where the app shell fetches its two
+// hard-coded public images (the login logo and the toolbar avatar), so an ABSOLUTE count of requests to
+// that host measures the shell, not this screen.
 //
 // The route's canDeactivate (pendingUploadsGuard) blocks only while a job is queued/uploading/paused/
 // finalizing (pending-uploads.guard.ts:9; ts:79,180). CN-36 asserts the pass-through case; the blocking
 // case would need an in-flight resumable upload, which installStorageStub does not emulate — see Risk 16.
 import { test, expect } from '@playwright/test';
 import {
-  contentIds, contentText, countStorageRequests, installContentStubs, loginAsContentAdmin, resetEpisodeEdit,
+  contentIds, contentText, installContentStubs, loginAsContentAdmin, resetEpisodeEdit,
+  StorageWatch, watchStorageRequests,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
@@ -24,10 +28,10 @@ const millis = (v: any): number | undefined => (typeof v?.toMillis === 'function
 
 test.describe('Content — /videodashboard/upload upload studio (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
-  let storageRequests: () => number;
+  let storage: StorageWatch;
   test.beforeEach(async ({ page }) => {
     guard = attachConsoleGuard(page);
-    storageRequests = countStorageRequests(page);
+    storage = watchStorageRequests(page);
     await installContentStubs(page);
     await resetEpisodeEdit(); // EP3 back to its seed-time shape (CN-35 mutates it)
     await loginAsContentAdmin(page);
@@ -63,6 +67,13 @@ test.describe('Content — /videodashboard/upload upload studio (real UI, anti-c
     await page.goto(`/videodashboard/upload?edit=${contentIds.EP3}`, { waitUntil: 'domcontentloaded' });
     const title = page.locator('input[placeholder="Episode title *"]');
     await expect(title).toHaveValue(contentText.episode3Title, { timeout: 30_000 });
+
+    // The shell avatar's media GET must already be issued before we mark — its `<img>` fires the request
+    // as soon as the element mounts (profile-picture.component.html:3 `[src]="photoUrl"` →
+    // profile-picture.component.ts:43/45 `defaultAvatar`), and that URL is on the Storage host.
+    await expect(page.locator('app-profile-picture img.profile-img'), 'CN-35: shell avatar mounted')
+      .toBeVisible({ timeout: 30_000 });
+    storage.mark(); // everything after this point is "the save" — none of it may reach Storage
     await title.fill(NEW_TITLE);
 
     // With no files attached the job has nothing pending → startJob() goes straight to saveEpisode()
@@ -82,7 +93,15 @@ test.describe('Content — /videodashboard/upload upload studio (real UI, anti-c
     }
     expect(millis(after!.date), 'CN-35: date is carried from the loaded job, not reset (ts:162/442)').toBe(millis(before.date));
     expect(after!.id, 'CN-35: id field == doc id (ts:431/447)').toBe(contentIds.EP3);
-    expect(storageRequests(), 'CN-35: zero requests to Firebase Storage').toBe(0);
+    // [ASSERT] the save made no request of ANY kind to Storage. startJob() short-circuits to
+    // saveEpisode() when nothing is pending (ts:372-378) and cleanupReplaced() finds no replaced url to
+    // drop (ts:465-481); EP3's seeded media are all example.com, so not even a preview GET can alibi a
+    // request inside this window.
+    expect(storage.describe(), 'CN-35: zero requests to Firebase Storage during the save').toEqual([]);
+    // [ASSERT] and nowhere in the run did a Storage OPERATION happen — no resumable upload (ts:389-390),
+    // no deleteObject (ts:476), no metadata write. Only plain media GETs ever reached the host, so this
+    // half of the invariant cannot be masked by the shell's logo/avatar images.
+    expect(storage.uploads(), 'CN-35: no Storage operation (upload/delete/metadata) anywhere in the run').toEqual([]);
     await expect(page.locator('.t-note.ok'), 'CN-35: the card reports the save').toContainText(/saved/i, { timeout: 30_000 });
   });
 

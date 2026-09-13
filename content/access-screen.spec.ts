@@ -105,7 +105,10 @@ test.describe('Content — /accessscreen (real UI, anti-circular)', () => {
     await expect(dialog).toBeVisible({ timeout: 20_000 });
 
     await dialog.locator('input[name="name"]').fill(NEW_TIER);
-    await dialog.locator('input[name="tiereligibilitymessage"]').fill('eligible (e2e)');
+    // The message fields are <textarea matInput rows="3">, NOT <input> (add-tier.component.html:19-20).
+    // Only the tier NAME is an <input>; the spec used to look for input[name="tiereligibilitymessage"],
+    // which cannot exist, and burned the whole test timeout waiting for it.
+    await dialog.locator('textarea[name="tiereligibilitymessage"]').fill('eligible (e2e)');
     // ONE real support entry; the remaining customersupport slots stay blank → the app must drop them
     // (add-tier.component.ts:77-97 filters empty strings).
     await dialog.locator('input[name="customersupport0"]').fill('support@example.com');

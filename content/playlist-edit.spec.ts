@@ -64,7 +64,11 @@ test.describe('Content — /playlistdashboard/edit-playlist (real UI, anti-circu
 
     // Narrow the audio table to THIS run's audios so the checked-row count is deterministic, then count
     // the rows the app pre-selected. All 3 must be checked, none unchecked.
-    await page.getByPlaceholder('Search').first().fill(contentText.audioNamePrefix);
+    // TWO controls on this screen carry placeholder "Search" — the Update-Tag search and this audio filter
+    // (edit.component.html:55). .first() picked the tag one, which sits in a non-interactable autocomplete,
+    // so fill() waited out the whole 120s timeout; { exact: true } then hit a strict-mode violation on 2
+    // matches. The audio filter is the one whose <mat-label> is "Filter", so address it by ROLE + NAME.
+    await page.getByRole('textbox', { name: 'Filter', exact: true }).fill(contentText.audioNamePrefix);
     const rows = page.locator(ROW).filter({ hasText: contentText.audioNamePrefix });
     await expect(rows, 'CN-37: the 3 run-scoped audios are listed').toHaveCount(3, { timeout: 30_000 });
     await expect(rows.locator('mat-checkbox.mat-mdc-checkbox-checked'), 'CN-37: every sequence audio is pre-checked (ts:153-166)')

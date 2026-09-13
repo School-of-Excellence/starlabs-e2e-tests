@@ -26,9 +26,10 @@ import {
   installContentStubs, installStorageStub, loginAsContentAdmin, TINY_PNG,
   resetSeriesEpisode, deleteCreatedSeries, resetTierAccessConfigForTier2,
   resetRecommendedMix, createRecommendedMix, resetHlsEpisode, resetHlsContentUrl,
+  deleteCreatedAdsPlaylist, deleteCreatedLearningMaterial,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { openMatSelect } from '../_shared/mat-select';
+import { openMatSelect, selectMatOption, selectMatOptions } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.CONT_RUNID || 'cont';
@@ -83,9 +84,14 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     // Access Type defaults to 'tier' (ts:70), which makes the Tier select required. 'free' keeps this case
     // about the batch, not tiers: for a non-tier series the app writes tier: [] (ts:328).
     await openSelect(page, dialog.locator('mat-select[name="type"]'));
-    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: /^s*Frees*$/ }).click();
-    // Pick the seeded EP1 in the episode multi-select — the only .cat-select left once type != 'tier'.
-    await openSelect(page, dialog.locator('mat-select.cat-select'));
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: /^Free$/ }).first().click();
+    // Pick the seeded EP1 in the episode multi-select. NOT `mat-select.cat-select`: THREE selects carry
+    // that class (Access Type html:41, Tier html:78, Episodes html:152), and even after type='free' drops
+    // the Tier field two remain — the bare class locator raised a strict-mode violation inside
+    // openSelect()'s `expect(trigger).toBeVisible()`, which sits OUTSIDE openMatSelect's retry loop, so it
+    // failed hard. Scope by the field's own label instead; it names exactly one select.
+    const episodeSelect = dialog.locator('.field-group').filter({ hasText: 'Select Episodes' }).locator('mat-select');
+    await openSelect(page, episodeSelect);
     await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: `TEST_EPISODE_${RUN}_1` }).first().click();
     await page.keyboard.press('Escape');
     await expect(dialog.locator('.drag-item'), 'CN-04: the picked episode is in the sequence list').toHaveCount(1);
@@ -95,7 +101,10 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     await dialog.locator('input[type="file"][accept="image/*"]').nth(1).setInputFiles(TINY_PNG);
 
     // Submit → onSubmit builds the writeBatch (ts:318-341). No window.confirm on this path.
-    const submit = dialog.locator('button.btn-primary', { hasText: /^Submit$/ });
+    // role+name, not hasText: the footer button renders `<mat-icon>cloud_upload</mat-icon> Submit`
+    // (configureseriesdialog.component.html:191-196), so its text content is "cloud_upload Submit" and
+    // `/^Submit$/` would never match. The mat-icon is aria-hidden → accessible name is just "Submit".
+    const submit = dialog.getByRole('button', { name: 'Submit', exact: true });
     await expect(submit, 'CN-04: Submit enables once form valid + thumbnail + unique name').toBeEnabled({ timeout: 20_000 });
     await submit.click();
 
@@ -185,110 +194,208 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
   // ===========================================================================================
   // CN-11 — tier-access-config add: open /tieraccessconfig → "Add New Tier" → ConfigNewTier "By Product"
   //          path (select TIER2, add the seeded journey, pick the seeded product) → confirm → setDoc.
+  //
+  //          Route: app.routes.ts:131 → content/tier-access-config/view-tier-access/view-tier-access.component
+  //          (the copy at :95, under `content-upload-v2`'s children, is COMMENTED OUT — :131 is the only
+  //          live declaration). Its "Add New Tier" button (view-tier-access.component.html:6) opens
+  //          ConfigNewTierComponent (view-tier-access.component.ts:98-105).
+  //
+  //          ENABLED 2026-09-13. It was parked with no recorded reason; three things in the body were
+  //          wrong against the live components, all fixed below:
+  //            1. `page.locator('mat-select').first()` for the tier select. The HOST page carries a
+  //               <mat-paginator [pageSizeOptions]="[5,10,25,100]"> (html:84) and a Material paginator
+  //               renders its OWN mat-select for the page size. That element precedes the cdk overlay in
+  //               the DOM, so `.first()` resolved to the PAGINATOR, not the dialog's tier select. Scope to
+  //               mat-dialog-container — where, before an access-by radio is picked, there is exactly one
+  //               mat-select (the two *ngIf blocks at html:13 / html:32 are both closed), so the locator
+  //               is unambiguous and needs no .first().
+  //            2. `getByRole('radio', { name: /By Product/i }).click()`. appointments/deep.spec.ts:342-346
+  //               already paid for this: a mat-radio-button's accessible name is empty (the text lives in
+  //               a styled <label>) and clicking the host does not select it — click the inner
+  //               <input type=radio> with force (the ripple overlay intercepts).
+  //            3. openSelect() asserts toBeVisible() on the trigger BEFORE openMatSelect, which sits
+  //               outside the helper's retry loop. Harmless once the triggers are unambiguous, but the
+  //               journey/product fields are used through selectMatOption() instead so the whole
+  //               open+pick is inside the retry.
   // ===========================================================================================
-  test.fixme('CN-11 add tier-access-config writes a new "tier access config" doc for the chosen tier', async ({ page }) => {
+  test('CN-11 add tier-access-config writes a new "tier access config" doc for the chosen tier', async ({ page }) => {
     await resetTierAccessConfigForTier2(); // re-offer TIER2 in the add dialog + make the post-count exact
     expect(await countWhere('tier access config', [['tierid', '==', contentIds.TIER2]]), 'CN-11: TIER2 has no config pre-submit').toBe(0);
 
     await loginAsContentAdmin(page);
     await page.goto('/tieraccessconfig', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/tieraccessconfig/, { timeout: 30_000 });
+    // The seeded TIER1 config row renders once the collectionSnapshots stream AND the tier map have both
+    // landed (ts:45-56) — i.e. the same `tier` catalog the dialog filters. Gate on it so the dialog's
+    // tierList is not raced.
+    await expect(page.locator(ROW).filter({ hasText: contentText.tierBasic }),
+      'CN-11: the seeded TIER1 access-config row renders (tier catalog loaded)').toBeVisible({ timeout: 30_000 });
 
-    await page.getByRole('button', { name: /Add New Tier/i }).click();
-    // Dialog mounts: the tier select + the access-by radios.
-    await expect(page.getByText(/Tier Configuration/i), 'CN-11: ConfigNewTier dialog opens').toBeVisible({ timeout: 20_000 });
+    await page.getByRole('button', { name: 'Add New Tier', exact: true }).click(); // html:6
+    const dialog = page.locator('mat-dialog-container');
+    await expect(dialog, 'CN-11: ConfigNewTier dialog opens').toBeVisible({ timeout: 20_000 });
+    await expect(dialog.getByText('Tier Configuration'), 'CN-11: the dialog header renders (html:2)').toBeVisible();
 
-    // Select the tier (the dialog filters out tiers that already have a config → TIER2 is offered).
-    await openSelect(page, page.locator('mat-select').first());
-    await page.getByRole('option', { name: new RegExp(`TEST_TIER_PREM_${RUN}`) }).click();
+    // Select the tier. The dialog filters out tiers that already have a config (ts:59-63) → TIER2 is the
+    // one offered; TIER1 is not. mat-label reads "Select Tire" (app typo) so the name is useless — but at
+    // this point the dialog holds exactly ONE mat-select (html:5), so the bare locator is unambiguous.
+    await selectMatOption(page, dialog.locator('mat-select'), contentText.tierPrem);
 
-    // Choose "By Product" → reveals the "Add Active Journey" select. The <mat-label> is a SIBLING of the
-    // <mat-select> inside the same <mat-form-field>, so scope by the form-field (which contains both) and
-    // target its inner mat-select.
-    await page.getByRole('radio', { name: /By Product/i }).click();
-    const journeyField = page.locator('mat-form-field').filter({ hasText: /Add Active Journey/i }).first();
-    await openSelect(page, journeyField.locator('mat-select'));
-    await page.getByRole('option', { name: new RegExp(`TEST_JOURNEY_${RUN}`) }).click();
+    // Choose "By Product" (html:11) → opens the html:32 and html:41 blocks.
+    const byProduct = dialog.locator('mat-radio-button').filter({ hasText: 'By Product' });
+    await byProduct.locator('input[type=radio]').click({ force: true });
+    await expect(byProduct.locator('input[type=radio]'), 'CN-11: the By Product radio is selected').toBeChecked();
 
-    // A product row appears for that journey → pick the seeded product (clears the only validation gap).
-    const productField = page.locator('mat-form-field').filter({ hasText: /Select Product/i }).first();
-    await openSelect(page, productField.locator('mat-select'));
-    await page.getByRole('option', { name: new RegExp(`TEST_PRODUCT_${RUN}`) }).click();
+    // "Add Active Journey" (html:33-38). Its (selectionChange) calls addactivejourney(), which seeds
+    // productaccess[journeyid] = [{ productid: null, count: 1 }] (ts:118-126).
+    const journeyField = dialog.locator('mat-form-field').filter({ hasText: 'Add Active Journey' });
+    await selectMatOption(page, journeyField.locator('mat-select'), contentText.journey);
 
-    // Submit → onSubmit() calls window.confirm then setDoc (config-new-tier.component.ts:175,184).
+    // A product row appears for that journey (html:52-65) → pick the seeded product. That clears the ONLY
+    // remaining validation gap: onFormValidation() disables Submit while any productid is null (ts:162).
+    const productField = dialog.locator('mat-form-field').filter({ hasText: 'Select Product' });
+    await selectMatOption(page, productField.locator('mat-select'), contentText.product);
+
+    // Submit (html:70) → onSubmit() calls window.confirm then setDoc (config-new-tier.component.ts:175,184).
     page.once('dialog', (d) => d.accept());
-    const submit = page.getByRole('button', { name: /^Submit$/ });
-    await expect(submit, 'CN-11: Submit enables once tier + product chosen').toBeEnabled({ timeout: 20_000 });
+    const submit = dialog.getByRole('button', { name: 'Submit', exact: true });
+    await expect(submit, 'CN-11: Submit enables once tier + product chosen (ts:156-172)').toBeEnabled({ timeout: 20_000 });
     await submit.click();
+    await expect(dialog, 'CN-11: the dialog closes once setDoc resolves (ts:185)').toHaveCount(0, { timeout: 30_000 });
 
-    // [ASSERT] exactly one tier-access-config doc now exists for TIER2 — the app wrote it; the test only
-    // reads the count back (the tierid is the known seeded tier, the doc is the app's write).
+    // [ASSERT] exactly one tier-access-config doc now exists for TIER2 — the app wrote it (pre-state was
+    // an asserted 0). Everything checked below was COMPUTED by the component, not typed by the test:
     const docs = await pollUntil(
       () => queryWhere('tier access config', [['tierid', '==', contentIds.TIER2]]),
       (rows) => rows.length === 1,
       { label: `CN-11: one tier-access-config for TIER2`, timeoutMs: 30_000 },
     );
-    expect((docs[0] as any).tieraccessby, 'CN-11: the app wrote tieraccessby="product"').toBe('product');
-    await resetTierAccessConfigForTier2(); // tidy
+    const d = docs[0] as any;
+    expect(d.docid, 'CN-11: docid == doc id (the id minted at ts:91, written at ts:183)').toBe(docs[0].id);
+    expect(d.tieraccessby, 'CN-11: the app wrote tieraccessby="product"').toBe('product');
+    // The constructor pre-seeds biglevel with one empty row for an "add" (ts:55-58); onSubmit CLEARS it on
+    // the product path (ts:180). An empty biglevel[] is therefore the app's own branch output.
+    expect(d.biglevel, 'CN-11: the product path clears biglevel[] (ts:179-181)').toEqual([]);
+    // The journey key + the product row are the app's map: the test picked LABELS, the component resolved
+    // them to the seeded ids and stamped the default count:1 (ts:122) the test never touched.
+    expect(Object.keys(d.productaccess), 'CN-11: productaccess is keyed by the picked journey id').toEqual([contentIds.J1]);
+    expect(d.productaccess[contentIds.J1], 'CN-11: one product row with the picked product + the app default count')
+      .toEqual([{ productid: contentIds.PR1, count: 1 }]);
+
+    await resetTierAccessConfigForTier2(); // tidy the app-created doc
   });
 
   // ===========================================================================================
   // CN-12 — learning-material CRUD: add (no file) → doc with name; edit → name updated; delete → absent.
+  //
+  //          Route: app.routes.ts:104 → content/learning-material/learning-material.component. The copy at
+  //          :85 is a CHILD of `content-upload-v2` (:42-43), i.e. /content-upload-v2/learningmaterial — not a
+  //          shadow of the top-level path. Both mount the SAME component, so the screen below is the one
+  //          either route shows. Add/edit both open LearningMaterialAddDialogComponent (ts:64-80).
+  //
+  //          ENABLED 2026-09-13. Parked with no recorded reason; corrected against the live components:
+  //            1. The list paginator is [pageSizeOptions]="[10,25,50]" (html:82) and the stream arrives in
+  //               Firestore doc-id order, so a newly created row is NOT reliably on page 1 — the original
+  //               `expect(addedRow).toBeVisible()` was a coin flip against however many materials the
+  //               project holds. Narrow with the screen's own search box first.
+  //            2. That search box is bound (keyup) (html:16-17) and reads event.target.value directly, so
+  //               locator.fill() — which never emits keyup — would leave dataSource.filter untouched.
+  //               pressSequentially().
+  //            3. `.locator('.a-edit, button').first()` / `.last()` depended on cell order; the buttons
+  //               carry stable classes (html:55 / html:63) — use them.
+  //            4. `getByRole('button', { name: /Upload/i }).first()` and `/^Save$/`: both buttons put a
+  //               <mat-icon> ligature BEFORE the label (html:8, html:176-178), so their TEXT is
+  //               "cloud_upload Upload" / "save Save". mat-icon is aria-hidden → role+exact name is right,
+  //               and drops the .first() guesswork.
+  //          Thumbnail is skipped on purpose: html:89 stars it, but onSave's only gate is name.trim()
+  //          (ts:221) and the Save button's only disable is `saving || !name.trim() || uploadingFiles`
+  //          (html:175) — so a no-file add is a valid submission and keeps Storage out of this case.
   // ===========================================================================================
-  test.fixme('CN-12 learning-material add → edit → delete (each asserts the app-computed name/absence)', async ({ page }) => {
+  test('CN-12 learning-material add → edit → delete (each asserts the app-computed name/absence)', async ({ page }) => {
     const NEW_LM = `NEW_LM_${RUN}_${Date.now()}`;
     const EDIT_LM = `${NEW_LM}_EDITED`;
+    // Idempotent pre-clean: app-written docs carry no testrunid, so a prior crashed run is matched by name.
+    await deleteCreatedLearningMaterial(NEW_LM);
+    await deleteCreatedLearningMaterial(EDIT_LM);
+    expect(await countWhere('learning-materials', [['name', '==', NEW_LM]]), 'CN-12: name unused pre-add').toBe(0);
 
     await loginAsContentAdmin(page);
     await page.goto('/learningmaterial', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/learningmaterial/, { timeout: 30_000 });
+    // The seeded reference material proves the collectionSnapshots stream landed (ts:42-46).
+    const search = page.getByPlaceholder('Search materials...'); // html:16
+    await search.pressSequentially(contentText.learningMaterial); // (keyup) — fill() emits no keyup
+    await expect(page.locator(ROW).filter({ hasText: contentText.learningMaterial }),
+      'CN-12: the seeded learning material renders (stream + filterPredicate live)').toHaveCount(1, { timeout: 30_000 });
 
-    // --- ADD --- open the upload dialog, fill name, choose Access Type = Free (skips the tier select),
-    // Available = Yes, then Save (no file upload needed — onSave only requires name.trim()).
-    expect(await countWhere('learning-materials', [['name', '==', NEW_LM]]), 'CN-12: name unused pre-add').toBe(0);
-    await page.getByRole('button', { name: /Upload/i }).first().click();
-    const nameInput = page.getByPlaceholder('Enter material name');
-    await expect(nameInput, 'CN-12: add dialog opens').toBeVisible({ timeout: 20_000 });
-    await nameInput.fill(NEW_LM);
-    // Access Type select → Free.
-    await openSelect(page, page.locator('mat-select[name="type"]'));
-    await page.getByRole('option', { name: /^Free$/ }).click();
-    // Available select → Yes (its model default is 'yes', but set explicitly so required is satisfied).
-    await openSelect(page, page.locator('mat-select[name="available"]'));
-    await page.getByRole('option', { name: /^Yes$/ }).click();
-    await page.getByRole('button', { name: /^Save$/ }).click();
+    // --- ADD --- open the upload dialog, fill name, choose Access Type = Free (drops the tier select),
+    // Available = Yes, then Save (no file upload — onSave only requires name.trim()).
+    await page.getByRole('button', { name: 'Upload', exact: true }).click(); // html:7-10
+    const dialog = page.locator('mat-dialog-container');
+    await expect(dialog, 'CN-12: add dialog opens').toBeVisible({ timeout: 20_000 });
+    await expect(dialog.getByText('Upload Material'), 'CN-12: it opened in ADD mode (html:5)').toBeVisible();
+    await dialog.getByPlaceholder('Enter material name').fill(NEW_LM); // html:17, [(ngModel)] → input event is enough
 
-    // [ASSERT-add] one learning-materials doc with this name — the app's setDoc wrote it.
+    // Access Type (html:31-41) → Free. The model default is 'tier' (ts:59), so this is a REAL change:
+    // ontypeChange() clears selectedTier (ts:143-147) and the *ngIf tier field (html:48) disappears.
+    await selectMatOption(page, dialog.locator('mat-select[name="type"]'), 'Free');
+    await expect(dialog.locator('mat-select[name="tier"]'),
+      'CN-12: picking Free retires the Tier field (html:48 *ngIf)').toHaveCount(0);
+    // Available (html:72-81) → Yes.
+    await selectMatOption(page, dialog.locator('mat-select[name="available"]'), 'Yes');
+
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click(); // html:174-179
+    await expect(dialog, 'CN-12: the dialog closes once setDoc resolves (ts:274)').toHaveCount(0, { timeout: 30_000 });
+
+    // [ASSERT-add] one learning-materials doc with this name — the app's setDoc wrote it (pre-count was 0).
     const added = await pollUntil(
       () => queryWhere('learning-materials', [['name', '==', NEW_LM]]),
       (rows) => rows.length === 1,
       { label: `CN-12: one learning-material named ${NEW_LM}`, timeoutMs: 30_000 },
     );
     const lmId = added[0].id;
+    const a = added[0] as any;
+    // Everything below is the COMPONENT's output, not a value the test typed:
+    expect(a.docid, 'CN-12: docid == the auto doc id (ts:254,262)').toBe(lmId);
+    expect(a.tier, 'CN-12: a non-tier material writes tier:null (ts:255-260)').toBeNull();
+    expect(a.description, 'CN-12: the untouched description is stored as a trimmed "" (ts:268)').toBe('');
+    expect(a.files, 'CN-12: no file was uploaded → files[] empty (ts:225-231)').toEqual([]);
+    expect(typeof a.date?.toMillis, 'CN-12: date stamped by serverTimestamp() (ts:270)').toBe('function');
 
-    // --- EDIT --- open the row's edit dialog, change the name, save.
+    // --- EDIT --- narrow to the new row (it can land on any paginator page), open its edit dialog, rename.
+    await search.fill('');
+    await search.pressSequentially(NEW_LM);
     const addedRow = page.locator(ROW).filter({ hasText: NEW_LM });
-    await expect(addedRow, 'CN-12: the new material renders as a row').toBeVisible({ timeout: 30_000 });
-    await addedRow.locator('.a-edit, button').first().click();
-    const editName = page.getByPlaceholder('Enter material name');
-    await expect(editName, 'CN-12: edit dialog opens with the name field').toBeVisible({ timeout: 20_000 });
+    await expect(addedRow, 'CN-12: the new material renders as exactly one row').toHaveCount(1, { timeout: 30_000 });
+    await addedRow.locator('button.a-edit').click(); // html:55
+    await expect(dialog, 'CN-12: edit dialog opens').toBeVisible({ timeout: 20_000 });
+    await expect(dialog.getByText('Edit Material'), 'CN-12: it opened in EDIT mode (html:5)').toBeVisible();
+    const editName = dialog.getByPlaceholder('Enter material name');
+    await expect(editName, 'CN-12: the edit dialog is pre-filled from the row (ts:88)').toHaveValue(NEW_LM);
     await editName.fill(EDIT_LM);
-    await page.getByRole('button', { name: /^Save$/ }).click();
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect(dialog, 'CN-12: the dialog closes once updateDoc resolves').toHaveCount(0, { timeout: 30_000 });
 
-    // [ASSERT-edit] the SAME doc's name is now the edited value — the app's updateDoc wrote it.
-    await pollUntil(
+    // [ASSERT-edit] the SAME doc (id captured before the edit) now carries the edited name, and the app
+    // stamped its own `updated` serverTimestamp the add path never wrote (ts:250) — an app-computed
+    // marker that this really was the updateDoc branch and not a second create.
+    const edited = await pollUntil(
       () => getDoc('learning-materials', lmId),
       (d) => !!d && d.name === EDIT_LM,
       { label: `CN-12: learning-material ${lmId} name → ${EDIT_LM}`, timeoutMs: 30_000 },
     );
+    expect(typeof (edited as any).updated?.toMillis, 'CN-12: the edit path stamps updated (ts:250)').toBe('function');
+    expect((edited as any).docid, 'CN-12: the edit updated the SAME doc, it did not create a new one').toBe(lmId);
+    expect(await countWhere('learning-materials', [['name', '==', NEW_LM]]),
+      'CN-12: the old name is gone — one doc was renamed, not duplicated').toBe(0);
 
-    // --- DELETE --- the row's delete button → window.confirm → deleteDoc.
+    // --- DELETE --- the row's delete button → window.confirm (ts:83) → deleteDoc (ts:95).
     const editedRow = page.locator(ROW).filter({ hasText: EDIT_LM });
-    await expect(editedRow, 'CN-12: the edited material renders').toBeVisible({ timeout: 30_000 });
+    await expect(editedRow, 'CN-12: the edited material renders').toHaveCount(1, { timeout: 30_000 });
     page.once('dialog', (d) => d.accept());
-    await editedRow.locator('.a-del, button').last().click();
+    await editedRow.locator('button.a-del').click(); // html:63
 
-    // [ASSERT-delete] the doc is gone — the app's deleteDoc removed it.
+    // [ASSERT-delete] the doc is gone — the app's deleteDoc removed it (and this is the case's cleanup).
     await pollUntil(
       () => getDoc('learning-materials', lmId),
       (d) => d === null,
@@ -300,63 +407,139 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
   // CN-14 — playlist-ads create: open /playlistads → "Create New Playlist" → fill the full reactive form
   //          (title/desc/link/type, trailer + playlist from seeded content_urls, date range, thumbnail
   //          via the file input with Storage stubbed) → submit → setDoc(adsplaylist).
+  //
+  //          Route: app.routes.ts:110 → content/playlist-ads/playlist-ads.component (the only live
+  //          declaration; :590 is commented out). "Create New Playlist" (playlist-ads.component.html:11)
+  //          calls updatePlaylist(null) → opens UpdatePlaylistadsComponent (playlist-ads.component.ts:81-93).
+  //
+  //          ENABLED 2026-09-13. Parked with no recorded reason; corrected against the live components:
+  //            1. Every locator was page-scoped. The HOST page carries a mat-paginator and a Filter field;
+  //               scope to mat-dialog-container so nothing can drift onto the wrong control.
+  //            2. The option picks used `.cdk-overlay-pane mat-option` + hasText. The MAT-DIALOG is itself
+  //               inside a .cdk-overlay-pane, so that selector reaches across both overlays. Use
+  //               selectMatOption/selectMatOptions (_shared/mat-select.ts) — the whole open+pick then sits
+  //               inside the helper's retry loop, and role+exact name can't half-match TEST_CONTENT2_*.
+  //            3. `getByRole('button', { name: /Update Playlist/i })` for submit. That button carries NO
+  //               disabled-on-invalid binding (html:99 disables only while `loading`), so an invalid form
+  //               does not fail loudly — submit() falls through to alert("Fill every input.") (ts:148) and
+  //               the dialog just stays open. A dialog recorder below turns that into a named failure
+  //               instead of an opaque 30s poll timeout.
+  //            4. start/end date: those inputs carry (click)="picker.open()" (html:85-86) and the picker is
+  //               touchUi — a click would raise a modal overlay over the form. fill() focuses without
+  //               clicking, so the picker stays shut; the original's focus()/blur() dance was harmless but
+  //               unnecessary (click-ads.spec.ts CN-27 fills the same kind of range input directly).
+  //
+  //          NOTE (app finding, not a blocker): the two selects host <ngx-mat-select-search> (html:52, 65)
+  //          but UpdatePlaylistadsComponent's standalone `imports` (ts:20-33) never pull in
+  //          NgxMatSelectSearchModule, so the in-panel search box is inert — it renders as an unknown
+  //          element with no input. The option lists themselves are unaffected (filterContent() just sees
+  //          an empty filter), which is why this case can still drive them.
   // ===========================================================================================
-  test.fixme('CN-14 create playlist-ad writes a new adsplaylist doc with the entered title', async ({ page }) => {
-    const NEW_AD = `TEST_AD_NEW_${RUN}_${Date.now()}`;
+  test('CN-14 create playlist-ad writes a new adsplaylist doc with the entered title', async ({ page }) => {
+    const NEW_AD = `NEW_AD_${RUN}_${Date.now()}`;
+    await deleteCreatedAdsPlaylist(NEW_AD); // app-written → matched by its natural key (no testrunid)
     expect(await countWhere('adsplaylist', [['adstitle', '==', NEW_AD]]), 'CN-14: title unused pre-submit').toBe(0);
+    // Independently-known pre-state: what the app SHOULD resolve my by-title picks to (seed-content.js:298).
+    const cu1 = await getDoc('content_urls', contentIds.CU1);
+    expect(cu1, 'CN-14: the seeded content_urls row is the precondition').not.toBeNull();
 
     await loginAsContentAdmin(page);
     await page.goto('/playlistads', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/playlistads/, { timeout: 30_000 });
+    // An invalid form does not disable the submit button — it alerts (ts:148). Record any window.alert
+    // raised from here on so the failure names the reason instead of timing out on the Firestore poll.
+    // Registered AFTER login/navigation so nothing on the auth path can be mistaken for a form rejection.
+    const alerts: string[] = [];
+    page.on('dialog', async (d) => { alerts.push(d.message()); await d.dismiss().catch(() => {}); });
+    // Gate on the seeded ads row: the dialog is handed `contentlist` (the content_urls catalog) at open
+    // time (ts:85), and both it and the table stream are filled inside the same getRoles() continuation
+    // (ts:45-59). contentText.ad is "TEST_AD_<run>" — NEW_AD is "NEW_AD_<run>_…", so no cross-match.
+    await expect(page.locator(ROW).filter({ hasText: contentText.ad }),
+      'CN-14: the seeded ad row renders (ads stream loaded)').toBeVisible({ timeout: 30_000 });
 
-    await page.getByRole('button', { name: /Create New Playlist/i }).click();
-    await expect(page.getByText(/Update Playlist Ads/i), 'CN-14: the create/update ads dialog opens').toBeVisible({ timeout: 20_000 });
+    // …but the ad row is NOT proof the content catalog is loaded, and the dialog needs that catalog.
+    //
+    // APP RACE (pinned, not worked around silently): playlist-ads.component.ts:45-59 runs TWO SIBLING
+    // async operations inside one getRoles() continuation — a getDocs(content_urls) that fills
+    // `contentList` + `mapGeneralContent` (:48-53), and a collectionSnapshots(adsplaylist) that feeds the
+    // table (:56-59). Neither waits for the other. "Create New Playlist" passes `contentlist: this.contentList`
+    // BY VALUE at click time (:85) and the dialog snapshots it (update-playlistads.component.ts:67), so a
+    // click landing before the getDocs resolves opens the dialog with an EMPTY Ads Trailer / Ads Playlist
+    // list — with nothing on screen to say why. That is a real user-facing race on a slow connection, not a
+    // test artefact; it is what made this case fail on its first enabled run.
+    //
+    // The only honest wait is one that proves the getDocs loop ran: mapGeneralContent is filled in THAT loop
+    // (:51) and the table renders it per playlist row (playlist-ads.component.html:54), so a rendered
+    // content title is proof the catalog the dialog will copy is populated.
+    await expect(page.locator(ROW).filter({ hasText: contentText.ad }).locator('li', { hasText: contentText.content1 }),
+      'CN-14: the seeded ad row resolves its playlist entry to a content TITLE — proof getDocs(content_urls) '
+      + 'has filled mapGeneralContent/contentList, which the dialog copies by value on open')
+      .toBeVisible({ timeout: 30_000 });
 
-    // Text fields (all Validators.required).
-    await page.locator('input[formcontrolname="adstitle"]').fill(NEW_AD);
-    await page.locator('textarea[formcontrolname="adsdescription"]').fill('e2e ad description');
-    await page.locator('input[formcontrolname="adslink"]').fill('https://example.com/ad');
-    await page.locator('input[formcontrolname="adstype"]').fill('banner');
+    await page.getByRole('button', { name: 'Create New Playlist', exact: true }).click(); // html:11
+    const dialog = page.locator('mat-dialog-container');
+    await expect(dialog, 'CN-14: the create/update ads dialog opens').toBeVisible({ timeout: 20_000 });
+    await expect(dialog.getByText('Update Playlist Ads'), 'CN-14: dialog header (html:2)').toBeVisible();
 
-    // Thumbnail file → importNoteImages reads it as a DataURL into the form (no Storage call here); the
-    // Storage upload happens at submit and is stubbed.
-    await page.locator('input[type="file"]').first().setInputFiles(TINY_PNG);
+    // Text fields (all Validators.required, ts:54-57). adsdescription is a <textarea matInput> (html:15),
+    // NOT an <input> — the others are inputs (html:7, 23, 31).
+    await dialog.locator('input[formcontrolname="adstitle"]').fill(NEW_AD);
+    await dialog.locator('textarea[formcontrolname="adsdescription"]').fill('e2e ad description');
+    await dialog.locator('input[formcontrolname="adslink"]').fill('https://example.com/ad');
+    await dialog.locator('input[formcontrolname="adstype"]').fill('banner');
 
-    // Ads Trailer (single select, bound to content_urls[].url) → pick the seeded content.
-    await openSelect(page, page.locator('mat-select[formcontrolname="adstrailer"]'));
-    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: `TEST_CONTENT_${RUN}` }).first().click();
-    // Ads Playlist (multi select, bound to content_urls[].docid) → pick the same seeded content.
-    await openSelect(page, page.locator('mat-select[formcontrolname="playlist"]'));
-    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: `TEST_CONTENT_${RUN}` }).first().click();
-    await page.keyboard.press('Escape');
+    // Thumbnail (html:39) → importNoteImages (ts:89-108) sets selectedThumbnail synchronously and patches
+    // adsthumbnail from a FileReader; submit() requires one of the two (ts:121). The Storage upload happens
+    // at submit and is stubbed (installStorageStub). Wait for the preview so the FileReader has landed.
+    await dialog.locator('input[type="file"][accept="image/*"]').setInputFiles(TINY_PNG);
+    await expect(dialog.getByText('Remove'), 'CN-14: the thumbnail preview renders (html:41-45)').toBeVisible({ timeout: 20_000 });
 
-    // Date range (mat-date-range-input start/end): type M/D/YYYY straight into the inputs — the native
-    // date adapter parses it (same proven path as events-deep.spec.ts / queue setDates). focus() not
-    // click() — the notched-outline overlays the input and intercepts pointer events.
+    // Ads Trailer — single select bound to content_urls[].url (html:54). Ads Playlist — MULTI select bound
+    // to content_urls[].docid (html:67). Both label their options with the content TITLE, so the test picks
+    // a label and the app resolves it to the url / the docid.
+    await selectMatOption(page, dialog.locator('mat-select[formcontrolname="adstrailer"]'), contentText.content1);
+    await selectMatOptions(page, dialog.locator('mat-select[formcontrolname="playlist"]'), [contentText.content1]);
+    // The drag list below the select renders contentMap[docid] (html:77) — proof the app mapped my pick
+    // back to the seeded content id, before anything is written.
+    await expect(dialog.locator('.example-box'), 'CN-14: the picked content appears in the ordered playlist')
+      .toHaveText([contentText.content1]);
+
+    // Date range (mat-date-range-input start/end, html:84-87): type M/D/YYYY straight into the inputs — the
+    // NativeDateAdapter parses it (same proven path as click-ads.spec.ts CN-27). fill() focuses but does
+    // NOT click, so the (click)="picker.open()" touchUi overlay never opens over the form.
     const fmt = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
-    const startInput = page.locator('input[formcontrolname="startdate"]');
-    const endInput = page.locator('input[formcontrolname="enddate"]');
-    await startInput.focus();
-    await startInput.fill(fmt(new Date()));
-    await startInput.blur();
-    await endInput.focus();
-    await endInput.fill(fmt(new Date(Date.now() + 7 * 86400e3)));
-    await endInput.blur();
+    await dialog.locator('input[formcontrolname="startdate"]').fill(fmt(new Date()));
+    await dialog.locator('input[formcontrolname="enddate"]').fill(fmt(new Date(Date.now() + 7 * 86400e3)));
+    await dialog.locator('input[formcontrolname="enddate"]').press('Tab');
 
-    // Submit ("Update Playlist") → submit() → setDoc(adsplaylist/<docid>) (update-playlistads.ts:139).
-    await page.getByRole('button', { name: /Update Playlist/i }).click();
+    // Submit ("Update Playlist", html:99) → submit() → setDoc(adsplaylist/<docid>) (update-playlistads.ts:139).
+    await dialog.getByRole('button', { name: 'Update Playlist', exact: true }).click();
+    await expect(dialog, 'CN-14: the dialog closes once setDoc resolves (ts:141) — if it stays open the ' +
+      'form was invalid and submit() alerted "Fill every input." (ts:148)').toHaveCount(0, { timeout: 30_000 });
+    expect(alerts, 'CN-14: submit() accepted the form (no validation alert)').toEqual([]);
 
-    // [ASSERT] one adsplaylist doc with this title now exists — the app wrote it; the title is the known
-    // input, the doc is the product's setDoc output.
+    // [ASSERT] one adsplaylist doc with this title now exists — the app wrote it (pre-count was 0).
     const docs = await pollUntil(
       () => queryWhere('adsplaylist', [['adstitle', '==', NEW_AD]]),
       (rows) => rows.length === 1,
       { label: `CN-14: one adsplaylist titled ${NEW_AD}`, timeoutMs: 30_000 },
     );
-    expect((docs[0] as any).adstitle, 'CN-14: app wrote the input ad title').toBe(NEW_AD);
-    // tidy the app-created doc (matched by its natural key — it carries no testrunid).
-    const { initAdmin } = require('../fixtures/seed-test-project');
-    await initAdmin().firestore().collection('adsplaylist').doc((docs[0] as any).docid || docs[0].id).delete().catch(() => {});
+    const d = docs[0] as any;
+    // The fields below are the COMPONENT's output against an independently-known pre-state, not echoes of
+    // what the test typed:
+    expect(d.docid, 'CN-14: docid == the auto doc id it minted (ts:123) and wrote to (ts:138)').toBe(docs[0].id);
+    expect(d.adstrailer, 'CN-14: the app resolved my by-TITLE pick to the seeded content_urls url (html:54)')
+      .toBe((cu1 as any).url);
+    expect((d.playlist || []).map((r: any) => r?.id || r?._path?.segments?.slice(-1)[0]),
+      'CN-14: the app built DocumentReferences to content_urls from the picked docids (ts:135)')
+      .toEqual([contentIds.CU1]);
+    expect(d.available, 'CN-14: the form default the test never touched (ts:63)').toBe(true);
+    expect(typeof d.startdate?.toMillis, 'CN-14: startdate stored as a Timestamp').toBe('function');
+    expect(typeof d.enddate?.toMillis, 'CN-14: enddate stored as a Timestamp').toBe('function');
+    expect(String(d.adsthumbnail), 'CN-14: adsthumbnail is the getDownloadURL the app read back (ts:129)')
+      .toMatch(/^https:\/\/firebasestorage\.googleapis\.com\//);
+
+    await deleteCreatedAdsPlaylist(NEW_AD); // tidy the app-created doc
   });
 
   // ===========================================================================================

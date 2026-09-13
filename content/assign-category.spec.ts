@@ -76,8 +76,13 @@ test.describe('Content — /assigncategory (real UI, anti-circular)', () => {
     await page.keyboard.press('Escape');
     await expect(dialog.locator('.drag-item'), 'CN-24: the picked series appears in the ordered list').toHaveCount(1);
 
-    // No window.confirm on this path (assigncategorydialog.ts:167-192) — a plain click is correct.
-    const save = dialog.locator('button.btn-primary', { hasText: /^Save/ });
+    // No window.confirm on this path (assigncategorydialog.ts:167-196) — a plain click is correct.
+    // The footer button is `<button class="btn-primary"><mat-icon>save</mat-icon> Save </button>`
+    // (assigncategorydialog.component.html:72-77). Playwright's hasText matches TEXT CONTENT, and the
+    // mat-icon ligature contributes the literal lowercase word "save" AHEAD of the label — so the text is
+    // "save Save" and a `/^Save/` filter never matches. MatIcon marks itself aria-hidden, so the ACCESSIBLE
+    // NAME is the clean "Save"; role+name is the locator that survives the icon.
+    const save = dialog.getByRole('button', { name: 'Save', exact: true });
     await expect(save).toBeEnabled();
     await save.click();
 
@@ -104,10 +109,47 @@ test.describe('Content — /assigncategory (real UI, anti-circular)', () => {
     await page.locator('button.btn-primary', { hasText: 'Create Category' }).click();
     const dialog = page.locator('mat-dialog-container');
     await expect(dialog).toBeVisible({ timeout: 20_000 });
-    // the seeded name, upper-cased and padded — only the app's normalisation can recognise it
-    await dialog.locator('input.ib-input[placeholder="Type a new category name..."]').fill(`  ${contentText.category.toUpperCase()}  `);
+
+    // The duplicate check is the pool the PARENT hands in: categoryassign passes its live `allCategories`
+    // as MAT_DIALOG_DATA (categoryassign.component.ts:122-131, built at ts:77-80), and the dialog snapshots it in the
+    // constructor (assigncategorydialog.component.ts:68). So the seeded category is already in the pool
+    // the moment the dialog opens — nothing async has to settle first.
+    const name = dialog.locator('input.ib-input[placeholder="Type a new category name..."]');
+    await expect(name).toBeVisible({ timeout: 10_000 });
+
+    // FOCUS ORDER MATTERS. MatDialog's config defaults to autoFocus:'first-tabbable' +
+    // delayFocusTrap:true, so the focus trap runs only when the ENTER ANIMATION finishes
+    // (MatDialogContainer._openAnimationDone → _trapFocus) — i.e. AFTER the container is already
+    // visible and typable. The first tabbable element in this dialog is the header close button
+    // `<button class="a-btn" mat-dialog-close>` (assigncategorydialog.component.html:7). Typing
+    // immediately therefore starts in the input and is then hijacked mid-string, and because the
+    // padded name ENDS in a space, that trailing space arrives as a keypress on a focused BUTTON —
+    // which activates mat-dialog-close and tears the whole dialog down. That is what used to fail
+    // here: not a wrong hint string, not a missed keyup — the dialog was simply gone, with
+    // newCategoryName holding only the two leading spaces (trim() === '' → duplicateError false).
+    // Wait for the trap to land, THEN take the caret back and prove we own it.
+    await expect(dialog.locator('button.a-btn[mat-dialog-close]').first(), 'CN-25: the focus trap has fired')
+      .toBeFocused({ timeout: 10_000 });
+    await name.click();
+    await expect(name, 'CN-25: the caret is in the name field, not on the close button').toBeFocused();
+
+    // the seeded name, upper-cased and padded — only the app's normalisation can recognise it.
+    // MUST be TYPED, not filled: the duplicate check is wired to (keyup) on this input
+    // (assigncategorydialog.component.html:22 → onCategoryNameType(), ts:122-131). locator.fill() sets the
+    // value and dispatches `input` only — ngModel picks the value up, but keyup never fires, so
+    // duplicateError stays false and the hint never renders. pressSequentially emits a real key per char.
+    const typed = `  ${contentText.category.toUpperCase()}  `;
+    await name.pressSequentially(typed, { delay: 10 });
+    // [PRECONDITION] not an outcome — it separates "the keystrokes never landed" from "the app's
+    // normalisation failed", so a future regression names itself instead of pointing at the hint.
+    await expect(name, 'CN-25: every keystroke landed in the field').toHaveValue(typed);
+
+    // [ASSERT] the app rendered its own duplicate hint: allCategories carries the seeded CAT1 doc
+    // (category === contentText.category), and ts:123-130 trim()+toLowerCase()es BOTH sides, so the
+    // padded upper-case spelling still resolves to the same key → duplicateError true → html:24 renders.
     await expect(dialog.getByText('This category already exists'), 'CN-25: the duplicate hint shows').toBeVisible({ timeout: 10_000 });
-    await expect(dialog.locator('button.btn-primary', { hasText: /^Save/ }), 'CN-25: Save is disabled on a duplicate').toBeDisabled();
+    // role+name, not hasText: the footer button's text content is "save Save" (mat-icon ligature first).
+    await expect(dialog.getByRole('button', { name: 'Save', exact: true }), 'CN-25: Save is disabled on a duplicate').toBeDisabled();
     await dialog.locator('button.btn-cancel', { hasText: 'Cancel' }).click();
   });
 });

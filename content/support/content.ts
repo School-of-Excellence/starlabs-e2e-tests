@@ -71,6 +71,11 @@ export const contentText = {
   ctaDeleted: `TEST_CTA_${RUN}_DELETED`,
   tierBasic: `TEST_TIER_BASIC_${RUN}`,
   tierPrem: `TEST_TIER_PREM_${RUN}`,
+  // CN-11 ConfigNewTier "By Product" drivers (seed-content.js:273-274).
+  journey: `TEST_JOURNEY_${RUN}`,
+  product: `TEST_PRODUCT_${RUN}`,
+  // CN-12 reference learning material (seed-content.js:329-333) — the CN-12 flow creates its OWN row.
+  learningMaterial: `TEST_LM_${RUN}`,
   user1: `TEST_USER_${RUN}_1`,
   user2: `TEST_USER_${RUN}_2`,
   event1: `TEST_EVENT_${RUN}_1`,
@@ -316,14 +321,52 @@ function adminHandles() {
 }
 
 /**
- * Count requests the page makes to Firebase Storage. Several write-path cases (CN-33, CN-35) take a
- * deliberately upload-free path; asserting `count() === 0` afterwards is what proves the app really
- * skipped Storage rather than uploading to a stub. Attach BEFORE navigating.
+ * Watch every request the page makes to firebasestorage.googleapis.com. Several write-path cases
+ * (CN-33, CN-35) take a deliberately upload-free path, and this is what proves the app really skipped
+ * Storage rather than uploading into a stub. Attach BEFORE navigating.
+ *
+ * SCOPE WARNING (this used to be a bare counter and the counter lied). The listener sees the WHOLE
+ * test, and the app shell reaches this host on every run for reasons that have nothing to do with any
+ * upload: the login screen's logo `<img>` (login.component.html:8) and the toolbar avatar
+ * (app.component.html:25-31 → profile-picture.component.ts:43/45 `defaultAvatar`) are hard-coded PUBLIC
+ * `?alt=media` download URLs. A three-hop beforeEach (goto('/') → login → goto(<screen>)) therefore
+ * banks ~3 Storage GETs before a spec has clicked anything. So:
+ *   - `mark()` + `since()` scope the count to the action under test — use these for "this path does
+ *     not touch Storage";
+ *   - `uploads()` stays absolute for the whole test: anything that is not a plain media GET (an upload
+ *     `?name=`/`uploadType=`, a DELETE, a metadata PATCH) is a real Storage OPERATION and must never
+ *     appear on a metadata-only path, whenever it happened.
+ * `describe()` returns "METHOD url" lines so a failure names the offender instead of a bare integer.
  */
-export function countStorageRequests(page: Page): () => number {
-  let n = 0;
-  page.on('request', (r) => { if (/firebasestorage\.googleapis\.com/i.test(r.url())) n++; });
-  return () => n;
+export type StorageWatch = {
+  /** every firebasestorage request seen since the watch was attached */
+  total: () => number;
+  /** freeze the current total; `since()` counts from here */
+  mark: () => void;
+  /** requests seen since the last mark() (or since attach, if never marked) */
+  since: () => number;
+  /** "METHOD url" for each request since the last mark() — failure-message fodder */
+  describe: () => string[];
+  /** "METHOD url" for every request in the whole test that was NOT a plain media GET */
+  uploads: () => string[];
+};
+
+export function watchStorageRequests(page: Page): StorageWatch {
+  const seen: { method: string; url: string }[] = [];
+  page.on('request', (r) => {
+    if (/firebasestorage\.googleapis\.com/i.test(r.url())) seen.push({ method: r.method(), url: r.url() });
+  });
+  let marked = 0;
+  const line = (r: { method: string; url: string }) => `${r.method} ${r.url}`;
+  const isMediaGet = (r: { method: string; url: string }) =>
+    r.method === 'GET' && !/[?&](name|uploadType)=/.test(r.url);
+  return {
+    total: () => seen.length,
+    mark: () => { marked = seen.length; },
+    since: () => seen.length - marked,
+    describe: () => seen.slice(marked).map(line),
+    uploads: () => seen.filter((r) => !isMediaGet(r)).map(line),
+  };
 }
 
 // ---- CN-34/35: upload-studio metadata-only edit subject ---------------------------------------------
@@ -387,3 +430,7 @@ export async function deleteCreatedCategory(name: string): Promise<void> { await
 export async function deleteCreatedTier(name: string): Promise<void> { await deleteWhere('tier', 'tier', name); }
 /** CN-27: delete any `ads` doc a prior run's Create Ad dialog wrote under this call-to-action. */
 export async function deleteCreatedAd(calltoaction: string): Promise<void> { await deleteWhere('ads', 'calltoaction', calltoaction); }
+/** CN-14: delete any `adsplaylist` doc a prior run's Create New Playlist dialog wrote under this title. */
+export async function deleteCreatedAdsPlaylist(adstitle: string): Promise<void> { await deleteWhere('adsplaylist', 'adstitle', adstitle); }
+/** CN-12: delete any `learning-materials` doc a prior run's Upload Material dialog wrote under this name. */
+export async function deleteCreatedLearningMaterial(name: string): Promise<void> { await deleteWhere('learning-materials', 'name', name); }

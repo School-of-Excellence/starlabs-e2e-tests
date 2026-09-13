@@ -325,7 +325,9 @@ async function seedContent() {
     }, { merge: true });
   }
 
-  // 12) LEARNING MATERIALS (CN-12 — reference; the add/edit/delete flow is a TODO, see spec).
+  // 12) LEARNING MATERIALS (CN-12). This row is the REFERENCE material only — it proves the screen's
+  //     collectionSnapshots stream is live before the case touches anything. CN-12 creates, renames and
+  //     deletes its OWN row through the real Upload Material dialog (enabled 2026-09-13).
   await db.collection('learning-materials').doc(ID.LM1).set({
     docid: ID.LM1, name: `TEST_LM_${TESTRUNID}`, description: 'seed learning material',
     files: [], tier: [], date: now(), ...tag,

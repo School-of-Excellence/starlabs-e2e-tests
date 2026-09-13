@@ -74,7 +74,12 @@ test.describe('Content — /ads click-ads (real UI, anti-circular)', () => {
     await dialog.locator('input[formcontrolname="enddate"]').fill(us(later));
     await dialog.locator('input[formcontrolname="enddate"]').press('Tab');
 
-    const create = dialog.locator('button', { hasText: /^Create Ad$/ });
+    // The footer button is `<button class="btn-primary"><mat-icon>save</mat-icon> Create Ad </button>`
+    // (update-ads.component.html:221-223). hasText matches TEXT CONTENT, which the mat-icon ligature makes
+    // "save Create Ad" — so `/^Create Ad$/` matched nothing and the toBeEnabled below reported
+    // "element(s) not found" rather than a disabled button. MatIcon is aria-hidden, so the ACCESSIBLE NAME
+    // is the clean "Create Ad"; role+name also keeps the create/edit distinction ("Update Ad") intact.
+    const create = dialog.getByRole('button', { name: 'Create Ad', exact: true });
     await expect(create, 'CN-27: Create Ad enables once the reactive form is valid').toBeEnabled({ timeout: 20_000 });
     await create.click();
 
