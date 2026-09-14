@@ -38,3 +38,4 @@ starlabs-cicd-sa.json
 
 # Dashboard local Firebase web config (NEVER commit)
 dashboard/config.js
+playwright-report-*/
