@@ -6,25 +6,46 @@
 
 | Suite | Title | CI-ready | Capture | Mandatory when (app paths) | CF paths |
 |---|---|---|---|---|---|
-| **queue** | Queue lifecycle | ✅ | all | `src/app/queue system/**` | `functions/components/queuesystem.js`<br>`functions/components/queue_atc_generation.js`<br>`functions/components/big-assignment.js`<br>`functions/components/big-level-aggregate.js`<br>`functions/components/ATC.js`<br>`functions/components/atc_alerts.js`<br>`functions/components/atc_helpers.js` |
-| **journey** | Journey onboarding | ✅ | all | `src/app/Journey Onboarding/**`<br>`src/app/journey-onboarding-detail/**` | `functions/components/participantmetadata.js` |
-| **business** | Business dashboard | ✅ | failure-only | `src/app/Business Dashboard/**`<br>`src/app/main-dashboard/**` | `functions/components/interimreport.js`<br>`functions/components/salescrm-updates.js` |
-| **comms** | Communications | ✅ | failure-only | `src/app/Communication Center/**`<br>`src/app/Channel Communication/**`<br>`src/app/in-app-message-input/**` | `functions/components/communication.js` |
+| **queue** | Queue lifecycle | ✅ | all | `src/app/queue system/**`<br>`src/app/big/**`<br>`src/app/OpenVidu/**`<br>`src/app/LiveKit/**`<br>`src/app/Participants Profile Management/participants-analytics/wati-input/**`<br>`src/app/Participants Profile Management/participants-analytics/email-input/**`<br>`src/app/Participants Profile Management/participants-analytics/ah-notification/**`<br>`src/app/Participants Profile Management/participants-analytics/manage-participantlist-dialog/**`<br>`src/app/Participants Profile Management/participants-analytics/tag-participants/**`<br>`src/app/Participants Profile Management/participants-analytics/add-queue-tag/**`<br>`src/app/Participants Profile Management/participants-analytics/bulk-add-products/**`<br>`src/app/Participants Profile Management/participants-analytics/map-recommendedplaylist-toparticipant.component/**`<br>`src/app/AppEngagement/app-action-pending/**`<br>`src/app/Product Designer/delivery-set/form-option/**`<br>`src/app/Product Designer/delivery-set/form-template-preview/**`<br>`src/app/Product Designer/delivery-set/formtemplate/**`<br>`src/app/Channel Communication/channel-communication/**`<br>`src/app/Events/events-stage-data/**`<br>`src/app/EvolutionMapping/evolution-mapping/participant-evolution-mapping/**`<br>`src/app/video-player/**`<br>`src/app/instance-status.service.ts`<br>`src/app/web-studio-invitation/**` | `functions/components/queuesystem.js`<br>`functions/components/big-assignment.js`<br>`functions/components/big-level-aggregate.js`<br>`functions/components/queue-required-stage-aiatc-creation/**` |
+| **journey** | Journey onboarding | ✅ | all | `src/app/Journey Onboarding/**`<br>`src/app/journey-onboarding-detail/**`<br>`src/app/Participants Profile Management/journey-product-purchase/**`<br>`src/app/Participants Profile Management/participant-product/**`<br>`src/app/Participants Profile Management/participant-delivery-sequence/**`<br>`src/app/Product Designer/**`<br>`src/app/Participants Profile Management/new-profile/**`<br>`src/app/Participants Profile Management/participants-analytics/email-input/**` | `functions/components/participantmetadata.js` |
+| **business** | Business dashboard | ✅ | failure-only | `src/app/Business Dashboard/**`<br>`src/app/main-dashboard/**`<br>`src/app/quiz/**`<br>`src/app/hpc/**`<br>`src/app/Zone Management/**`<br>`src/app/New-Workshop/quiz/**` | `functions/components/interimreport.js`<br>`functions/components/salescrm-updates.js` |
+| **comms** | Communications | ✅ | failure-only | `src/app/Communication Center/**`<br>`src/app/Channel Communication/**`<br>`src/app/in-app-message-input/**`<br>`src/app/Customer Support/releaselogdialog/**` | `functions/components/communication.js` |
 | **content** | Content | ✅ | failure-only | `src/app/content/**`<br>`src/app/content-upload-version2/**`<br>`src/app/video-player/**` | `functions/components/content.js` |
 | **evomap** | Evolution mapping | ✅ | failure-only | `src/app/EvolutionMapping/**` | `functions/components/achievements.js` |
-| **modes** | Participant modes | ✅ | failure-only | `src/app/participant-touchpoint/**`<br>`src/app/Participants Profile Management/**` | `functions/components/participantmode.js` |
-| **authroles** | Auth & roles | ✅ | failure-only | `src/app/login/**`<br>`src/app/exceptionalrouting/**`<br>`src/app/route-configuration/**` | `functions/components/user_registration.js` |
-| **workshops** | Workshops | ✅ | failure-only | `src/app/Workshop/**`<br>`src/app/New-Workshop/**`<br>`src/app/Scheduling/**` | `functions/components/workshop.js` |
-| **appointments** | Appointments | ❌ local-only | failure-only | `src/app/appointment-dashboard/**` | `functions/components/appointment.js`<br>`functions/components/appointmentZoomIntegraion.js` |
-| **events** | Events | ❌ local-only | failure-only | `src/app/Events/**` | — |
-| **profiles** | Profiles | ❌ local-only | failure-only | `src/app/Participants Profile Management/**`<br>`src/app/ProfilePicture/**` | `functions/components/participantmetadata.js` |
+| **modes** | Participant modes | ✅ | failure-only | `src/app/participant-touchpoint/**`<br>`src/app/Participants Profile Management/**`<br>`src/app/quiz/**`<br>`src/app/New-Workshop/quiz/**`<br>`src/app/video-player/**`<br>`src/app/Customer Support/add-issue/**`<br>`src/app/AppEngagement/**` | `functions/components/participantmode.js` |
+| **authroles** | Auth & roles | ✅ | failure-only | `src/app/login/**`<br>`src/app/exceptionalrouting/**`<br>`src/app/route-configuration/**`<br>`src/app/route-configuration-duplicate/**`<br>`src/app/slackwebhookurls/**`<br>`src/app/updatesnackbar/**`<br>`src/app/icon-list.ts` | `functions/components/user_registration.js` |
+| **workshops** | Workshops | ✅ | failure-only | `src/app/Workshop/**`<br>`src/app/New-Workshop/**`<br>`src/app/tv-auth.component.ts`<br>`src/app/eiflix-telemetry/**`<br>`src/app/Participants Profile Management/participants-analytics/email-input/**`<br>`src/app/Participants Profile Management/participants-analytics/ah-notification/**`<br>`src/app/Product Designer/delivery-set/form-option/**`<br>`src/app/Product Designer/delivery-set/form-template-preview/**`<br>`src/app/Product Designer/delivery-set/update-delivery/**`<br>`src/app/content/episodes-dashboard/upload-episode-dialog/**` | `functions/components/workshop.js` |
+| **appointments** | Appointments | ✅ | all | `src/app/appointment-dashboard/**`<br>`src/app/Scheduling/**`<br>`src/app/Offtime/**` | `functions/components/appointment.js`<br>`functions/components/appointmentZoomIntegraion.js` |
+| **events** | Events | ✅ | all | `src/app/Events/**`<br>`src/app/Diagnostics Tool/**`<br>`src/app/Participants Profile Management/participants-analytics/wati-input/**`<br>`src/app/Participants Profile Management/participants-analytics/email-input/**`<br>`src/app/Participants Profile Management/participants-analytics/ah-notification/**`<br>`src/app/Participants Profile Management/participants-analytics/bulk-add-products/**`<br>`src/app/Participants Profile Management/participants-analytics/tag-participants/**`<br>`src/app/Channel Communication/channel-communication/**` | — |
+| **profiles** | Profiles | ✅ | all | `src/app/Participants Profile Management/**`<br>`src/app/ProfilePicture/**`<br>`!**/*.component.spec.ts`<br>`src/app/AppEngagement/app-action-pending/**`<br>`src/app/loading-progress/**`<br>`src/app/New-Workshop/workshop-dashboard/sendmessages/**`<br>`src/app/New-Workshop/whatsapp-progress-dialog.component.ts`<br>`src/app/participant-videoask/**`<br>`src/app/video-player/**`<br>`src/app/Customer Support/add-issue/**` | `functions/components/participantmetadata.js` |
+| **support** | Customer Support | ❌ local-only | failure-only | `src/app/Customer Support/**` | `functions/components/ticketsystem.js`<br>`functions/components/clientissue.js` |
 
 ## Cross-cutting paths (any match ⇒ ALL CI-ready suites run)
 
+- app: `src/app/loading-progress/**`
+- app: `src/app/ProfilePicture/**`
+- app: `src/app/authguard.service.ts`
+- app: `src/app/custompipe.pipe.ts`
+- app: `src/app/wati.service.ts`
+- app: `src/app/DialogBox/**`
+- app: `src/app/form-element/**`
+- app: `src/app/Service/**`
+- app: `src/environments/**`
 - app: `src/app/**/*.guard.ts`
+- app: `src/app/*.guard.ts`
 - app: `src/app/shared/**`
 - app: `src/app/app.routes.ts`
 - app: `src/app/app.config.ts`
+- app: `src/app/app.component.*`
+- app: `src/app/authguard.service.ts`
+- app: `src/app/instance-status.service.ts`
+- app: `src/app/nav-drawer.service.ts`
+- app: `src/app/network-status.service.ts`
+- app: `src/app/app.config.server.ts`
+- app: `src/app/app.routes.server.ts`
+- app: `src/main.ts`
+- app: `src/index.html`
+- app: `src/firebase-messaging-sw.js`
 - app: `angular.json`
 - app: `package.json`
 - cf: `functions/index.js`
@@ -49,3 +70,4 @@ Specs the CF predeploy hook runs LOCALLY (emulator) before every firebase deploy
 - **business** — globs draft — review
 - **evomap** — cfPaths guess — review
 - **modes** — appPaths guess — review
+- **support** — WIRED 2026-09-08. The specs existed since the initial commit but no manifest entry claimed them, so /customersupportdashboard read as covered while no gate ever ran them. ciReady:false is deliberate and honest — there is no playwright.support.emulator.config.ts yet, so this cannot join the emulator gate until one is written (mirror lib/emulator-playwright-config makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown).

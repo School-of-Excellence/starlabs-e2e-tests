@@ -1,0 +1,96 @@
+// interim-report-tabs.spec.ts — ADDRESSABLE+SMOKE for /interimreportlog, the tabs the existing
+// interim-report.spec.ts does NOT cover. Prefixes: irl (interim-report-log parent), ird (the embedded
+// interim-report-dashboard tab).
+//
+// Part of the interactive-control coverage program (specs/plans/2026-09-14-interactive-control-coverage-
+// plan.md, Wave 0). The /interimreportlog screen is a 4-tab mat-tab-group:
+//   • Tab 0 "Ask A&H"                 — covered by interim-report.spec.ts (PM-13, PM-14).
+//   • Tab 1 "Love Letter"             — HERE: the shared metrics + filters render (this file, IRT-LL).
+//   • Tab 2 "Interim Report Log"      — covered by interim-report.spec.ts (PM-15).
+//   • Tab 3 "Interim Report Dashboard" — HERE: the lazily-mounted <app-interim-report-dashboard> (IRT-DASH).
+// This file ADDS to interim-report.spec.ts; it never re-asserts PM-13/14/15.
+//
+// Depth = ADDRESSABLE + SMOKE (plan §"Coverage depth"): activate each tab and assert the app-rendered
+// interactive controls are present. The Love Letter tab and Ask A&H tab share the same #metricsshown /
+// #filters ng-templates; Angular Material attaches only the ACTIVE tab body, so the irl-* hooks resolve to
+// exactly one instance once Love Letter is active (no strict-mode collision with the Ask A&H copy).
+import { test, expect } from '@playwright/test';
+import { installModeStubs, loginAsModeAdmin } from './support/modes';
+import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+
+// irl-* controls the shared metrics + filters templates render on the Love Letter tab (activeTab < 2 ⇒
+// the date-range/participant filters + Apply/Clear show; the 5 metric boxes always show).
+const LOVE_LETTER_CONTROLS = [
+  'irl-metric-total', 'irl-metric-happy', 'irl-metric-attention', 'irl-metric-opportunity', 'irl-metric-critical',
+  'irl-filters-participant', 'irl-filters-apply', 'irl-filters-clear',
+];
+
+// ird-* controls the embedded interim-report-dashboard renders as its always-present filter bar.
+const DASHBOARD_CONTROLS = [
+  'ird-filter-journey', 'ird-filter-event', 'ird-filter-participant', 'ird-filter-clear',
+];
+
+test.describe('Modes — Interim Report Log: Love Letter + Dashboard tabs (controls addressable)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installModeStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'interim-report tabs: no fatal console errors / pageerrors'));
+
+  // ===========================================================================================
+  // IRT-LL — the Love Letter tab (index 1) renders the shared metric boxes + filter controls.
+  // ===========================================================================================
+  test('IRT-LL Love Letter tab renders the metric + filter controls', async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginAsModeAdmin(page);
+    await page.goto('/interimreportlog', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/interimreportlog/, { timeout: 30_000 });
+
+    // [REAL-UI] activate the Love Letter tab; only then is its ng-template-outlet content attached.
+    await page.getByRole('tab', { name: /Love Letter/i }).click();
+
+    for (const id of LOVE_LETTER_CONTROLS) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(page.getByTestId(id), `IRT-LL: ${id} must be visible on the Love Letter tab`)
+        .toBeVisible({ timeout: 30_000 });
+    }
+  });
+
+  // BEHAVIORAL (important, non-destructive): clicking a metric box toggles its active-filter state
+  // (filterLetterDataWithBoxClick) — a client-side filter, no write. Assert the box reflects the toggle.
+  test('IRT-LL clicking the Happy metric box toggles its active state', async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginAsModeAdmin(page);
+    await page.goto('/interimreportlog', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/interimreportlog/, { timeout: 30_000 });
+    await page.getByRole('tab', { name: /Love Letter/i }).click();
+
+    const happy = page.getByTestId('irl-metric-happy');
+    await expect(happy, 'IRT-LL: the Happy metric box must render').toBeVisible({ timeout: 30_000 });
+    await happy.click(); // filterLetterDataWithBoxClick('happy') → toggles selectedFilterTypes ⇒ .active
+    await expect(happy, 'IRT-LL: the Happy box reflects the active-filter toggle the app applied')
+      .toHaveClass(/active/, { timeout: 10_000 });
+  });
+
+  // ===========================================================================================
+  // IRT-DASH — the Interim Report Dashboard tab (index 3, lazy matTabContent) mounts
+  // <app-interim-report-dashboard>, whose ird-* filter bar must render.
+  // ===========================================================================================
+  test('IRT-DASH Interim Report Dashboard tab mounts the dashboard filter controls', async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginAsModeAdmin(page);
+    await page.goto('/interimreportlog', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/interimreportlog/, { timeout: 30_000 });
+
+    // [REAL-UI] activate the Interim Report Dashboard tab → matTabContent lazily attaches the child
+    // component. Its always-present filter bar (journey / event / participant / clear) must render.
+    await page.getByRole('tab', { name: /Interim Report Dashboard/i }).click();
+
+    for (const id of DASHBOARD_CONTROLS) {
+      // eslint-disable-next-line no-await-in-loop
+      await expect(page.getByTestId(id), `IRT-DASH: ${id} must be visible after activating the dashboard tab`)
+        .toBeVisible({ timeout: 30_000 });
+    }
+  });
+});

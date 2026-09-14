@@ -508,15 +508,17 @@ async function seedQueueAndVariations(db, admin, testrunid, operators, opts = {}
     // or [] throws "non-empty array required for in filters" and aborts the queue_token stream subscription
     // that computes completedToken/stageTokenMap (OP-12). The operator board does NOT read it (0 refs).
     arenaeventidlist: [arenaEventId],
-    // eventid MUST be a NON-EMPTY string: BigPlannerComponent's queue subscribe reads
-    // selectedEvent = selectedQueue['eventid'] then calls doc(firestore,'event collection', selectedEvent)
-    // UNCONDITIONALLY (big-planner.component.ts:226-228). With eventid absent, selectedEvent is undefined and
-    // ResourcePath.fromString throws "Cannot read properties of undefined (reading 'indexOf')" — the exact
-    // pageerror that fails OP-12's console guard and leaves completedToken/stageTokenMap at 0. Production
-    // queues always carry an eventid; we point it at the run's seeded `arena events` doc id (a real,
-    // non-empty string) so the planner's queue_token stream computes. (The downstream `big cohorts`
-    // collectionData at :229 just returns empty and is handled — no further read of this id is asserted.)
-    eventid: arenaEventId,
+    // eventid is a NON-EMPTY ARRAY of event ids — the app changed its shape.
+    //   The creation form's select is `multiple` (queue-creation-v3 html:255) and the component migrates
+    //   any legacy string on load: `Array.isArray(data.eventid) ? data.eventid : [data.eventid]` (ts:236).
+    //   BigPlanner now does `selectedEventsList = selectedQueue['eventid']` (ts:230) and iterates it. The
+    //   old `doc('event collection', selectedEvent)` read this comment used to cite is commented out.
+    // Seeding a STRING here produced two console errors on every operator-board render —
+    //   NG0900 "Error trying to diff 'run1_arenaevt_0'. Only arrays and iterables are allowed", and
+    //   "Value must be an array in multiple-selection mode" from the mat-select —
+    // which is what tripped the "no fatal console errors" guard. Still non-empty and still pointed at
+    // the run's seeded `arena events` doc so the planner's downstream streams compute.
+    eventid: [arenaEventId],
     zoomlinkrequired: true,
     iscommunicationsdisabled: true, // externals stubbed — no real comms in test
     queuestartdate: past, queueenddate: future, lastregistrationdate: future,
@@ -902,9 +904,9 @@ async function seedSecondQueue(db, admin, testrunid) {
     // run's shared arena-events doc, seeded in seedQueueAndVariations). OP-02b only checks dropdown
     // visibility, but keeping the shape valid avoids a latent FAILED_PRECONDITION if a spec selects it.
     arenaeventidlist: [arenaEventDocId(testrunid)],
-    // eventid (non-empty) so a planner load on queue 2 would not crash at big-planner.component.ts:228
-    // (doc('event collection', undefined) → 'indexOf' throw). Same shared arena-events id as queue 1.
-    eventid: arenaEventDocId(testrunid),
+    // eventid is an ARRAY now (see queue 1 above — creation form is `multiple`, BigPlanner iterates it).
+    // Non-empty so a planner load on queue 2 has something to iterate. Same shared arena-events id as queue 1.
+    eventid: [arenaEventDocId(testrunid)],
     zoomlinkrequired: true,
     iscommunicationsdisabled: true,
     queuestartdate: past, queueenddate: future, lastregistrationdate: future,

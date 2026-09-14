@@ -292,6 +292,19 @@ async function waitForCardOnStage(page: Page, board: QueueBoardPage, cardId: str
       try { await board.readColumnCount(stage); return true; } catch { return false; }
     }, { timeout: 20_000, message: `board never rendered a column for stage "${stage}".` })
     .toBe(true);
+
+  // AND the stage must actually CONTAIN the token before the caller reads its "before" count. The two
+  // polls above only prove the card exists SOMEWHERE and the column exists — not that the token has been
+  // bucketed INTO this stage. Under emulator lag the freshly-moved token can still render under its
+  // previous stage while this column reads a stale 0, so driveOperatorHop captured beforeSrc=0 and then
+  // demanded a drop to -1 (unreachable). A per-hop probe confirmed the race: identical token state read
+  // 0 on lagging runs, 1 once the stream caught up. Gate on the whole-stage total being non-empty.
+  await expect
+    .poll(async () => board.readStageNameTotal(stage), {
+      timeout: 30_000,
+      message: `board never bucketed a token into stage "${stage}" (stream lag? the token's card exists but the ${stage} column still reads 0).`,
+    })
+    .toBeGreaterThanOrEqual(1);
 }
 
 /**
@@ -309,8 +322,8 @@ async function driveOperatorHop(
   await waitForCardOnStage(page, board, cardId, hop.from);
 
   // BEFORE: the board's per-column counts for src & dst (APP-computed from the live stream).
-  const beforeSrc = await board.readColumnCount(hop.from);
-  const beforeDst = await board.readColumnCount(hop.to);
+  const beforeSrc = await board.readStageNameTotal(hop.from); // whole-stage: token may be in Waiting/Activity sub-column
+  const beforeDst = await board.readStageNameTotal(hop.to);
   const beforeAll = await board.readAllColumnCounts();
 
   // REAL operator move: open this token's dropdown, click the scoped target, confirm PeopleInvolved.
@@ -320,9 +333,9 @@ async function driveOperatorHop(
   // AFTER: poll until the board re-rendered src−1 (collectionData is async). assertCountConserved then
   // enforces dst+1, Σ conserved, and that ONLY src/dst moved (against the SAME-shaped board snapshot).
   await expect
-    .poll(async () => (await board.readColumnCount(hop.from)), {
+    .poll(async () => (await board.readStageNameTotal(hop.from)), {
       timeout: 20_000,
-      message: `count-drift: board source column "${hop.from}" did not drop after the ${hop.from}→${hop.to} move.`,
+      message: `count-drift: board source stage "${hop.from}" (all sub-columns) did not drop after the ${hop.from}→${hop.to} move.`,
     })
     .toBe(beforeSrc - 1);
 
@@ -335,7 +348,8 @@ async function driveOperatorHop(
 
   // Belt-and-suspenders: the destination column gained exactly one (already covered by
   // assertCountConserved, asserted explicitly for a clearer failure if it ever regresses).
-  expect(afterAll[dstKey] ?? 0, `count-drift: destination "${hop.to}" expected ${beforeDst + 1}.`).toBe(beforeDst + 1);
+  const afterDstTotal = await board.readStageNameTotal(hop.to);
+  expect(afterDstTotal, `count-drift: destination stage "${hop.to}" (all sub-columns) expected ${beforeDst + 1}.`).toBe(beforeDst + 1);
 }
 
 /**

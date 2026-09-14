@@ -277,7 +277,8 @@
         "src/app/quiz/**",
         "src/app/New-Workshop/quiz/**",
         "src/app/video-player/**",
-        "src/app/Customer Support/add-issue/**"
+        "src/app/Customer Support/add-issue/**",
+        "src/app/AppEngagement/**"
       ],
       "cfPaths": [
         "functions/components/participantmode.js"
@@ -295,6 +296,9 @@
         "src/app/login/**",
         "src/app/exceptionalrouting/**",
         "src/app/route-configuration/**",
+        "src/app/route-configuration-duplicate/**",
+        "src/app/slackwebhookurls/**",
+        "src/app/updatesnackbar/**",
         "src/app/icon-list.ts"
       ],
       "cfPaths": [

@@ -646,6 +646,34 @@ export class QueueBoardPage {
   }
 
   /**
+   * Total token count for a stage NAME across ALL its sub-columns (Queued + Waiting + Activity), polled
+   * until the board has rendered a numeric count for at least one of them.
+   *
+   * WHY this exists (count-drift fix): a compulsory-activity stage splits into three columns
+   * (<name>_queued_i / _waiting_i / _activity_i). `readColumnCount(name)` resolves a bare name to just
+   * ONE of them (the Queued sub-column). A walk token sitting in the Waiting or Activity sub-column is
+   * therefore invisible to it — `readColumnCount('Scope Enhancement')` returns 0 while the token is in
+   * Scope Enhancement (Waiting). driveOperatorHop then read beforeSrc=0 and asserted the drop to
+   * `beforeSrc - 1 = -1`, which a count can never reach → the "did not drop" timeout on every walk whose
+   * source stage was split and whose token was not in the Queued bucket. Count-conservation is a
+   * WHOLE-STAGE property (a token leaving the stage leaves it regardless of sub-bucket), so the drop
+   * must be measured against the stage-name total, not one sub-column.
+   */
+  async readStageNameTotal(stageName: string): Promise<number> {
+    let total = 0;
+    await expect
+      .poll(async () => {
+        const all = await this.readAllColumnCountsOnce();
+        const keys = await this.stageKeysForName(stageName);
+        if (keys.length === 0 || Object.keys(all).length === 0) return -1; // not rendered yet
+        total = keys.reduce((sum, k) => sum + Number(all[k] || 0), 0);
+        return total;
+      }, { ...POLL, message: `readStageNameTotal: no columns rendered for stage name "${stageName}".` })
+      .toBeGreaterThanOrEqual(0);
+    return total;
+  }
+
+  /**
    * Public wrapper over the internal StageRef→`data-stage-key` resolver (the simple/Queued column for a
    * bare name). Exposed so specs can key board-count snapshots by the exact column the board built,
    * rather than reconstructing keys by hand.

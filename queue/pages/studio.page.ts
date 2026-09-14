@@ -108,11 +108,16 @@ export class StudioPage {
     //     mounts. Accepting the live-panel name here keeps `load()` from timing out on that V2 path
     //     (the walk specs seed the live assignment BEFORE load, so they auto-enter). On v1/lobby the
     //     arena title still matches, so coverage stays live on BOTH branches.
+    //   • studio card — dynamic-studio-v2's THIRD surface (`liveAssignment==null && selectedStudio.docid`,
+    //     html:60-62, anchored by `studio-back-link`). Auto-enter calls onStudioSelect() before the live
+    //     assignment stream has hydrated, so the page can settle here — lobby unmounted, no participant
+    //     name yet. Without this state load() timed out on that path (studio-core SS-01..SS-03).
     // `.first()` because a no-studio member renders BOTH the arena title AND the no-studio banner
     // (noStudioInAnyQueue is true while ongoingQueue still resolves to ongoingQueueList[0],
     // dynamic-studio.ts:205/349) — without it the `.or()` is a strict-mode violation (SS-16).
     await expect(
-      this.arenaTitle.or(this.noStudioAlert).or(this.liveParticipantName).first(),
+      this.arenaTitle.or(this.noStudioAlert).or(this.liveParticipantName)
+        .or(this.page.getByTestId('studio-back-link')).first(),
     ).toBeVisible({ timeout: 30_000 });
   }
 
@@ -164,20 +169,71 @@ export class StudioPage {
   }
 
   /**
-   * Click a "My Studio" select button → `onStudioSelect(studio)`. Selecting recomputes the
-   * waiting-list (`stageTokenList`) and check-in state. After the click we wait for the button to
-   * carry the selected style (`.primarystudio`) so the spec doesn't race the re-render.
+   * Select a studio → `onStudioSelect(studio)` (recomputes the waiting-list + check-in state).
+   *
+   * Works on BOTH studio surfaces the app ships:
+   *   • v1 (dynamic-studio): the picker is always rendered; the click marks the button `.primarystudio`.
+   *   • v2 (dynamic-studio-v2): three mutually-exclusive surfaces —
+   *       lobby       `studio-select-btn` cards (html:35)      liveAssignment==null && !selectedStudio.docid
+   *       studio card `studio-back-link` (html:61)             liveAssignment==null &&  selectedStudio.docid
+   *       live panel  liveParticipantName                        liveAssignment!=null
+   *     and it AUTO-ENTERS (ts ~1916) a studio the member already has a live session in, landing on the
+   *     card or live panel with the lobby unmounted. There is then no button to click and no
+   *     `.primarystudio` to wait for — the studio IS selected.
+   *
+   * The old body waited for the button unconditionally, then for `.primarystudio` — so on v2 it sat at
+   * both steps until the 120s test timeout. That was the bulk of studio-session / studio-core.
+   *
    * @param i 0-based index, or `{studioId}` to target a specific pairing via its `data-studioid`.
    */
   async selectStudio(i: StudioSelector): Promise<void> {
     const btn = this.studioButtonAt(i);
+    const wantedId = typeof i === 'object' && 'studioId' in i ? i.studioId : null;
+    const backLink = this.page.getByTestId('studio-back-link');
+    const vis = (l: Locator) => l.isVisible().catch(() => false);
+
+    // 1. Wait until the studio has settled on SOME surface (lobby / card / live).
+    await expect
+      .poll(async () => (await vis(btn)) || (await vis(backLink)) || (await vis(this.liveParticipantName)), {
+        timeout: 30_000,
+        message: 'selectStudio: neither the studio picker, an open studio card, nor the live panel appeared',
+      })
+      .toBe(true);
+
+    // 2. Already inside a card / live panel (v2 auto-enter). If the caller named a studio and the app
+    //    shows the studio-nav chips (only when studioList.length > 1, html:430), make sure it is THAT
+    //    studio; otherwise go back to the lobby and pick it. backToStudios() pops a window.confirm when
+    //    the member is checked in — Playwright auto-DISMISSES dialogs (confirm → false → the app stays
+    //    put), so accept it explicitly for this one click.
+    if (!(await vis(btn))) {
+      if (wantedId) {
+        const chips = this.page.locator('[data-testid="studio-qnav-studio"]');
+        const wantedChip = this.page.locator(`[data-testid="studio-qnav-studio"][data-studioid="${cssAttr(wantedId)}"]`);
+        const chipsShown = (await chips.count()) > 0;
+        const isWanted = !chipsShown || ((await wantedChip.first().getAttribute('class').catch(() => '')) ?? '').includes('is-active');
+        if (!isWanted) {
+          this.page.once('dialog', d => { d.accept().catch(() => {}); });
+          await backLink.click();
+          await expect(btn, `selectStudio: studio ${wantedId} not offered in the lobby after leaving the open studio`).toBeVisible({ timeout: 20_000 });
+          await btn.click();
+        }
+      }
+      // else: a positional select on an already-open studio — nothing to do, it is the selected one.
+      return;
+    }
+
+    // 3. Lobby is showing: real select.
     // No explicit one-shot scrollIntoViewIfNeeded(): on cloud the chunked `queue studio pairing`
     // collectionData stream rebuilds the studioList and can detach the button mid-select ("Element is
     // not attached to the DOM"). locator.click() auto-scrolls, auto-waits for actionability, and
     // re-resolves the locator on detach — so the explicit scroll was the sole fragile step.
     await btn.click();
-    // onStudioSelect flips the class to 'primarystudio' for the selected studio (html:47).
-    await expect(btn).toHaveClass(/primarystudio/, { timeout: 20_000 });
+    // v1: the button takes `.primarystudio` (html:47). v2: the lobby unmounts and the card / live
+    // surface mounts instead. Accept whichever the running app does.
+    await expect(
+      this.page.locator('[data-testid="studio-select-btn"].primarystudio').or(backLink).or(this.liveParticipantName).first(),
+      'selectStudio: click landed but neither .primarystudio (v1) nor the studio card / live panel (v2) appeared',
+    ).toBeVisible({ timeout: 20_000 });
   }
 
   /** Number of studio buttons currently showing the `live_tv` icon — equals the count of studios with

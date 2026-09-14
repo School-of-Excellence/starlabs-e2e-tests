@@ -964,6 +964,17 @@ test.describe(`V3 · ${VARIATION_NAME} — walk EVERY forward journey (${JOURNEY
         try { await board.readColumnCount(stage); return true; } catch { return false; }
       }, { timeout: 20_000, message: `BIGNC-J${jno}: board never rendered a column for stage "${stage}".` })
       .toBe(true);
+
+    // AND the stage must actually CONTAIN the token before beforeSrc is read — the two polls above only
+    // prove the card exists somewhere and the column exists. Under emulator lag a freshly-moved token can
+    // still render under its previous stage while this column reads a stale 0, making beforeSrc=0 and the
+    // drop target -1 unreachable. Gate on the whole-stage total being non-empty (see readStageNameTotal).
+    await expect
+      .poll(async () => board.readStageNameTotal(stage), {
+        timeout: 30_000,
+        message: `BIGNC-J${jno}: board never bucketed a token into stage "${stage}" (stream lag; card exists but column reads 0).`,
+      })
+      .toBeGreaterThanOrEqual(1);
   }
 
   /**
@@ -973,8 +984,8 @@ test.describe(`V3 · ${VARIATION_NAME} — walk EVERY forward journey (${JOURNEY
   async function driveOperatorHopJ(board: QueueBoardPage, cardId: string, hop: JourneyHop, jno: number): Promise<void> {
     await waitForCardOnStageJ(board, cardId, hop.from, jno);
     const before = await board.readAllColumnCounts();
-    const beforeSrc = await board.readColumnCount(hop.from);
-    const beforeDst = await board.readColumnCount(hop.to);
+    const beforeSrc = await board.readStageNameTotal(hop.from); // whole-stage: token may be in Waiting/Activity sub-column
+    const beforeDst = await board.readStageNameTotal(hop.to);
 
     // REAL operator move: open this token's dropdown, click the scoped target, drive PeopleInvolved confirm.
     // Forward targets on the BIGNC spine are NON-Activity destinations (the page object routes a split stage
@@ -983,16 +994,17 @@ test.describe(`V3 · ${VARIATION_NAME} — walk EVERY forward journey (${JOURNEY
 
     // AFTER: poll until the board re-rendered src−1 (collectionData is async), then diff the full snapshot.
     await expect
-      .poll(async () => board.readColumnCount(hop.from), {
+      .poll(async () => board.readStageNameTotal(hop.from), {
         timeout: 20_000,
-        message: `BIGNC-J${jno} count-drift: board source column "${hop.from}" did not drop after the ${hop.from}→${hop.to} move.`,
+        message: `BIGNC-J${jno} count-drift: board source stage "${hop.from}" (all sub-columns) did not drop after the ${hop.from}→${hop.to} move.`,
       })
       .toBe(beforeSrc - 1);
     const after = await board.readAllColumnCounts();
     const srcKey = await resolveStageKeyForCountJ(board, hop.from, before, after, -1);
     const dstKey = await resolveStageKeyForCountJ(board, hop.to, before, after, +1);
     assertCountConserved(before, after, { src: srcKey, dst: dstKey });
-    expect(after[dstKey] ?? 0, `BIGNC-J${jno} count-drift: destination "${hop.to}" expected ${beforeDst + 1}.`).toBe(beforeDst + 1);
+    const afterDstTotal = await board.readStageNameTotal(hop.to);
+    expect(afterDstTotal, `BIGNC-J${jno} count-drift: destination stage "${hop.to}" (all sub-columns) expected ${beforeDst + 1}.`).toBe(beforeDst + 1);
   }
 
   /** Resolve a stage NAME to the `data-stage-key` whose count changed by `expectDelta` (handles split columns). */

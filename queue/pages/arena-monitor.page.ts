@@ -76,9 +76,20 @@ export class ArenaMonitorPage {
 
   // ----- locators (testid-first; see RISKS for fallbacks if a hook is missing) -----
 
-  /** Page title — confirms the monitor mounted. No testid in recon; the `h4.title` text is unique. */
+  /**
+   * Page title — confirms the monitor mounted. No testid on the heading, so this matches on tag+text.
+   *
+   * THE HEADING IS AN <h1>, NOT AN <h4>. The monitor now renders
+   *     <h1 class="title">Arena <span class="accent">Live Studios</span></h1>
+   * (arenastudioactivity.component.html:5). The old `h4.title` matched nothing, so EVERY case that
+   * mounts through this page object failed at load() — the bulk of the studio-session / studio-core
+   * failures came from this one locator.
+   *
+   * Text is matched loosely on purpose: it is split across a <span> ("Arena " + "Live Studios") and has
+   * since been pluralised, so anchoring the exact string would break again on the next copy edit.
+   */
   private title(): Locator {
-    return this.page.locator('h4.title', { hasText: 'Arena Live Studio' });
+    return this.page.locator('h1.title', { hasText: /Arena\s+Live\s+Studios?/i });
   }
 
   /** Queue picker `mat-select` (testids.md: `arena-queue-select`). */
