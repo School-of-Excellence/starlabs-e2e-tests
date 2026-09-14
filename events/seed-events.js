@@ -246,6 +246,33 @@ async function seedEvents() {
   await eprRef(ID.EPR0).set(mkEpr(ID.EPR0, 'p0'));
   await eprRef(ID.EPR1).set(mkEpr(ID.EPR1, 'p1'));
 
+  // 6b) E-TICKET ELIGIBILITY — precondition for EVT-05.
+  //
+  //     /arena_e_ticket_approve gained an eligibility gate: the row's Approve button is
+  //     `[disabled]="!isProfileEligible(row['profileid'])"` (component.html:208), and canApprove()
+  //     (component.ts:309-318) returns FALSE whenever the row has no `e-ticket eligibility` mirror doc
+  //     at all. With none seeded, Approve rendered permanently disabled and EVT-05 waited out its full
+  //     120s timeout on a button that could never enable.
+  //
+  //     The mirror is read as `where('eventid','==',selectedEvent)` and keyed by `eventparticipationid`
+  //     (ts:272-279), where selectedEvent is the `event collection` DOC ID — so both fields below are
+  //     load-bearing. We satisfy the PRIMARY path (venue fee paid + Zoho complete) rather than the
+  //     `exempted:true` shortcut, so the case exercises what a real approved participant looks like.
+  //
+  //     EPR0 is deliberately left WITHOUT an eligibility doc: it is the negative control that keeps the
+  //     screen's eligible/not-eligible summary honest — without it, a passing test could not tell "the
+  //     gate admits the eligible participant" from "the gate admits everyone".
+  await db.collection('e-ticket eligibility').doc(`${TESTRUNID}_elig_1`).set({
+    docid: `${TESTRUNID}_elig_1`,
+    eventid: ID.EVENT1,
+    eventparticipationid: ID.EPR1,
+    profileid: PF.p1,
+    venue_fee_paid: true,
+    zohostatus: 'completed',
+    exempted: false,
+    ...tag,
+  });
+
   // 7) DELIVERABLE linked to EPR0 via fileref (markAsAttended queries deliverables where fileref
   //    array-contains-any [EPRref] and flips status→"completed"). Starts "ongoing" — a PRECONDITION;
   //    the spec asserts the "completed" the APP writes, never this seeded value.
@@ -510,6 +537,8 @@ async function seedEvents() {
 const SEEDED = [
   'products', 'event collection', 'arena events', 'event participation request',
   'deliverables', 'arena e-ticket log', 'arenalayers',
+  // EVT-05 precondition: the eligibility mirror the Approve button is gated on.
+  'e-ticket eligibility',
   // deep-suite precondition collections
   'productToDeliverySequence', 'delivery events', 'event location',
   'participantsproduct', 'A&H_Space_Name', 'A&H_Space_Type',

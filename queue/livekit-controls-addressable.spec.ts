@@ -17,7 +17,7 @@ test.describe('LiveKit — interactive controls addressable + mount smoke', () =
 
   test('join-livekit-call (/joinlivekit/:roomid) — controls addressable', async ({ page }) => {
     await page.goto('/joinlivekit/coverage-probe-room', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('lkj-togglerecording')).toBeTruthy();
     expect(page.getByTestId('lkj-togglerecording')).toBeTruthy();
     expect(page.getByTestId('lkj-togglerecording-2')).toBeTruthy();

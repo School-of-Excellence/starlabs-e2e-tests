@@ -16,7 +16,7 @@ test.describe('Business Dashboard — interactive controls addressable + mount s
 
   test('profile-based-access (/profile-role-access) — controls addressable', async ({ page }) => {
     await page.goto('/profile-role-access', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('pba-ex-path-or-dashboard')).toBeTruthy();
     expect(page.getByTestId('pba-ex-path-or-dashboard')).toBeTruthy();
     expect(page.getByTestId('pba-select-profiles')).toBeTruthy();
@@ -44,7 +44,7 @@ test.describe('Business Dashboard — interactive controls addressable + mount s
 
   test('expense-planner (/expense-planner/expense) — controls addressable', async ({ page }) => {
     await page.goto('/expense-planner/expense', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('exp-setactivetab')).toBeTruthy();
     expect(page.getByTestId('exp-setactivetab')).toBeTruthy();
     expect(page.getByTestId('exp-setactivetab-2')).toBeTruthy();
@@ -76,7 +76,7 @@ test.describe('Business Dashboard — interactive controls addressable + mount s
 
   test('entry-management / AdsEntry (/ads-entry) — controls addressable', async ({ page }) => {
     await page.goto('/ads-entry', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ame-openaddform')).toBeTruthy();
     expect(page.getByTestId('ame-openaddform')).toBeTruthy();
     expect(page.getByTestId('ame-setfiltertype')).toBeTruthy();

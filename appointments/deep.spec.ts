@@ -422,7 +422,37 @@ test.describe('Appointments — deep: booking flow (keystone, app-written)', () 
   // ===========================================================================================
   // APPT-03 — the slot is hidden after booking (no double-booking)
   // ===========================================================================================
-  // APPT-03 FIXME: booking-keystone-dependent (re-open after APPT-02 books) — slot-flip re-query is pollution/timing-sensitive on the shared project; follow-up #1 isolates it on a dedicated participant. APPT-02 (the booking write) + APPT-18 (2-role merge) stay green.
+  // APPT-03 PARKED — REASON (root-caused 2026-09-13; the previous "pollution/timing-sensitive on the
+  // shared project" note was wrong and is superseded).
+  //
+  // As written this case can NEVER pass, on any project, hermetic or not — and it is NOT cross-test
+  // pollution (it resets its own preconditions with resetBookingSubject() and nothing runs between
+  // APPT-02 and it: workers:1 / fullyParallel:false, same describe, declaration order).
+  //
+  // The blocker is the APP consuming the delivery item it just booked:
+  //   * book-appointment.component.ts:630-662 createJourneyRecord() sets the booked delivery item's
+  //     status to "ongoing" on participantdeliverysequence/{p1} (proved green by APPT-02's write-3
+  //     assertion above: delivery[0].status === 'ongoing').
+  //   * book-appointment.component.ts:176-181 builds the bookable radio list from
+  //     `delivery.filter(e => e.type == "appointment" && (e.status == "ready" || e.status == null))`
+  //     — for the super-role branch too.
+  // So on the RE-OPEN, p1's only AT1 item is "ongoing" and is filtered out: the "Test Diagnostic"
+  // mat-radio-button never renders and this case dies at its `expect(at1Radio.first()).toBeVisible()`
+  // (line ~470) long before it can count slot chips. Correct app behaviour — a consumed delivery item is
+  // not offered again — so the case's own premise ("re-open the booking screen for the same date") is not
+  // reachable with the CURRENT precondition.
+  //
+  // ENABLEMENT RECIPE (needs one run to verify, hence still parked): give p1 a SECOND "ready" AT1
+  // delivery item as a precondition before bookForP1(), exactly the way APPT-18 below appends its AT2R
+  // item (that step is green, so the mechanism is proven). Booking consumes delivery[0]; the spare keeps
+  // the radio on screen, and availability/{AVBOOK} — the thing under test — is per appointmenttype, so
+  // the re-opened screen must then show ZERO chips for +2d. Remove the spare in a finally so APPT-18 and
+  // re-runs start from the same state.
+  //
+  // The assertion itself is sound and must NOT be weakened: mat-chip-option is used ONLY for the slot
+  // list (book-appointment.component.html:45-49), and the app's empty-slot path leaves userAvailableSlots
+  // untouched after alert("EIS Slots not available for the selected date. Try again!")
+  // (book-appointment.component.ts:379) — on a fresh navigation that is a genuine count of 0.
   test.fixme('APPT-03 after booking, re-opening the booking screen shows ZERO slots for the same date', async ({ page }) => {
     await resetBookingSubject();
     await bookForP1(page); // consumes the only +2d eis1 AT1 slot (flips booked:true)

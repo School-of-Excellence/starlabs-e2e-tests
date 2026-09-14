@@ -16,7 +16,7 @@ test.describe('route-configuration-duplicate — interactive controls addressabl
 
   test('route-configuration-duplicate (/routeconfiguration — the LIVE route, nav-linked app.component.html:101) — controls addressable', async ({ page }) => {
     await page.goto('/routeconfiguration', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('rcx-ex-dashboard')).toBeTruthy();
     expect(page.getByTestId('rcx-ex-dashboard')).toBeTruthy();
     expect(page.getByTestId('rcx-createroute')).toBeTruthy();

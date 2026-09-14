@@ -14,15 +14,26 @@ import { installEvtStubs, loginAsEvtAdmin } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
+const RUN = process.env.EVT_RUNID || 'evt';
+const EVENT1_NAME = `TEST Event ${RUN}`;
+
 let guard: ConsoleGuard;
 let seededEventName: string | null = null;
 
 test.beforeAll(async () => {
-  // Find a seeded event to assert against. Taken from Firestore rather than hardcoded so this does not
-  // couple to the events seeder's internal id/name convention.
+  // Assert against THIS suite's OWN seeded event.
+  //
+  // The previous version took "the first `event collection` doc with an `eventname` field", which on a
+  // shared project picked up whatever another suite happened to leave behind — it resolved to
+  // "BIG Event wshop", a doc the WORKSHOPS seeder writes. That makes the case depend on which suites ran
+  // first, the same cross-suite coupling that has bitten this repo repeatedly. It also read the wrong
+  // FIELD: the autocomplete renders `e.name` (live-event-health.component.html:15), not `eventname`.
+  //
+  // Pin to our own event and fail loudly if the seed did not write it, rather than silently skipping on a
+  // field name that no longer matches the component.
   const events = await queryWhere('event collection', []);
-  const named = events.find((e) => typeof e.eventname === 'string' && e.eventname);
-  seededEventName = named ? String(named.eventname) : null;
+  const ours = events.find((e) => e.name === EVENT1_NAME);
+  seededEventName = ours ? String(ours.name) : null;
 });
 
 test.beforeEach(async ({ page }) => {
@@ -35,24 +46,23 @@ test.describe('Events — live event health (real UI, anti-circular)', () => {
   // ===========================================================================================
   // EVT-17 — /liveeventhealth mounts and surfaces an event it read for itself
   // ===========================================================================================
-  // PARKED — same unexplained render failure as workshops WS-36 (/eiflixtelemetry). TWO components now,
-  // in two suites, with two different actors, showing an identical symptom:
-  //     the route resolves, the URL holds, the guard admits, NO console error or pageerror is raised,
-  //     the template root is unconditional — and the component host never appears in the DOM.
+  // UN-PARKED 2026-09-13. This was parked as an "unexplained render failure" — the component host
+  // supposedly never appearing in the DOM despite the route resolving and the guard admitting. A direct
+  // probe (log in as admin+evt, navigate, dump the DOM after settle) disproved that: the outlet's sibling
+  // IS <app-live-event-health>, and the screen renders "Live Events Dashboard" plus its
+  // "Select or Search Event" field. The mount was never the problem.
   //
-  // Verified here specifically: the dashboard grant IS in the emulator for /liveeventhealth with roles
-  // ["admin","ah","eventcoordinator","developer","floor","mentor"], and the logged-in actor
-  // (admin+evt@example.com) holds admin. The failure screenshot shows the app shell, logged in, with an
-  // empty outlet and NO "Contact Admin" denial dialog — so this is not the missing-grant failure that
-  // looks superficially the same.
+  // What actually failed were the two things below, both spec-side:
+  //   • the event name is only reachable through the mat-autocomplete PANEL, not in the host's text at
+  //     rest, so a getByText on the host could never match;
+  //   • the beforeAll picked "the first event with an `eventname` field" out of the shared collection,
+  //     which resolved to another suite's doc ("BIG Event wshop") and read a field the component does not
+  //     render anyway (it renders `e.name`).
   //
-  // Worth noting what DOES work, because it narrows the search: /participantvideoask (PA-47) was granted
-  // in the same pass, by the same mechanism, and mounts fine. So grants and the seeding path are sound;
-  // something is specific to these two components.
-  //
-  // Not root-caused, and not papered over with a weaker assertion. The assertions below are the ones that
-  // should hold once the cause is known.
-  test.fixme('EVT-17 liveeventhealth mounts and shows a seeded event it resolved', async ({ page }) => {
+  // NOTE for whoever looks at workshops WS-36 (/eiflixtelemetry), which was parked with the SAME stated
+  // symptom and cross-referenced this case: that shared diagnosis is now suspect. Re-probe it before
+  // trusting the note — one of the two "identical" failures turned out not to be a mount failure at all.
+  test('EVT-17 liveeventhealth mounts and shows a seeded event it resolved', async ({ page }) => {
     await loginAsEvtAdmin(page);
     await page.goto('/liveeventhealth', { waitUntil: 'domcontentloaded' });
 
@@ -63,18 +73,37 @@ test.describe('Events — live event health (real UI, anti-circular)', () => {
       'grant in events/seed-events.js ROUTES (authGuard denies unlisted screens)',
     ).toBeAttached({ timeout: 30_000 });
 
-    // [REAL-UI] If the events seed wrote a named event, the screen must surface it — the component read
-    // `event collection` itself and the test put nothing into the view. When no named event exists the
-    // assertion is skipped rather than faked, and the mount above plus the console guard still stand.
-    test.skip(
-      !seededEventName,
-      'EVT-17: no seeded `event collection` doc carries an eventname — the render assertion needs one, ' +
-      'and inventing one here would assert the test\'s own write rather than the app\'s read.',
-    );
+    expect(
+      seededEventName,
+      `EVT-17: the events seed must provide "${EVENT1_NAME}" in \`event collection\` — the render ` +
+      'assertion below needs it, and falling back to another suite\'s event would make this case depend ' +
+      'on run order.',
+    ).toBe(EVENT1_NAME);
+
+    // [REAL-UI] The event name is NOT on the page at load. The picker is a mat-autocomplete whose options
+    // render `e.name` from the component's own `event collection` read (component.html:4-17), and an
+    // autocomplete panel only materialises once the input is focused/typed into. The old assertion looked
+    // for the name in the host's static text, which never contained it — the screen at rest shows only
+    // "Live Events Dashboard" and the empty "Select or Search Event" field.
+    //
+    // Typing the name also drives the component's OWN filter (ts:297-312), so a matching option is
+    // evidence the component read the event AND matched it — still the app's value, not ours.
+    const eventInput = host.getByRole('combobox').first();
+    await expect(eventInput, 'EVT-17: the event search input must render').toBeVisible({ timeout: 30_000 });
+    // FOCUS, DO NOT CLICK. The floating <mat-label> "Select or Search Event" sits inside the notched
+    // outline directly over the input, so a plain click is intercepted by the label and retries until the
+    // test times out (this is the same interception _shared/mat-select.ts exists to work around). An input
+    // does not need a click to open its autocomplete — focus plus real keystrokes is enough, and avoids
+    // the force-click that would skip actionability entirely.
+    await eventInput.focus();
+    // pressSequentially, not fill(): the filter is driven by valueChanges on real key events, and fill()
+    // sets the value in one shot without the keystrokes the autocomplete opens on.
+    await eventInput.pressSequentially(EVENT1_NAME, { delay: 20 });
 
     await expect(
-      host.getByText(String(seededEventName), { exact: false }).first(),
-      `EVT-17: the seeded event "${seededEventName}" must render from the component's own event read`,
-    ).toBeVisible({ timeout: 60_000 });
+      page.getByRole('option', { name: EVENT1_NAME, exact: true }).first(),
+      `EVT-17: the seeded event "${EVENT1_NAME}" must appear as an option the component resolved from ` +
+      'its own `event collection` read',
+    ).toBeVisible({ timeout: 30_000 });
   });
 });

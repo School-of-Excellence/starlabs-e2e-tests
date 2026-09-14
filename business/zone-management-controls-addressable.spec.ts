@@ -16,7 +16,7 @@ test.describe('Zone Management — interactive controls addressable + mount smok
 
   test('event-zone-management (/eventzonemanagement) — controls addressable', async ({ page }) => {
     await page.goto('/eventzonemanagement', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ezm-mat-select')).toBeTruthy();
     expect(page.getByTestId('ezm-mat-select')).toBeTruthy();
     expect(page.getByTestId('ezm-openunmappedparticipants')).toBeTruthy();

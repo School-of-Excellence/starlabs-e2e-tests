@@ -39,6 +39,11 @@ export const apptDocIds = {
   DB: `${RUN}_DB`,
   PP2: `${RUN}_PP2`,
   APSTUDIO: `${RUN}_APSTUDIO`,
+  // AP1 + its deliverable D1: the past, UNMARKED appointment. status.spec.ts marks it attended
+  // (APPT-05) and never restores it, so any later spec that needs an unmarked appointment must
+  // re-assert that precondition via resetAppointmentUnmarked(AP1, D1) — see zoom-and-status.spec.ts.
+  AP1: `${RUN}_AP1`,
+  D1: `${RUN}_D1`,
 };
 
 /** Install the prod firewall + all external stubs. Call in beforeEach BEFORE navigating. */

@@ -16,7 +16,7 @@ test.describe('slackwebhookurls — interactive controls addressable + mount smo
 
   test('slackwebhookurls (/slackwebhookurls) — NO SUITE claims src/app/slackwebhookurls/** (manifest gap) — controls addressable', async ({ page }) => {
     await page.goto('/slackwebhookurls', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('swh-openaddform')).toBeTruthy();
     expect(page.getByTestId('swh-openaddform')).toBeTruthy();
     expect(page.getByTestId('swh-webhooktype')).toBeTruthy();

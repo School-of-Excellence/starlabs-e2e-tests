@@ -31,7 +31,24 @@ import { loginAs } from '../queue/support/actors';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
-const STAFF_ROUTE_2 = '/web-studio-invitation';   // a 2nd staff route the participant lacks (AR-02b)
+// AR-02b's second staff route. It MUST be a route that actually exists in the app's router table AND
+// carries canActivate:[authGuard] — otherwise the guard never runs and there is no verdict to assert.
+// /routeconfiguration is declared exactly once (app.routes.ts:12, RouteConfigurationComponent,
+// canActivate:[authGuard]); the duplicate at :560 is inside the commented-out legacy block. It is a
+// single-segment path, so the guard's cleanUrl ('/' + state.url.split('?')[0].split('/')[1],
+// auth.guard.ts:34) is the literal route string the seed grants. Granted by seed-authroles.js to the
+// staff role-set + staff profileids only → the participant matches neither branch of hasAccess.
+//
+// HISTORY — why this used to be '/web-studio-invitation' and why that could never pass (the reason this
+// case was parked as test.fixme with no note): there is NO '/web-studio-invitation' route anywhere in
+// app.routes.ts. WebStudioInvitationComponent is only ever embedded inside QueueWebVersion1Component
+// (queue-web-version1.component.ts:13) — it is not routable. So the path fell through to the wildcard
+// {path:'**'} (app.routes.ts:369), which has NO canActivate, and rendered ExceptionalroutingComponent's
+// "Invalid URL" screen, which then self-redirects to /EISDashboard after 1.5s
+// (exceptionalrouting.component.ts:42-48). No authGuard run → no ConfirmComponent → the dialog assertion
+// could never be satisfied, and the URL DID become /web-studio-invitation, so the last assertion failed
+// too. This is NOT an unguarded-staff-route security hole: no staff component is reachable at that path.
+const STAFF_ROUTE_2 = '/routeconfiguration';      // a 2nd staff route the participant lacks (AR-02b)
 const STAFF_ROUTE_ROSTER = '/roster';             // granted to admin/ah/eis (AR-03b eis-by-role)
 
 /** The authGuard deny dialog (ConfirmComponent) title element. */
@@ -116,7 +133,7 @@ test.describe('Auth & role gate — DEEP (nav visibility, deny/admit matrix, log
   // ===========================================================================================
   // AR-02b — a participant is DENIED a SECOND distinct staff route (not only /roster)
   // ===========================================================================================
-  test.fixme('AR-02b participant is DENIED a second staff route (/web-studio-invitation) — Access-denied dialog', async ({ page }) => {
+  test('AR-02b participant is DENIED a second staff route (/routeconfiguration) — Access-denied dialog', async ({ page }) => {
     await loginAsParticipant(page);
     await expect(page).toHaveURL(/EISDashboard/, { timeout: 30_000 });
     await page.goto(STAFF_ROUTE_2, { waitUntil: 'domcontentloaded' });
@@ -127,9 +144,29 @@ test.describe('Auth & role gate — DEEP (nav visibility, deny/admit matrix, log
       denyDialogTitle(page),
       `AR-02b: authGuard must deny the participant on ${STAFF_ROUTE_2}`,
     ).toBeVisible({ timeout: 30_000 });
+
+    // [ASSERT — the DENY branch specifically] auth.guard.ts:47-76 opens ConfirmComponent with TWO
+    // different titles from the same guard: "Contact Admin" when the route has NO grant at all
+    // (routeConfigRoles.length===0 && routeConfigProfiles.length===0, :48-56) and "Access denied" when a
+    // grant EXISTS but this user matches neither its roles[] nor its profileid[] (:58-70). AR-02b is the
+    // second one: seed-authroles.js grants /routeconfiguration to the staff role-set + staff profileids,
+    // so a "Contact Admin" title here means the grant is MISSING (re-run the authroles seed), not that
+    // the participant was correctly denied. Asserting the exact title is what makes this an ACL-deny
+    // proof rather than an unconfigured-screen proof.
     const title = (await denyDialogTitle(page).innerText()).trim();
-    expect(/access denied/i.test(title) || /contact admin/i.test(title), `AR-02b: dialog title "${title}"`).toBeTruthy();
-    expect(page.url(), 'AR-02b: URL must not change to the staff route').not.toMatch(/web-studio-invitation/);
+    expect(
+      /access denied/i.test(title),
+      `AR-02b: expected the ACL-deny dialog "Access denied" (auth.guard.ts:61), got "${title}". ` +
+      `A "Contact Admin" title means the ${STAFF_ROUTE_2} dashboard grant is absent — re-run seed-authroles.js.`,
+    ).toBeTruthy();
+
+    // The route component never mounted (selector: route-configuration.component.ts:37) and the guard
+    // returned false WITHOUT a redirect (auth.guard.ts:78), so the URL never became the staff route.
+    await expect(
+      page.locator('app-route-configuration'),
+      'AR-02b: the staff route component must NOT mount for a denied participant',
+    ).toHaveCount(0);
+    expect(page.url(), 'AR-02b: URL must not change to the staff route').not.toMatch(/routeconfiguration/);
   });
 
   // ===========================================================================================

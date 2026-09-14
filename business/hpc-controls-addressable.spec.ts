@@ -16,7 +16,7 @@ test.describe('hpc — interactive controls addressable + mount smoke', () => {
 
   test('hpc (/hpc) — controls addressable', async ({ page }) => {
     await page.goto('/hpc', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('hpc-mat-select')).toBeTruthy();
     expect(page.getByTestId('hpc-mat-select')).toBeTruthy();
     expect(page.getByTestId('hpc-button')).toBeTruthy();

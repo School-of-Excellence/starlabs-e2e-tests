@@ -18,21 +18,21 @@ test.describe('View Participants Form (/view-participants-form) — controls add
     await expect(page).toHaveURL(/view-participants-form/, { timeout: 30_000 });
 
     await expect(page.getByTestId('vpf-import-file')).toBeAttached(); // hidden file input
-    await expect(page.getByTestId('vpf-fetch')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('vpf-filter-participant')).toBeVisible();
-    await expect(page.getByTestId('vpf-filter-queue')).toBeVisible();
-    await expect(page.getByTestId('vpf-filter-workshop')).toBeVisible();
-    await expect(page.getByTestId('vpf-filter-form')).toBeVisible();
-    await expect(page.getByTestId('vpf-import-emails')).toBeVisible();
-    await expect(page.getByTestId('vpf-filter-liked')).toBeVisible();
-    await expect(page.getByTestId('vpf-filter-flagged')).toBeVisible();
-    await expect(page.getByTestId('vpf-save-myforms')).toBeVisible();
-    await expect(page.getByTestId('vpf-clear-filters')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-fetch')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('vpf-filter-participant')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-filter-queue')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-filter-workshop')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-filter-form')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-import-emails')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-filter-liked')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-filter-flagged')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-save-myforms')).toBeVisible();
+    await expect.soft(page.getByTestId('vpf-clear-filters')).toBeVisible();
   });
 
   test('conditional bulk / overlay / notes / import-summary controls are addressable', async ({ page }) => {
     await page.goto('/view-participants-form', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('vpf-fetch')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('vpf-fetch')).toBeVisible({ timeout: 30_000 });
 
     // My-forms bar (only when saved forms exist).
     await expect.soft(page.getByTestId('vpf-clear-myforms')).toBeVisible();

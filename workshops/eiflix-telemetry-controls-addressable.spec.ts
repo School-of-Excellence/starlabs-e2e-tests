@@ -16,7 +16,7 @@ test.describe('eiflix-telemetry — interactive controls addressable + mount smo
 
   test('eiflix-telemetry (/eiflixtelemetry) — controls addressable', async ({ page }) => {
     await page.goto('/eiflixtelemetry', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ett-settab')).toBeTruthy();
     expect(page.getByTestId('ett-settab')).toBeTruthy();
     expect(page.getByTestId('ett-settab-2')).toBeTruthy();

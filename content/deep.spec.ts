@@ -26,7 +26,7 @@ import {
   installContentStubs, installStorageStub, loginAsContentAdmin, TINY_PNG,
   resetSeriesEpisode, deleteCreatedSeries, resetTierAccessConfigForTier2,
   resetRecommendedMix, createRecommendedMix, resetHlsEpisode, resetHlsContentUrl,
-  deleteCreatedAdsPlaylist, deleteCreatedLearningMaterial,
+  deleteCreatedAdsPlaylist, deleteCreatedLearningMaterial, resetContentUrlTitle,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { openMatSelect, selectMatOption, selectMatOptions } from '../_shared/mat-select';
@@ -439,9 +439,21 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     const NEW_AD = `NEW_AD_${RUN}_${Date.now()}`;
     await deleteCreatedAdsPlaylist(NEW_AD); // app-written → matched by its natural key (no testrunid)
     expect(await countWhere('adsplaylist', [['adstitle', '==', NEW_AD]]), 'CN-14: title unused pre-submit').toBe(0);
+    // CROSS-FILE PRECONDITION (this case failed only in a FULL-SUITE run, never in isolation):
+    // CN-33 (content-upload.spec.ts) renames CU1's title through the UI and restores it ONLY in its own
+    // file's beforeAll — and `content-upload` sorts BEFORE `deep`, so by the time CN-14 runs the title is
+    // whatever CN-33 typed. Every by-title pick below (the row's <li>, the Ads Trailer and Ads Playlist
+    // options) is keyed on contentText.content1, so the row assertion timed out 30s on a title that no
+    // longer existed. With workers:1 + fullyParallel:false this was deterministic, not flaky.
+    // Restoring it HERE (a precondition write, not an assertion) makes the case order-independent rather
+    // than dependent on which other file happened to run first.
+    await resetContentUrlTitle();
+
     // Independently-known pre-state: what the app SHOULD resolve my by-title picks to (seed-content.js:298).
     const cu1 = await getDoc('content_urls', contentIds.CU1);
     expect(cu1, 'CN-14: the seeded content_urls row is the precondition').not.toBeNull();
+    expect(cu1!.title, 'CN-14: CU1 carries the seed title the by-title picks below depend on')
+      .toBe(contentText.content1);
 
     await loginAsContentAdmin(page);
     await page.goto('/playlistads', { waitUntil: 'domcontentloaded' });

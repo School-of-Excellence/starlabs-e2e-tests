@@ -86,11 +86,19 @@ test.describe('Events — list / approve / attendance-log / layers (real UI, ant
     await expect(p0Row, 'EVT-04: participant0 approved row must render in Mark Attendence').toBeVisible({ timeout: 30_000 });
     await p0Row.locator('mat-checkbox, input[type="checkbox"]').first().click();
 
-    // markAsAttended() opens a window.confirm — accept it, then click "Mark as Attended" (anchored so it
-    // does not match the sibling "Mark as Not Attended"; scoped to the active panel). The button renders
-    // only once the row checkbox makes attendanceselection non-empty.
+    // markAsAttended() opens a window.confirm — accept it, then click "Mark as Attended". The button
+    // renders only once the row checkbox makes attendanceselection non-empty.
+    //
+    // THE LABEL NOW CARRIES A SELECTION COUNT: the button reads "Mark as Attended (1)", so the fully
+    // anchored /^Mark as Attended$/ matched nothing and the click waited out the 120s test timeout. Keep
+    // the LEADING anchor — it is what stops this matching the sibling "Mark as Not Attended" — but let the
+    // trailing "(n)" through. Asserting the count is (1) also proves exactly one row was selected, which
+    // the bare name never checked.
     page.once('dialog', (d) => d.accept());
-    await activePanel.getByRole('button', { name: /^Mark as Attended$/i }).click();
+    const markAttended = activePanel.getByRole('button', { name: /^Mark as Attended\s*\(1\)$/i });
+    await expect(markAttended, 'EVT-04: the Mark as Attended action shows exactly 1 selected row')
+      .toBeVisible({ timeout: 20_000 });
+    await markAttended.click();
 
     // [ASSERT] the app's writeBatch flipped the EPR status to "attended"
     // (event-participation-approve.component.ts:252) — the value the PRODUCT wrote, polled.

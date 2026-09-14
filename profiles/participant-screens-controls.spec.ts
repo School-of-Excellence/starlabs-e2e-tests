@@ -16,9 +16,9 @@ test.describe('Participant Form Tracker (/participant-form-tracker) — controls
     await page.goto('/participant-form-tracker', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participant-form-tracker/, { timeout: 30_000 });
 
-    await expect(page.getByTestId('pft-participant-select')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('pft-apply')).toBeVisible();
-    await expect(page.getByTestId('pft-clear')).toBeVisible();
+    await expect.soft(page.getByTestId('pft-participant-select')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pft-apply')).toBeVisible();
+    await expect.soft(page.getByTestId('pft-clear')).toBeVisible();
     // Conditional: bulk / table / overlay controls.
     await expect.soft(page.getByTestId('pft-view-merged')).toBeVisible();
     await expect.soft(page.getByTestId('pft-select-all')).toBeVisible();
@@ -33,9 +33,9 @@ test.describe('App Flow Breaks (/app-flow-breaks) — controls addressable', () 
     await page.goto('/app-flow-breaks', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/app-flow-breaks/, { timeout: 30_000 });
 
-    await expect(page.getByTestId('afb-search-name')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('afb-search-email')).toBeVisible();
-    await expect(page.getByTestId('afb-search-phone')).toBeVisible();
+    await expect.soft(page.getByTestId('afb-search-name')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('afb-search-email')).toBeVisible();
+    await expect.soft(page.getByTestId('afb-search-phone')).toBeVisible();
     // Conditional: filter-clear + pagination controls (present with data / active filters).
     await expect.soft(page.getByTestId('afb-clear-all-filters')).toBeVisible();
     await expect.soft(page.getByTestId('afb-clear-types')).toBeVisible();
@@ -54,9 +54,9 @@ test.describe('Participant Product (/participantproduct) — controls addressabl
     await page.goto('/participantproduct', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participantproduct/, { timeout: 30_000 });
 
-    await expect(page.getByTestId('pp-filter-participant')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('pp-filter-product')).toBeVisible();
-    await expect(page.getByTestId('pp-filter-table')).toBeVisible();
+    await expect.soft(page.getByTestId('pp-filter-participant')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pp-filter-product')).toBeVisible();
+    await expect.soft(page.getByTestId('pp-filter-table')).toBeVisible();
     // Conditional: reset/clear buttons (only with an active filter / missing-product summary).
     await expect.soft(page.getByTestId('pp-reset-missing-filter')).toBeVisible();
     await expect.soft(page.getByTestId('pp-clear-filters')).toBeVisible();
@@ -70,9 +70,9 @@ test.describe('Participant Delivery Sequence (/participantdeliverysequence/:pid)
     await page.goto(`/participantdeliverysequence/${profProfileIds.p0}`, { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participantdeliverysequence/, { timeout: 30_000 });
 
-    await expect(page.getByTestId('pds-profile-select')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('pds-seq-changed')).toBeVisible();
-    await expect(page.getByTestId('pds-migration-required')).toBeVisible();
+    await expect.soft(page.getByTestId('pds-profile-select')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pds-seq-changed')).toBeVisible();
+    await expect.soft(page.getByTestId('pds-migration-required')).toBeVisible();
     // Conditional: shown once participant products load / a product+delivery is selected.
     await expect.soft(page.getByTestId('pds-reset')).toBeVisible();
     await expect.soft(page.getByTestId('pds-submit')).toBeVisible();

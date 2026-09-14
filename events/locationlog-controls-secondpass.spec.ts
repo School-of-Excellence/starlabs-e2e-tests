@@ -29,9 +29,9 @@ test.describe('Events locationlog — second-pass residual controls addressable 
 
   test('custom-distance segment controls are addressable', async ({ page }) => {
     await page.goto('/locationlog', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     // Anchor on an always-rendered top-level control from the first pass.
-    await expect(page.getByTestId('ll-refresh')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('ll-refresh')).toBeVisible({ timeout: 30_000 });
     // The custom-distance band renders only for the 'custom' distance band; reference the two new
     // static direction controls (addressable regardless of the band's current visibility).
     expect(page.getByTestId('ll-dist-within')).toBeTruthy();

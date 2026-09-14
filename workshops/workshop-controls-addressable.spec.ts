@@ -16,7 +16,7 @@ test.describe('Workshop — interactive controls addressable + mount smoke', () 
 
   test('view-workshop (/createworkshop) — controls addressable', async ({ page }) => {
     await page.goto('/createworkshop', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('vwk-createworkshop')).toBeTruthy();
     expect(page.getByTestId('vwk-createworkshop')).toBeTruthy();
     expect(page.getByTestId('vwk-editcontent')).toBeTruthy();
@@ -25,7 +25,7 @@ test.describe('Workshop — interactive controls addressable + mount smoke', () 
 
   test('challenge-view (/workshopchallengecreation) — controls addressable', async ({ page }) => {
     await page.goto('/workshopchallengecreation', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('chv-ex-workshop-title')).toBeTruthy();
     expect(page.getByTestId('chv-ex-workshop-title')).toBeTruthy();
     expect(page.getByTestId('chv-onopendialog')).toBeTruthy();
@@ -35,7 +35,7 @@ test.describe('Workshop — interactive controls addressable + mount smoke', () 
 
   test('enrollment-config-view (/enrollment_config_view) — controls addressable', async ({ page }) => {
     await page.goto('/enrollment_config_view', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ecv-ex')).toBeTruthy();
     expect(page.getByTestId('ecv-ex')).toBeTruthy();
     expect(page.getByTestId('ecv-onopendialog')).toBeTruthy();
@@ -45,7 +45,7 @@ test.describe('Workshop — interactive controls addressable + mount smoke', () 
 
   test('participant-enrollment-dashboard (/workshopchallengeparticipantdashboard) — controls addressable', async ({ page }) => {
     await page.goto('/workshopchallengeparticipantdashboard', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ped-mat-select')).toBeTruthy();
     expect(page.getByTestId('ped-mat-select')).toBeTruthy();
     expect(page.getByTestId('ped-button')).toBeTruthy();
@@ -61,7 +61,7 @@ test.describe('Workshop — interactive controls addressable + mount smoke', () 
 
   test('workshop-image-upload (/workshop_image_upload) — controls addressable', async ({ page }) => {
     await page.goto('/workshop_image_upload', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('wiu-filter-by-name')).toBeTruthy();
     expect(page.getByTestId('wiu-filter-by-name')).toBeTruthy();
     expect(page.getByTestId('wiu-button')).toBeTruthy();

@@ -16,7 +16,7 @@ test.describe('Communication Center — interactive controls addressable + mount
 
   test('communication (/communication) — controls addressable', async ({ page }) => {
     await page.goto('/communication', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('cmm-link')).toBeTruthy();
     expect(page.getByTestId('cmm-link')).toBeTruthy();
     expect(page.getByTestId('cmm-toggletemplatesmenu')).toBeTruthy();
@@ -159,7 +159,7 @@ test.describe('Communication Center — interactive controls addressable + mount
 
   test('create-email-template (/email-templates) — controls addressable', async ({ page }) => {
     await page.goto('/email-templates', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('cet-switchtolistview')).toBeTruthy();
     expect(page.getByTestId('cet-switchtolistview')).toBeTruthy();
     expect(page.getByTestId('cet-switchtocreateview')).toBeTruthy();
@@ -254,7 +254,7 @@ test.describe('Communication Center — interactive controls addressable + mount
 
   test('zoom-recording-dashboard (/zoom-recording-dashboard) — controls addressable', async ({ page }) => {
     await page.goto('/zoom-recording-dashboard', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('zrd-search')).toBeTruthy();
     expect(page.getByTestId('zrd-search')).toBeTruthy();
     expect(page.getByTestId('zrd-startdate')).toBeTruthy();

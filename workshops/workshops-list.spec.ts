@@ -120,17 +120,38 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
     await expect(page).toHaveURL(new RegExp(`workshopconfig/${wsIds.W_INACTIVE}`), { timeout: 30_000 });
 
     // The detail-page form is on the default "Enrollment Page" tab. Wait for the title input the app
-    // patched from the seeded doc (detailPageForm.patchValue, ts:1151), then type a NEW known title.
-    const titleInput = page.locator('input[formcontrolname="title"]');
+    // patched from the seeded doc, then type a NEW known title.
+    //
+    // V2 EDITOR (app.routes.ts:287-289): /workshopconfig/:id now loads WorkshopConfigurationv2Component;
+    // the legacy editor this case was written against moved to /workshopconfigold/:id. The V2 markup uses
+    // formControlName="title" in two places (component.html:199 = the workshop title, :556 = a testimonial
+    // title inside a section that is not rendered here), so scope to the visible first match rather than
+    // relying on only one being in the DOM.
+    const titleInput = page.locator('input[formcontrolname="title"]').first();
     await expect(titleInput, 'WS-05: the detail-page title input must render').toBeVisible({ timeout: 30_000 });
     await expect(titleInput).toHaveValue(/Inactive Workshop/, { timeout: 15_000 }); // patched from Firestore
 
     const newTitle = `WS05 Renamed ${RUN} ${Date.now()}`;
     await titleInput.fill(newTitle);
 
-    // [REAL-UI] click the floating Save FAB for the detail page. Its accessible name is the aria-label
-    // "Save Enrollment" (workshop-configuration.html:354, (click)="saveDetailPage()") — NOT "Save Detail Page".
-    await page.getByRole('button', { name: /Save Enrollment/i }).click();
+    // [REAL-UI] REQUIRED GATE — the save bar refuses to save an Enrollment page while the workshop has no
+    // type. `workshoptypeCtrl` is `new FormControl('', Validators.required)` (component.ts:71) and
+    // saveState returns 'blocked' whenever it is invalid (ts:521), which renders a DISABLED "Save
+    // Enrollment" button (component.html:690-694). W_INACTIVE is seeded without a workshoptype, so before
+    // this step the click waited out the full 120s timeout on a permanently disabled button.
+    //
+    // This is correct app behaviour, not a defect: the type "decides how the workshop is created and
+    // delivered" and is stored on the workshop itself. Choosing it through the UI is what a user does, and
+    // saveDetailPage() then writes { detailpage, workshoptype } in ONE updateDoc (ts:564) — so the title
+    // assertion below is unaffected.
+    await page.getByRole('button', { name: 'Live workshop', exact: true }).click();
+
+    // [REAL-UI] the save bar's enabled "Save Enrollment" button ((click)="saveDetailPage()",
+    // component.html:680). Assert it is enabled first, so a future gate regression reports "still
+    // disabled" instead of timing out inside click().
+    const saveBtn = page.getByRole('button', { name: /Save Enrollment/i });
+    await expect(saveBtn, 'WS-05: picking a workshop type must unblock the save bar').toBeEnabled({ timeout: 15_000 });
+    await saveBtn.click();
 
     // [ASSERT] the app's updateDoc wrote { detailpage: { ..., title: newTitle } } (ts:1518). Read it back
     // from Firestore and compare to the KNOWN typed input — app output vs known input (anti-circular).

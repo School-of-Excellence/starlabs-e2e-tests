@@ -287,18 +287,51 @@ async function seedProfiles() {
     status: 'ongoing', mode: 'Priority Mode', sequenceorder: 1, ...tag,
   });
 
+  // 10) LISTS / SEGMENTS / TAGS / interim-crossover for the dialog suites (PA-20..PA-43).
+  //     queueChain defaults FALSE so this seeder writes NOTHING into the queue suite collections;
+  //     LIST_B is made live via the list's own live:true flag instead (the second of the two
+  //     independent live paths in getMergeConflicts). See seed-lists-segments-tags.js.
+  //
+  // THIS CALL USED TO SIT *AFTER* THE `return` BELOW — i.e. it was unreachable dead code, and the
+  // collections it writes (`participant list`, `segments`, `participant tags`, …) were never created.
+  // Every spec that depends on them failed: PA-33..PA-37 died in <1s in their beforeEach, where
+  // resetLists() calls .update() on `participant list/<LIST_A>` and Firestore answers
+  // "5 NOT_FOUND: no entity to update", and PA-39..PA-43 (tags) the same way. 13 failures, one
+  // misplaced statement. The seeder's own WIRING notes (seed-lists-segments-tags.js:284-297) say this
+  // goes "at the END of seedProfiles(), after step 9" — it does now, but BEFORE the return.
+  await seedListsSegmentsTags(db, tag, PF);
+
+  // 11) STARLABS ROLES — the role vocabulary /profilelist renders, and PA-20's precondition.
+  //
+  //     profilelist builds its role checkboxes from `roleList`, which it fills from the SINGLE fixed-id
+  //     document `starlabs roles/roles`:
+  //         getDoc(doc(firestoreDefault, 'starlabs roles', 'roles'))
+  //           -> roleList = [...role.data()["name"], { productowner: atcmodelList }]   (component.ts:156-161)
+  //     If that document does not exist, `role.exists()` is false, roleList stays [] and the expanded
+  //     row renders ZERO checkboxes — verified in the live DOM, where .checkboxrow was present but its
+  //     *ngFor showed `ng-reflect-ng-for-of: ""`. The "Update Role" button still renders (it sits outside
+  //     that *ngIf), so the screen looks fine and simply cannot change a role. No other suite seeds this.
+  //
+  //     `rolemanager` and `developer` are filtered out of the list unless the viewer has developerAccess
+  //     (component.ts:159), so plain roles are what a normal admin can actually tick.
+  //
+  //     ATC NOTE: the same code path reads the `atc model` collection for the productowner sub-list. That
+  //     is reference-only config and explicitly allowed (CLAUDE.md); we do NOT seed or write it, and
+  //     nothing here touches any atc_* data collection.
+  await db.collection('starlabs roles').doc('roles').set({
+    docid: 'roles',
+    name: ['admin', 'ah', 'mentor', 'floor', 'eventcoordinator'],
+    ...tag,
+  });
+
   return {
     TESTRUNID, ID, PF, EMAIL, NAME, UP_LIFE_REPORT_FORMID,
     counts: {
       profiles: participants.length, journeys: 1, products: 2, askAH: 2, loveLetter: 1,
       formsByClient: 1, appflowbreaks: 2, productCfProducts: 1,
+      listsSegmentsTags: SEEDED_LISTS.length,
     },
   };
-  // 10) LISTS / SEGMENTS / TAGS / interim-crossover for the dialog suites (PA-20..PA-43).
-  //     queueChain defaults FALSE so this seeder writes NOTHING into the queue suite collections;
-  //     LIST_B is made live via the list's own live:true flag instead (the second of the two
-  //     independent live paths in getMergeConflicts). See seed-lists-segments-tags.js.
-  await seedListsSegmentsTags(db, tag, PF);
 }
 
 // Collections this seed writes (for teardown). formsByClient lives in the forms DB — swept separately.
@@ -308,6 +341,13 @@ const SEEDED = [
   'ask AH', 'love letter', 'appflowbreaks',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
   'user_data', 'users_roles', 'dashboard',
+  // PA-20 precondition: the role vocabulary /profilelist renders (fixed-id doc, run-tagged).
+  'starlabs roles',
+  // Third of the three WIRING edits in seed-lists-segments-tags.js:284-297, which had never been applied
+  // (the seeder's own docs call for `const SEEDED = [ ...existing..., ...SEEDED_LISTS ]`). Without it the
+  // lists/segments/tags docs are written but NEVER swept, so a re-run would inherit the previous run's
+  // list membership — exactly the stale-precondition class that PA-33..PA-37 assert against.
+  ...SEEDED_LISTS,
 ];
 const SEEDED_FORMS_DB = ['formsByClient'];
 

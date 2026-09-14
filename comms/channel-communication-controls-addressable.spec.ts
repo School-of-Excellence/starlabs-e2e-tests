@@ -16,7 +16,7 @@ test.describe('Channel Communication — interactive controls addressable + moun
 
   test('channeltemplates (/channel-templates) — controls addressable', async ({ page }) => {
     await page.goto('/channel-templates', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('cht-viewmode-list-loadtemplates')).toBeTruthy();
     expect(page.getByTestId('cht-viewmode-list-loadtemplates')).toBeTruthy();
     expect(page.getByTestId('cht-onreset')).toBeTruthy();

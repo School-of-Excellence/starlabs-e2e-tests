@@ -16,7 +16,7 @@ test.describe('participant-touchpoint — interactive controls addressable + mou
 
   test('participant-touchpoint (/participanttouchpoint) — controls addressable', async ({ page }) => {
     await page.goto('/participanttouchpoint', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ptp-mat-select')).toBeTruthy();
     expect(page.getByTestId('ptp-mat-select')).toBeTruthy();
     expect(page.getByTestId('ptp-rangepicker-open')).toBeTruthy();

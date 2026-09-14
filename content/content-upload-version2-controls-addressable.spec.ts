@@ -16,7 +16,7 @@ test.describe('content-upload-version2 — interactive controls addressable + mo
 
   test('content-upload-version2 (/content-upload-v2) — controls addressable', async ({ page }) => {
     await page.goto('/content-upload-v2', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('cuv-openscreen')).toBeTruthy();
     expect(page.getByTestId('cuv-openscreen')).toBeTruthy();
   });

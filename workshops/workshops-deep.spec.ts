@@ -18,7 +18,7 @@
 //     production comms endpoint was hit (the prod firewall captured zero prod-CF escapes).
 import { test, expect } from '@playwright/test';
 import {
-  wsIds, wsProfileIds, wsProductNames, installWshopStubs, installWshopStubsCapturingProdBlocks,
+  wsIds, wsProfileIds, wsProductNames, wsActors, installWshopStubs, installWshopStubsCapturingProdBlocks,
   loginAsWshopAdmin, loginAsWshopMover, resetWorkshopConfigBaseline, cleanEnrollmentForP2,
   cleanDuplicateWorkshops,
 } from './support/wshop';
@@ -107,7 +107,7 @@ test.describe('Workshops deep — create + config writes (real UI, anti-circular
   // WS-06 — workshop-config "Add curriculum" + save grows challenges[] by exactly 1 in Firestore.
   //         App output (the new array length) vs the KNOWN before-length (anti-circular).
   // ------------------------------------------------------------------------------------------
-  test.fixme('WS-06 adding a curriculum and saving grows workshopconfiguration.challenges by 1', async ({ page }) => {
+  test('WS-06 adding a curriculum and saving grows workshopconfiguration.challenges by 1', async ({ page }) => {
     // Precondition: a KNOWN baseline of exactly 1 curriculum (idempotent for re-runs).
     await resetWorkshopConfigBaseline();
     const before = await getDoc('workshopconfiguration', wsIds.W_INACTIVE);
@@ -118,34 +118,33 @@ test.describe('Workshops deep — create + config writes (real UI, anti-circular
     await page.goto(`/workshopconfig/${wsIds.W_INACTIVE}`, { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`workshopconfig/${wsIds.W_INACTIVE}`), { timeout: 30_000 });
 
-    // Move to the Challenges/Curriculum tab. The config screen is a mat-tab-group; the challenges form
-    // lives behind a tab whose label contains "Challenge" or "Curriculum".
-    const challengeTab = page.getByRole('tab', { name: /Challenge|Curriculum/i }).first();
-    await expect(challengeTab, 'WS-06: the challenges tab must render').toBeVisible({ timeout: 30_000 });
+    // V2 EDITOR (app.routes.ts:287): /workshopconfig/:id loads WorkshopConfigurationv2Component, whose
+    // curriculum lives in the app-workshop-challengesv2 child. Two things changed from the legacy editor
+    // this case was written against, and each one on its own made it fail:
+    //
+    //  1. THE TABS ARE NOT mat-tabs. V2 renders a plain
+    //     `<button class="tab" *ngFor="let tab of tabs">` strip (component.html:93-94), so there is no
+    //     role="tab" anywhere on the page — getByRole('tab', …) matched nothing and timed out.
+    //  2. A NEW SET NEEDS NO TYPE. v2's addCurriculum() seeds `type: ['challenge', Validators.required]`
+    //     (challenges component.ts:283-285) because the segmented control has no empty state. The legacy
+    //     flow of opening a mat-select and picking "Activity" has no v2 equivalent, and the markup it
+    //     drove (.curriculum-card, mat-select[formcontrolname="type"]) does not exist.
+    const challengeTab = page.getByRole('button', { name: 'Challenges', exact: true });
+    await expect(challengeTab, 'WS-06: the Challenges tab button must render').toBeVisible({ timeout: 30_000 });
     await challengeTab.click();
 
-    // [REAL-UI] click "Add Curriculum" (addCurriculum() pushes a new FormGroup → challengesArray; the new
-    // card auto-expands, challengeExpanded[newIndex]=true).
-    const addBtn = page.getByRole('button', { name: /Add Curriculum/i }).first();
-    await expect(addBtn, 'WS-06: the Add Curriculum button must render').toBeVisible({ timeout: 15_000 });
+    // [REAL-UI] "Add set" → addCurriculum() pushes a valid FormGroup and marks it dirty (ts:307).
+    const addBtn = page.getByRole('button', { name: 'Add set', exact: true }).first();
+    await expect(addBtn, 'WS-06: the Add set button must render').toBeVisible({ timeout: 15_000 });
     await addBtn.click();
 
-    // The new curriculum requires a `type` (Validators.required, addCurriculum:1547) or saveChallengesPage
-    // bails on an invalid form. The new card is the LAST .curriculum-card; pick the first option of ITS
-    // type select (formcontrolname="type", html:410).
-    const newCard = page.locator('.curriculum-card').last();
-    await expect(newCard, 'WS-06: the newly-added curriculum card must render').toBeVisible({ timeout: 15_000 });
-    const typeSelect = newCard.locator('mat-select[formcontrolname="type"]').first();
-    await expect(typeSelect, 'WS-06: the new curriculum type select must render').toBeVisible({ timeout: 15_000 });
-    await typeSelect.click({ force: true });
-    // Options are "Zoom Call" (zoomcall) / "Activity" (challenge). Pick "Activity" — a plain curriculum
-    // type with no extra required sub-fields (addCurriculum only makes `type` required).
-    await page.getByRole('option', { name: /Activity/i }).click();
-
-    // [REAL-UI] save the challenges page (saveChallengesPage → updateDoc { challenges }). The FAB carries
-    // aria-label "Save Challenges" (html:854).
-    const saveBtn = page.getByRole('button', { name: /Save Challenges/i }).first();
-    await expect(saveBtn, 'WS-06: the Save Challenges button must render').toBeVisible({ timeout: 15_000 });
+    // [REAL-UI] save the curriculum (saveChallengesPage → updateDoc { challenges }). The v2 save bar
+    // renders "Save Challenges" DISABLED in its idle/blocked/saved states and enabled only when dirty
+    // (challenges component.html:656-679), so assert enabled first — that both proves the add registered
+    // as a change and stops a future gate regression from timing out inside click().
+    const saveBtn = page.getByRole('button', { name: /Save Challenges/i });
+    await expect(saveBtn, 'WS-06: adding a set must make the curriculum save bar dirty/enabled')
+      .toBeEnabled({ timeout: 15_000 });
     await saveBtn.click();
 
     // [ASSERT] the app's updateDoc grew challenges[] by exactly 1 (beforeLen + 1). Polled from Firestore —
@@ -163,7 +162,7 @@ test.describe('Workshops deep — create + config writes (real UI, anti-circular
   //         The CF itself is NOT deployed on the test project, so we assert the UI's OWN write and
   //         SKIP-GUARD the participant-workshop propagation (documented). App output vs known pre-state.
   // ------------------------------------------------------------------------------------------
-  test.fixme('WS-10 toggling triggerFunction in Settings and saving writes triggerFunction:true', async ({ page }) => {
+  test('WS-10 toggling triggerFunction in Settings and saving writes triggerFunction:true', async ({ page }) => {
     // Precondition: triggerFunction starts false (idempotent).
     await resetWorkshopConfigBaseline();
     const before = await getDoc('workshopconfiguration', wsIds.W_INACTIVE);
@@ -173,21 +172,26 @@ test.describe('Workshops deep — create + config writes (real UI, anti-circular
     await page.goto(`/workshopconfig/${wsIds.W_INACTIVE}`, { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`workshopconfig/${wsIds.W_INACTIVE}`), { timeout: 30_000 });
 
-    // Move to the top-level "Settings" tab (settingsForm; the triggerFunction toggle lives on its default
-    // "General" inner tab). saveSettings() persists triggerFunction (ts:2237).
-    const settingsTab = page.getByRole('tab', { name: /^Settings$/i }).first();
-    await expect(settingsTab, 'WS-10: the Settings tab must render').toBeVisible({ timeout: 30_000 });
+    // V2 EDITOR (app.routes.ts:287) — see the note on WS-06. Two changes broke this case:
+    //  1. The tab strip is plain `<button class="tab">`, not mat-tabs, so role="tab" matched nothing.
+    //  2. The toggle is no longer a mat-slide-toggle bound to formControlName="triggerFunction". V2's
+    //     app-workshop-settingsv2 renders `<button class="toggle" aria-label="Update Participant Workshop"
+    //     (click)="toggleField('triggerFunction')">` (workshop-settingsv2.component.html:178) — a plain
+    //     button driving the control imperatively, so the old attribute locator has nothing to match.
+    const settingsTab = page.getByRole('button', { name: 'Settings', exact: true });
+    await expect(settingsTab, 'WS-10: the Settings tab button must render').toBeVisible({ timeout: 30_000 });
     await settingsTab.click();
 
-    // [REAL-UI] flip the "Update Participant Workshop" slide-toggle ON. It binds formControlName=
-    // "triggerFunction" directly (html:963) → in the DOM the attribute is `formcontrolname`.
-    const toggle = page.locator('mat-slide-toggle[formcontrolname="triggerFunction"]').first();
+    // [REAL-UI] flip "Update Participant Workshop" ON. The aria-label is the accessible name.
+    const toggle = page.getByRole('button', { name: 'Update Participant Workshop', exact: true });
     await expect(toggle, 'WS-10: the triggerFunction toggle must render in Settings').toBeVisible({ timeout: 15_000 });
-    await toggle.locator('button, input[type="checkbox"]').first().click({ force: true });
+    await toggle.click();
 
-    // [REAL-UI] save settings. The settings FAB carries aria-label "Save Settings" (html:1377).
-    const saveBtn = page.getByRole('button', { name: /Save Settings/i }).first();
-    await expect(saveBtn, 'WS-10: the Save Settings button must render').toBeVisible({ timeout: 15_000 });
+    // [REAL-UI] save settings. Same save-bar pattern as the other two tabs: "Save Settings" renders
+    // disabled in idle/blocked/saved and enabled only when dirty (settings component.html:700-728).
+    const saveBtn = page.getByRole('button', { name: /Save Settings/i });
+    await expect(saveBtn, 'WS-10: flipping the toggle must make the settings save bar dirty/enabled')
+      .toBeEnabled({ timeout: 15_000 });
     await saveBtn.click();
 
     // [ASSERT] the app's updateDoc wrote triggerFunction:true. Polled — the value the PRODUCT wrote.
@@ -219,7 +223,7 @@ test.describe('Workshops deep — dashboard enroll + metrics (real UI, anti-circ
   //         `participant workshop` doc for the chosen profile. App output (post-state counts) vs the
   //         KNOWN before-counts. The enroll button is gated to the mover profileid (dashboard html:62).
   // ------------------------------------------------------------------------------------------
-  test.fixme('WS-08 enrolling a participant writes one enrolled doc + one participant-workshop doc', async ({ page }) => {
+  test('WS-08 enrolling a participant writes one enrolled doc + one participant-workshop doc', async ({ page }) => {
     await installWshopStubs(page);
     // Precondition: p2 is NOT enrolled in the dashboard workshop (idempotent — delete any prior enroll).
     await cleanEnrollmentForP2();
@@ -237,18 +241,32 @@ test.describe('Workshops deep — dashboard enroll + metrics (real UI, anti-circ
     await expect(enrollBtn, 'WS-08: the mover-gated Enroll button must render').toBeVisible({ timeout: 30_000 });
     await enrollBtn.click();
 
-    // The dialog's mat-select lists every NOT-yet-enrolled profile with a non-empty name. p2 ("WS Charlie")
-    // is the only seeded participant not enrolled in W_DASH — select it.
+    // The dialog's mat-select lists every NOT-yet-enrolled profile (enroll.component.ts:66-71).
+    //
+    // OPTION LABELS ARE EMAILS, NOT NAMES: the template renders `mapProfile[profile]`
+    // (enroll.component.html:14), and that map comes from the profile service as profileid → EMAIL — the
+    // observed listbox was [admin+cont@…, admin+wshop@…, mover+wshop@…, participant0+cont@…,
+    // participant2+wshop@…]. This case previously looked for the display name "WS Charlie <run>", which
+    // the dialog never renders, so the option was never found. Key off p2's seeded email instead.
     const select = page.getByRole('combobox', { name: /Select Participants/i });
     await expect(select, 'WS-08: the participant select must render in the dialog').toBeVisible({ timeout: 20_000 });
     await select.click({ force: true });
-    const charlie = page.getByRole('option', { name: `WS Charlie ${RUN}` });
-    await expect(charlie, 'WS-08: the un-enrolled participant must be an option').toBeVisible({ timeout: 15_000 });
-    await charlie.click();
-    // The select is `multiple` (stays open). Close its overlay by clicking the dialog title — this
-    // dismisses the CDK overlay panel WITHOUT closing the dialog (a backdrop click might), so the
-    // dialog's own Enroll button becomes clickable.
-    await page.getByRole('heading', { name: /Enroll Participant/i }).click();
+    const p2Option = page.getByRole('option', { name: wsActors.participant2, exact: true });
+    await expect(p2Option, 'WS-08: the un-enrolled participant must be an option').toBeVisible({ timeout: 15_000 });
+    await p2Option.click();
+    // The select is `multiple`, so its panel stays open after the pick and the CDK lays a transparent
+    // BACKDROP over the dialog. Clicking the dialog title to dismiss it — the old approach — cannot work:
+    // that backdrop intercepts the pointer event, and the click retried until the 120s test timeout.
+    // Escape is the dismissal the overlay actually listens for; the CDK keyboard dispatcher routes it to
+    // the TOPMOST overlay, which is the select panel, so the MatDialog beneath stays open.
+    await page.keyboard.press('Escape');
+    // Wait for the SELECT PANEL specifically. Neither a bare getByRole('listbox') nor '.cdk-overlay-backdrop'
+    // can be asserted to 0 here: the MatDialog is itself an overlay, so it contributes its own backdrop and
+    // its own listbox. Both counts go 2 → 1, never to 0, and asserting 0 fails even though Escape worked.
+    // `.mat-mdc-select-panel` belongs only to the mat-select overlay, so it is the unambiguous signal.
+    await expect(page.locator('.mat-mdc-select-panel'),
+      'WS-08: the participant select panel must close before Enroll is clickable')
+      .toHaveCount(0, { timeout: 10_000 });
 
     // [REAL-UI] click the dialog's Enroll (Enroll() setDoc's both the enrolled + participant-workshop docs).
     await page.getByRole('button', { name: /^Enroll$/i }).last().click();
@@ -266,10 +284,17 @@ test.describe('Workshops deep — dashboard enroll + metrics (real UI, anti-circ
       (n) => n === pwBefore + 1,
       { label: `WS-08: participant workshop count → ${pwBefore + 1}`, timeoutMs: 30_000 },
     );
-    // Corroborate the app-written enrolled doc is for p2 and in the not-started status the dialog sets.
+    // Corroborate the app-written enrolled doc is for p2, in the status the dialog actually sets.
+    //
+    // STATUS IS 'enrolled', NOT 'enrollednotstarted': Enroll() writes a hardcoded `status:'enrolled'`
+    // (enroll.component.ts:100) — the string 'enrollednotstarted' appears nowhere in that component. The
+    // old expectation was simply wrong about the app. Note this is the status the DASHBOARD then counts
+    // under "Total Started" rather than "Not Started" (see WS-DASH-SPLIT below), so a manually enrolled
+    // participant is reported as started before they have started anything — flagged for the app owners,
+    // not pinned here, because nothing in the component claims otherwise.
     const enr = await queryWhere('workshop participant enrolled', [['workshopref', '==', dashRef], ['profileid', '==', wsProfileIds.p2]]);
     expect(enr.length, 'WS-08: exactly one enrolled doc for p2').toBe(1);
-    expect((enr[0] as any).status, 'WS-08: the dialog enrolled p2 as enrollednotstarted').toBe('enrollednotstarted');
+    expect((enr[0] as any).status, "WS-08: the dialog enrolled p2 with status 'enrolled'").toBe('enrolled');
 
     // Cleanup (re-runnable): delete the app-written docs by their natural key.
     await cleanEnrollmentForP2();
@@ -337,14 +362,36 @@ test.describe('Workshops deep — comms safety (no production cloud-function esc
     await expect(envelope, 'WS-14: the Send-Email (envelope) button must render once the panel opens').toBeVisible({ timeout: 20_000 });
     await envelope.click();
 
-    // [REAL-UI] fill subject + message on the Email tab, then Send (sendMail() closes with action:'sent';
-    // handleDialogResult posts to getCloudFunctionUrl('workshopprogressmessage') which is '' on this
-    // project — it cannot resolve to a prod CF; no prod side-effect is reachable).
-    const subject = page.locator('textarea[formcontrolname="subject"]');
-    await expect(subject, 'WS-14: the Email subject field must render').toBeVisible({ timeout: 20_000 });
-    await subject.fill(`WS14 subject ${RUN}`);
-    await page.locator('textarea[formcontrolname="message"]').fill(`WS14 message ${RUN}`);
-    await page.getByRole('button', { name: /Send Email/i }).click();
+    // [REAL-UI] EMAIL CAMPAIGN COMPOSER (participants-analytics/email-input) — this replaced the old
+    // free-text Send-Message dialog that had textarea[formcontrolname="subject"]/"message". There is no
+    // free-text compose path any more: the composer sends a TEMPLATE, and its own "Create Template"
+    // button closes the dialog and routes to /email-templates (email-input.component.ts:848). The
+    // seed therefore provides one approved template (seed-workshops.js, ID.EMAIL_TPL) as a precondition.
+    const composer = page.getByRole('dialog');
+    await expect(composer.getByRole('heading', { name: 'Email Campaign Composer' }),
+      'WS-14: the Email Campaign Composer must open').toBeVisible({ timeout: 20_000 });
+
+    // Picking a card runs onTemplateChange (ts:472-482): it fills bufferDoc.subject/body from the
+    // template and switches to the Preview tab. Until then every send button is hidden behind
+    // *ngIf="isTemplatePresent()" (component.html:727).
+    const card = composer.locator('.template-card').filter({ hasText: `WS Comms Template ${RUN}` });
+    await expect(card, 'WS-14: the seeded email template must render as a selectable card')
+      .toBeVisible({ timeout: 20_000 });
+    await card.click();
+
+    // The composer confirms before sending (`confirm('Are you sure to send email to Participants?')`,
+    // ts:721). Playwright DISMISSES dialogs by default, which would cancel the send and leave the comms
+    // path undriven — accept it so the app actually reaches closeWithPayload('send').
+    page.once('dialog', (d) => { void d.accept(); });
+
+    // formValidation() (ts:710-717) gates the button on subject + body + broadcastname + configured
+    // variables; the template supplies the first two, the composer auto-names the broadcast, and the
+    // seeded body has no variables. Assert ENABLED first so a future gate change reports the real reason
+    // instead of timing out inside click().
+    const sendBtn = composer.getByRole('button', { name: /Send to Participants/i });
+    await expect(sendBtn, 'WS-14: selecting a template must enable the send button')
+      .toBeEnabled({ timeout: 20_000 });
+    await sendBtn.click();
 
     // Give the post path a moment to fire (or be firewalled).
     await page.waitForTimeout(1500);
@@ -441,7 +488,7 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
   // WS-13 — duplicating a workshop from the list creates a NEW workshopconfiguration doc with active:false
   //         and the SAME title. App output (post-state count + the duplicate doc's fields) vs known.
   // ------------------------------------------------------------------------------------------
-  test.fixme('WS-13 duplicating the active workshop creates an active:false copy with the same title', async ({ page }) => {
+  test('WS-13 duplicating the active workshop creates an active:false copy with the same title', async ({ page }) => {
     const sourceTitle = `Active Workshop ${RUN}`; // the seeded W_ACTIVE detailpage.title
     // Precondition: remove any prior duplicate (idempotent — the assertion reads the delta).
     await cleanDuplicateWorkshops(sourceTitle);
@@ -452,8 +499,14 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
       await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
       await expect(page).toHaveURL(/workshops/, { timeout: 30_000 });
 
-      const row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: sourceTitle });
-      await expect(row, 'WS-13: the active workshop row must render').toBeVisible({ timeout: 30_000 });
+      // hasText with a STRING is a case-insensitive SUBSTRING match, and the seed deliberately carries
+      // both "Active Workshop <run>" and "Inactive Workshop <run>" — the latter CONTAINS the former, so
+      // the plain string matched two rows and failed on strict mode. Anchor with a case-sensitive regex:
+      // \b does not fire between the "n" and "a" of "Inactive", so only the real active row matches.
+      const row = page.locator('tr.mat-mdc-row, tr[mat-row]')
+        .filter({ hasText: new RegExp(`\\b${sourceTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`) });
+      await expect(row, 'WS-13: exactly the active workshop row must render (not the Inactive one)')
+        .toHaveCount(1, { timeout: 30_000 });
 
       // [REAL-UI] accept the duplicate confirm(), then click the row's Duplicate icon (duplicateWorkshop()).
       page.once('dialog', (d) => d.accept());
@@ -466,8 +519,24 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
         (n) => n === inactiveBefore + 1,
         { label: `WS-13: active:false count → ${inactiveBefore + 1}`, timeoutMs: 30_000 },
       );
-      const dups = (await queryWhere('workshopconfiguration', [['active', '==', false]]))
-        .filter((d) => (d as any).detailpage?.title === sourceTitle && (d as any).testrunid !== RUN);
+      // duplicateWorkshop() copies the SOURCE DOC WHOLESALE — including our seed's `testrunid`. Filtering
+      // on `testrunid !== RUN` therefore threw away the duplicate itself (the count poll above had already
+      // proved one was written). The app-written copy is identified by its GENERATED id instead: it is the
+      // active:false doc carrying the source title whose id is not one of our seeded ids.
+      const seededIds = new Set<string>(Object.values(wsIds));
+      const findDup = async () => (await queryWhere('workshopconfiguration', [['active', '==', false]]))
+        .filter((d) => (d as any).detailpage?.title === sourceTitle && !seededIds.has(d.id));
+
+      // TWO WRITES, NOT ONE: duplicateWorkshop() addDoc()s the copy and only THEN
+      // `updateDoc(newDocRef, { docid: newDocRef.id })` (workshops.component.ts:310-315). The count poll
+      // above is satisfied by the FIRST write, so reading the doc immediately catches it mid-flight with
+      // the SOURCE's docid still copied in — which is what failed here ("wshop_W_active"). Poll for the
+      // second write instead of racing it; this asserts the app's own re-stamp, not a value we wrote.
+      const dups = await pollUntil(
+        findDup,
+        (list) => list.length === 1 && (list[0] as any).docid === list[0].id,
+        { label: 'WS-13: the duplicate carries its OWN generated docid (the post-addDoc updateDoc landed)', timeoutMs: 30_000 },
+      );
       expect(dups.length, 'WS-13: exactly one app-written duplicate with the source title + active:false').toBe(1);
       expect((dups[0] as any).active, 'WS-13: the duplicate is inactive').toBe(false);
       expect((dups[0] as any).docid, 'WS-13: the app stamped docid on the duplicate (updateDoc after addDoc)').toBe(dups[0].id);

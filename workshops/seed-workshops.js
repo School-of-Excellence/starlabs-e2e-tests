@@ -42,6 +42,7 @@ const ID = {
   ENR_B: `${TESTRUNID}_enr_b`,             // workshop participant enrolled — status 'enrollednotstarted' (p1)
   PW_A: `${TESTRUNID}_pw_a`,               // participant workshop for p0 (1 of 2 sub-challenges complete = 50%)
   PW_B: `${TESTRUNID}_pw_b`,               // participant workshop for p1
+  EMAIL_TPL: `${TESTRUNID}_email_tpl`,     // `email templates` doc the Email Campaign Composer can send (WS-09/WS-14)
 
   // ---- 2026-09-04 addendum: the nine previously-uncovered routes (WS-16..WS-33) ----------------
   // See recon-allcomp/workshops.md "Addendum — 2026-09-04". Every negative-control doc below exists
@@ -393,6 +394,13 @@ async function seedWorkshops() {
     docid: ID.W_INACTIVE, active: false, workshopcompleted: false, categorybased: false, atcmodel: null,
     created: at(-10), detailpage: {
       type: 'workshop', title: `Inactive Workshop ${TESTRUNID}`, shortdescription: 'seeded inactive',
+      // WS-05 precondition. The v2 editor (/workshopconfig/:id now loads WorkshopConfigurationv2Component,
+      // app.routes.ts:287) marks the `description` rich-text field Validators.required
+      // (component.ts:107-108, 260-262). While detailPageForm is invalid, saveState returns 'blocked'
+      // (ts:521) and "Save Enrollment" renders permanently disabled — the save path is unreachable, which
+      // is NOT what WS-05 is testing. Seeding a description is a precondition; the case still asserts only
+      // the title the app WROTE. `description` is ngx-editor HTML, so it must be markup, not bare text.
+      description: '<p>Seeded workshop description (WS-05 save precondition).</p>',
       workshopStartDate: at(2), workshopEndDate: at(9),
       registrationStartDate: at(-5), registrationEndDate: at(1),
     }, ...tag,
@@ -470,12 +478,47 @@ async function seedWorkshops() {
     ...tag,
   });
 
+  // 6b) EMAIL TEMPLATE — precondition for the WS-09/WS-14 comms-safety case.
+  //
+  //     The dashboard's Send-Email button now opens the "Email Campaign Composer"
+  //     (participants-analytics/email-input), which replaced the old free-text subject/message form.
+  //     The composer cannot send anything until a template is picked, and its "Create Template" button
+  //     CLOSES the dialog and routes to /email-templates (email-input.component.ts:848) — so there is no
+  //     in-dialog authoring path. With zero templates the composer renders "No templates found" and the
+  //     send path is simply unreachable, which is what made WS-14 fail.
+  //
+  //     fetchTemplates() (ts:245-251) queries `email templates` with FOUR predicates, so every one of
+  //     these fields is load-bearing — drop any and the template silently never appears:
+  //        postmarkstatus == 'approved' · templatevalidated == true · templatestatus != 'rejected' · type == 'email'
+  //
+  //     This is a PRECONDITION only. The case's oracle is the prod-firewall capture (zero
+  //     *.cloudfunctions.net escapes), never anything written here.
+  await db.collection('email templates').doc(ID.EMAIL_TPL).set({
+    docid: ID.EMAIL_TPL,
+    // The grid card renders `templatename` (email-input.component.html:184) — NOT `name`.
+    templatename: `WS Comms Template ${TESTRUNID}`,
+    subject: `WS14 subject ${TESTRUNID}`,
+    // onTemplateChange copies `htmlbody` into bufferDoc.body (ts:476), and formValidation() requires a
+    // non-empty subject AND body before any send button enables (ts:710-717). Deliberately variable-free
+    // markup: initVariableConfigs finds no {{placeholders}}, so isVariablesConfigured() is trivially
+    // satisfied and the case does not have to drive the variable-mapping panel.
+    htmlbody: '<p>WS14 seeded template body</p>',
+    type: 'email',
+    postmarkstatus: 'approved',
+    templatevalidated: true,
+    templatestatus: 'approved',
+    category: 'Workshop',
+    subcategory: 'Broadcast',
+    created: at(-1),
+    ...tag,
+  });
+
   // 7) 2026-09-04 addendum — the nine previously-uncovered routes (WS-16..WS-33).
   const addendum = await seedAddendum(db, T, tag, at);
 
   return {
     TESTRUNID, ID, PF, EMAIL,
-    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 3, products: 2, ...addendum },
+    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 3, products: 2, emailTemplates: 1, ...addendum },
   };
 }
 
@@ -484,6 +527,8 @@ async function seedWorkshops() {
 const SEEDED = [
   'workshopconfiguration', 'workshop participant enrolled', 'participant workshop', 'participant metadata',
   'static meta data',
+  // WS-09/WS-14 composer precondition. Run-tagged, so the sweep leaves any other run's templates alone.
+  'email templates',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
   // 2026-09-04 addendum (WS-16..WS-33). All run-tagged, so the sweep is scoped to THIS run.

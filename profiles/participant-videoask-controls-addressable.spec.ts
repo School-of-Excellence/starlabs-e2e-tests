@@ -16,7 +16,7 @@ test.describe('participant-videoask — interactive controls addressable + mount
 
   test('participant-videoask (/participantvideoask) — controls addressable', async ({ page }) => {
     await page.goto('/participantvideoask', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('pva-live')).toBeTruthy();
     expect(page.getByTestId('pva-live')).toBeTruthy();
     expect(page.getByTestId('pva-type-to-search')).toBeTruthy();

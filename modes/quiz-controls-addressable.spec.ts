@@ -16,7 +16,7 @@ test.describe('quiz — interactive controls addressable + mount smoke', () => {
 
   test('quizscreen (/quiz) — controls addressable', async ({ page }) => {
     await page.goto('/quiz', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('qz-openquizdialog')).toBeTruthy();
     expect(page.getByTestId('qz-openquizdialog')).toBeTruthy();
     expect(page.getByTestId('qz-viewquiz')).toBeTruthy();
@@ -27,7 +27,7 @@ test.describe('quiz — interactive controls addressable + mount smoke', () => {
 
   test('viewquizcohort (/viewquiz) — controls addressable', async ({ page }) => {
     await page.goto('/viewquiz', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('vqc-togglefilters')).toBeTruthy();
     expect(page.getByTestId('vqc-togglefilters')).toBeTruthy();
     expect(page.getByTestId('vqc-exporttoexcel')).toBeTruthy();

@@ -224,7 +224,14 @@ async function seedListsSegmentsTags(db, tag, PF, opts = {}) {
   const mkTag = (id, name, isActive) =>
     db.collection('participant tags').doc(id).set({
       id, name, isActive,
-      tagsfor: 'participant',
+      // ARRAY, not a bare string. The app treats `tagsfor` as a list everywhere:
+      //   tag-participants.component.html:68  *ngFor="let t of tag.tagsfor"
+      //   tag-participants.component.html:59  <mat-select multiple [(ngModel)]="tag.tagsfor">
+      //   first-timers-dashboard.component.ts:176  where('tagsfor','array-contains','live event')
+      // Seeding the string 'participant' made NgFor throw on every render of the tag list:
+      //   NG02200: Cannot find a differ supporting object 'participant' of type 'string'
+      // which broke the dialog the tag cases drive (PA-39..PA-43) and tripped the console guard.
+      tagsfor: ['participant'],
       created: ts(0),                      // <- omit this and the tag is invisible to the dialog
       segmentid: [],
       ...tag,

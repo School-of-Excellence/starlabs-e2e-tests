@@ -315,10 +315,17 @@ export async function cleanDuplicateWorkshops(title: string): Promise<void> {
   const db = admin.firestore();
   // The duplicate copies detailpage wholesale, so detailpage.title === the source title. We can't query
   // a nested field cheaply without an index, so scan the small active:false set and match in memory.
+  //
+  // IDENTIFYING THE COPY: duplicateWorkshop() copies the SOURCE DOC WHOLESALE, which means the duplicate
+  // inherits our seed's `testrunid` too. The old `data.testrunid !== RUN` test therefore excluded the very
+  // doc it was meant to find — the copy was never deleted (verified: a stale duplicate survived a run) and
+  // WS-13's matching assertion saw 0. What actually separates the copy from our seeded docs is its ID:
+  // the app generates a fresh one, so anything that is not a seeded id is app-written.
+  const seededIds = new Set<string>(Object.values(wsIds));
   const snap = await db.collection('workshopconfiguration').where('active', '==', false).get();
   for (const d of snap.docs) {
     const data = d.data() || {};
-    const isDup = (data.detailpage && data.detailpage.title === title) && data.testrunid !== RUN;
+    const isDup = !!data.detailpage && data.detailpage.title === title && !seededIds.has(d.id);
     if (isDup) await d.ref.delete();
   }
 }

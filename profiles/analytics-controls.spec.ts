@@ -19,25 +19,25 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
     await expect(page).toHaveURL(/participants-analytics/, { timeout: 30_000 });
 
     // Always-present toolbar.
-    await expect(page.getByTestId('pa-menu-checklists')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('pa-menu-actions')).toBeVisible();
-    await expect(page.getByTestId('pa-menu-exports')).toBeVisible();
-    await expect(page.getByTestId('pa-import')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-menu-checklists')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pa-menu-actions')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-menu-exports')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-import')).toBeVisible();
     await expect(page.getByTestId('pa-import-file')).toBeAttached(); // hidden file input
-    await expect(page.getByTestId('pa-show-addcolumn')).toBeVisible();
-    await expect(page.getByTestId('pa-show-savedfilters')).toBeVisible();
-    await expect(page.getByTestId('pa-show-filters')).toBeVisible();
-    await expect(page.getByTestId('pa-queued-emails')).toBeVisible();
-    await expect(page.getByTestId('pa-queued-whatsapp')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-show-addcolumn')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-show-savedfilters')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-show-filters')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-queued-emails')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-queued-whatsapp')).toBeVisible();
 
     // Table header controls.
-    await expect(page.getByTestId('pa-select-all')).toBeVisible();
-    await expect(page.getByTestId('pa-table-filter')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-select-all')).toBeVisible();
+    await expect.soft(page.getByTestId('pa-table-filter')).toBeVisible();
   });
 
   test('checklists menu items are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('pa-menu-checklists').click();
+    await page.getByTestId('pa-menu-checklists').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-cl-higherorderpurchase')).toBeVisible();
     await expect.soft(page.getByTestId('pa-cl-customerstatus')).toBeVisible();
     await expect.soft(page.getByTestId('pa-cl-watsonstatus')).toBeVisible();
@@ -53,7 +53,7 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
 
   test('actions menu items (incl. submenus) are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('pa-menu-actions').click();
+    await page.getByTestId('pa-menu-actions').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-act-playlist')).toBeVisible();
     await expect.soft(page.getByTestId('pa-act-wati-workshop')).toBeVisible();
     await expect.soft(page.getByTestId('pa-act-wati-config')).toBeVisible();
@@ -81,7 +81,7 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
 
   test('export menu items are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('pa-menu-exports').click();
+    await page.getByTestId('pa-menu-exports').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-exp-table')).toBeVisible();
     await expect.soft(page.getByTestId('pa-exp-content')).toBeVisible();
     await expect.soft(page.getByTestId('pa-exp-selection')).toBeVisible(); // only when a row is selected
@@ -89,10 +89,10 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
 
   test('filters / saved-filters / add-column section controls are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('pa-show-filters')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pa-show-filters')).toBeVisible({ timeout: 30_000 });
 
     // Filters section.
-    await page.getByTestId('pa-show-filters').click();
+    await page.getByTestId('pa-show-filters').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-filter-participantmode')).toBeVisible();
     await expect.soft(page.getByTestId('pa-filter-customerstatus')).toBeVisible();
     await expect.soft(page.getByTestId('pa-filter-financialstatus')).toBeVisible();
@@ -118,18 +118,18 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
     await expect.soft(page.getByTestId('pa-filter-reset')).toBeVisible();
 
     // Saved-filters section.
-    await page.getByTestId('pa-show-savedfilters').click();
+    await page.getByTestId('pa-show-savedfilters').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-savedfilters-search')).toBeVisible();
 
     // Add-column section.
-    await page.getByTestId('pa-show-addcolumn').click();
+    await page.getByTestId('pa-show-addcolumn').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-addcolumn-select')).toBeVisible();
     await expect.soft(page.getByTestId('pa-addcolumn-refresh')).toBeVisible();
   });
 
   test('conditional table-scoped controls are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('pa-table-filter')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pa-table-filter')).toBeVisible({ timeout: 30_000 });
     // Only present while a checklist is active.
     await expect.soft(page.getByTestId('pa-clear-customerstatus')).toBeVisible();
     // Only present once the tag-history side panel is opened.
@@ -138,8 +138,8 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
 
   test('save-search modal controls are addressable', async ({ page }) => {
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId('pa-show-filters').click();
-    await page.getByTestId('pa-filter-save').click();
+    await page.getByTestId('pa-show-filters').click().catch(() => {}); // best-effort (addressable)
+    await page.getByTestId('pa-filter-save').click().catch(() => {}); // best-effort (addressable)
     await expect.soft(page.getByTestId('pa-modal-close')).toBeVisible();
     await expect.soft(page.getByTestId('pa-modal-label')).toBeVisible();
     await expect.soft(page.getByTestId('pa-modal-clear')).toBeVisible();
@@ -153,7 +153,7 @@ test.describe('Participants Evolution Summary (/participant-evolution-summary) �
     await loginAsProfileAdmin(page);
     await page.goto('/participant-evolution-summary', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participant-evolution-summary/, { timeout: 30_000 });
-    await expect(page.getByTestId('pes-export')).toBeVisible({ timeout: 30_000 });
+    await expect.soft(page.getByTestId('pes-export')).toBeVisible({ timeout: 30_000 });
   });
 
   // SIR-ADDR — send-interim-report is a MatDialog opened from participants-analytics (participants-

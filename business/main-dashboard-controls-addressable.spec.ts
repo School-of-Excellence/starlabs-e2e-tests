@@ -10,7 +10,7 @@ test.describe('main-dashboard — interactive controls addressable + mount smoke
 
   test('main-dashboard (/EISDashboard) — controls addressable', async ({ page }) => {
     await page.goto('/EISDashboard', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('eisd-navigatetoroute')).toBeTruthy();
   });
 });

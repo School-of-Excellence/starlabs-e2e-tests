@@ -253,6 +253,25 @@ export async function resetEditTargetRow(): Promise<void> {
 }
 
 /**
+ * EM-02 precondition + cleanup: hard-delete every evolutionmappingvideo row for pNew.
+ *
+ * pNew is seeded with NO catalogue rows on purpose (seed-evomap.js step 3 seeds rows only for pLive /
+ * p0 / pDel / pToggle), so EVERY evolutionmappingvideo doc carrying profileid == pNew was written by the
+ * APP through the add-evolution dialog. Removing them makes EM-02's `before` count a clean 0 on a fresh
+ * seed AND makes the case re-runnable without teardown: without this, a second run would find last run's
+ * app-written row still there and `rows.find(title === PV1)` could resolve the STALE doc rather than the
+ * one this run's click produced.
+ *
+ * This is a PRECONDITION/CLEANUP write only — the assertion is on the row the APP batch-writes on the
+ * real Save Mapping click, counted against the pre-state read back here.
+ */
+export async function clearAppWrittenCatalogueFor(profileid: string): Promise<void> {
+  const { db } = adminHandles();
+  const snap = await db.collection('evolutionmappingvideo').where('profileid', '==', profileid).get();
+  for (const d of snap.docs) await d.ref.delete().catch(() => {});
+}
+
+/**
  * Restore the EM-14 standalone participant-video (PV_DEL) to delete:false so the log overlay renders it
  * as a deletable card and the case is re-run-stable. PRECONDITION only — the assertion is on the
  * delete:true the APP writes via updateDoc on the real Delete click.

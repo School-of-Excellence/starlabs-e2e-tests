@@ -16,7 +16,7 @@ test.describe('Diagnostics Tool — interactive controls addressable + mount smo
 
   test('queue-event-health (/queueeventhealth) — controls addressable', async ({ page }) => {
     await page.goto('/queueeventhealth', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('qeh-activekpifilter-null-applyfilters')).toBeTruthy();
     expect(page.getByTestId('qeh-activekpifilter-null-applyfilters')).toBeTruthy();
     expect(page.getByTestId('qeh-onkpiclick')).toBeTruthy();
@@ -80,7 +80,7 @@ test.describe('Diagnostics Tool — interactive controls addressable + mount smo
 
   test('live-event-health (/liveeventhealth) — controls addressable', async ({ page }) => {
     await page.goto('/liveeventhealth', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('leh-type-to-search')).toBeTruthy();
     expect(page.getByTestId('leh-type-to-search')).toBeTruthy();
     expect(page.getByTestId('leh-ontotalkpiclick')).toBeTruthy();

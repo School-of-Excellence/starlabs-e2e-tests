@@ -42,8 +42,35 @@ const EVENT1_NAME = `TEST Event ${RUN}`;
 async function pickMatOption(page: Page, comboboxName: RegExp, optionName: RegExp | string): Promise<void> {
   const combo = page.getByRole('combobox', { name: comboboxName });
   await expect(combo).toBeVisible({ timeout: 30_000 });
-  const panel = await openMatSelect(page, combo);
-  await panel.getByRole('option', { name: optionName }).click();
+
+  // OPENING IS NOT ENOUGH — THE OPTIONS CAN ARRIVE LATE. openMatSelect guarantees the PANEL is open, but
+  // several of these selects are populated by an async getDocs fired from a PRIOR control's change. EVT-13
+  // is the case in point: choosing "Live Event" in Event Type kicks off
+  // `getDocs(collection('event collection'))` (create-arena-space.component.ts:398-400) which fills
+  // eventArray; open the Event select before that resolves and the panel is genuinely EMPTY. The option
+  // lookup then waited out the full 120s test timeout on a panel that would have been populated a moment
+  // later. Re-opening a SINGLE select is harmless (unlike the multi-select case pickQueueOption guards),
+  // so close and retry until the option shows up.
+  const option = page.getByRole('listbox').getByRole('option', { name: optionName });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    await openMatSelect(page, combo);
+    try {
+      await option.first().waitFor({ state: 'visible', timeout: 3_000 });
+      await option.first().click();
+      return;
+    } catch (e) {
+      lastErr = e;
+      // Dismiss the empty panel so the next openMatSelect starts from a clean state.
+      await page.keyboard.press('Escape').catch(() => {});
+      await page.waitForTimeout(1_000);
+    }
+  }
+  throw new Error(
+    `pickMatOption: option ${optionName} never appeared in the "${comboboxName}" panel after 5 opens. ` +
+    'The panel DID open each time, so this is an empty/late-populated option list, not a click that ' +
+    `missed — check the async load that fills it. Last error: ${(lastErr as Error)?.message ?? lastErr}`,
+  );
 }
 
 // ---- EOD-v2 queue picker: the "Select queue" panel's options populate only AFTER getQueueData()
@@ -697,7 +724,18 @@ test.describe('Events DEEP — event-opportunity-dashboard-v2 (EVT-15/16)', () =
     guard = attachConsoleGuard(page);
     await installEvtStubs(page);
   });
-  test.afterEach(() => assertNoFatal(guard, 'events-deep eod: no fatal console errors / pageerrors'));
+  // A SKIPPED TEST MUST NOT BE POLICED BY THE CONSOLE GUARD. skipUnlessEodV2() bails out the moment it
+  // sees the legacy v1 host, but afterEach still runs — and the v1 screen emits
+  //   NG01203: No value accessor for form control unspecified name attribute
+  // on load. The guard counted those, so both cases were reported FAILED on a branch where they had
+  // correctly decided not to run at all. That is a false red: the errors come from a screen these tests
+  // deliberately refuse to assert against, and it masked the real signal (the self-skip working).
+  // Assert only when the test actually ran. The NG01203 itself is a genuine app defect on legacy EOD v1
+  // and is reported separately — it is NOT being suppressed for a test that does run.
+  test.afterEach(({}, testInfo) => {
+    if (testInfo.status === 'skipped') return;
+    assertNoFatal(guard, 'events-deep eod: no fatal console errors / pageerrors');
+  });
 
   // ===========================================================================================
   // EVT-15 — creating a custom stage-count writes `stage opportunity count` with the entered stagename

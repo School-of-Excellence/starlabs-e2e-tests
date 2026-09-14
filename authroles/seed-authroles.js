@@ -66,10 +66,19 @@ const ROUTES = [
   { route: '/profile-role-access', label: 'Profile Role Access', roles: ['admin', 'ah'] },
   { route: '/roster', label: 'Auth Roster' },
   { route: '/EISDashboard', label: 'EIS Dashboard' },
-  // /web-studio-invitation — a STAFF route the participant lacks (used by the deny-matrix AR-02b so the
+  // /routeconfiguration — a STAFF route the participant lacks (used by the deny-matrix AR-02b so the
   // participant deny verdict is proven on a SECOND distinct staff route, not only /roster). Granted to the
-  // staff role-set (admin/ah/eis) + staff profileids only; participant has neither → guard denies.
-  { route: '/web-studio-invitation', label: 'Auth Studio Invite', roles: ['admin', 'ah'] },
+  // staff role-set (admin/ah/eis) + staff profileids only; participant has neither → guard denies with the
+  // "Access denied" ConfirmComponent (auth.guard.ts:58-70), NOT the "Contact Admin" no-grant branch.
+  //
+  // CHANGED 2026-09-13 (was '/web-studio-invitation'): that path has NO entry in app.routes.ts at all —
+  // WebStudioInvitationComponent is only embedded inside QueueWebVersion1Component, never routed. The path
+  // therefore fell through to the UNGUARDED wildcard {path:'**'} (app.routes.ts:369 →
+  // ExceptionalroutingComponent), the authGuard never ran, and the grant below was dead weight: AR-02b
+  // could not pass for any seed. /routeconfiguration is a real, singly-declared, authGuard-protected staff
+  // screen (app.routes.ts:12) and is granted by NO other suite's seed, so exactly ONE dashboard doc matches
+  // it in authguard.service.ts routeConfig()'s full-collection scan (:325-345, last match wins).
+  { route: '/routeconfiguration', label: 'Auth Route Configuration', roles: ['admin', 'ah'] },
 ];
 
 // ── NAV-TREE parent doc (the deepening fixture for AR-05/06/07) ────────────────────────────────────

@@ -19,25 +19,23 @@ test.describe('Workshops — tv-auth redirect + eiflix telemetry (real UI)', () 
   // ===========================================================================================
   // WS-36 — /eiflixtelemetry renders its dashboard
   // ===========================================================================================
-  // PARKED — an unexplained render failure, not a flaky test. Everything the spec controls checks out;
-  // the component simply does not appear. What was VERIFIED, so nobody repeats it:
-  //   * the URL holds at /eiflixtelemetry — the assertion below passes, so the router resolved the route
-  //     and the guard ADMITTED it (a denial redirects, and looks identical to a render failure without
-  //     this check — which is why the URL assertion was added and is worth keeping);
-  //   * the dashboard grant IS in the emulator: `wshop_dash__eiflixtelemetry`, roles ["admin","ah"],
-  //     2 profileids — read back directly from Firestore, and the logged-in actor holds those roles;
-  //   * NO console error or pageerror is raised — the console guard stays clean, so the component is not
-  //     throwing on the way in;
-  //   * the template's root <div class="app"> is unconditional (html:1) and the h1 sits inside it, so a
-  //     mounted component could not render nothing;
-  //   * the dev server reports no build error for this component (only unrelated CSS nesting warnings),
-  //     and it is standalone-by-default like every other routed component in this app — none of them
-  //     declares `standalone` explicitly, so that is not the difference.
+  // UN-PARKED 2026-09-13 — and note that NOTHING in this case was changed to achieve it. It was parked as
+  // "an unexplained render failure": route resolves, guard admits, nothing throws, template unconditional,
+  // and yet no host element. Re-run as written, it passes.
   //
-  // So: route resolves, guard admits, no error thrown, template unconditional — and no host element.
-  // I could not account for that in reasonable time and will not ship a weakened assertion to make it
-  // green. Enable this once the cause is known; the assertions below are the ones that should hold.
-  test.fixme('WS-36 eiflixtelemetry mounts and renders its telemetry dashboard', async ({ page }) => {
+  // The prior note also cross-referenced events EVT-17 (/liveeventhealth) as a second component with the
+  // "identical symptom", which made the pair look like evidence of a shared defect. EVT-17 was probed
+  // directly and its host mounts fine too — its real failures were two spec-side mistakes (looking for an
+  // autocomplete option in static host text, and picking another suite's seeded event). So the shared
+  // diagnosis was wrong in both places and the "two components, same symptom" reasoning was a coincidence
+  // of two unrelated wrong conclusions.
+  //
+  // Keep the URL assertion below: it is genuinely load-bearing, because a guard denial redirects silently
+  // and is indistinguishable from a render failure without it.
+  //
+  // LESSON for future parks: this was parked on inference from what was ruled out, with no direct probe of
+  // the live DOM. One 20-line probe (log in, navigate, dump document) settled it. Probe before parking.
+  test('WS-36 eiflixtelemetry mounts and renders its telemetry dashboard', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await page.goto('/eiflixtelemetry', { waitUntil: 'domcontentloaded' });
 

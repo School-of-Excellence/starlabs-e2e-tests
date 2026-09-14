@@ -16,7 +16,7 @@ test.describe('Offtime — interactive controls addressable + mount smoke', () =
 
   test('offtime-list (/offtime) — controls addressable', async ({ page }) => {
     await page.goto('/offtime', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('ofl-input')).toBeTruthy();
     expect(page.getByTestId('ofl-input')).toBeTruthy();
     expect(page.getByTestId('ofl-addofftime')).toBeTruthy();
@@ -27,7 +27,7 @@ test.describe('Offtime — interactive controls addressable + mount smoke', () =
 
   test('approve-offtime (/approveofftime) — controls addressable', async ({ page }) => {
     await page.goto('/approveofftime', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('aof-input')).toBeTruthy();
     expect(page.getByTestId('aof-input')).toBeTruthy();
     expect(page.getByTestId('aof-selectedofftimeaction')).toBeTruthy();

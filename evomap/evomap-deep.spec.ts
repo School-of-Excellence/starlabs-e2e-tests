@@ -23,7 +23,7 @@ import {
   evoActors, evoProfileIds, evoIds, evoTitles, evoUrls, evoVideoTypes, evoMetaNames,
   installEvomapStubs, loginAsEvoAdmin, PVM_LASTVIDEO_INDEX_ERR,
   resetEditTargetRow, resetPVdelTarget, resetToggleLive,
-  countNonDeletedFor, hasNonDeletedTitleFor,
+  countNonDeletedFor, hasNonDeletedTitleFor, clearAppWrittenCatalogueFor,
 } from './support/evomap';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { openMatSelect } from '../_shared/mat-select';
@@ -82,7 +82,24 @@ test.describe('Evolution Mapping — admin write depth (real dialogs → Firesto
   // ===========================================================================================
   // EM-02 — the 4-step add-evolution dialog batch-writes a new evolutionmappingvideo row
   // ===========================================================================================
-  test.fixme('EM-02 add-evolution dialog writes a new evolutionmappingvideo row (count increments by 1)', async ({ page }) => {
+  // WHY THIS WAS PARKED (reason re-derived + recorded 2026-09-13 — the fixme carried none — then FIXED):
+  //   The load gate below used to be the EV_D1 row (`evoTitles.D1`). EV_D1 is EM-04's SOFT-DELETE TARGET:
+  //   EM-04 (evolution-mapping.spec.ts:59) resets it to deleted:false, clicks the real Delete FAB, asserts
+  //   the app wrote deleted:true — and never restores it. The catalogue table queries
+  //   `where('deleted','!=',true)` (evolution-mapping.component.ts:172), so from EM-04 onward the D1 row
+  //   is absent from the table for the rest of the run. The emulator config is workers:1 /
+  //   fullyParallel:false (lib/emulator-playwright-config.ts:30-31) and Playwright orders spec files
+  //   alphabetically, so `evolution-mapping.spec.ts` ALWAYS runs before `evomap-deep.spec.ts` — EM-02's
+  //   gate was therefore guaranteed to time out on every full-suite run, before it ever reached the
+  //   dialog. (Run on its own it would have passed, which is how a fully-written case ended up parked.)
+  //   FIX: gate on a catalogue row no case in this suite mutates — EV_T1 (pToggle). EM-15 is the only
+  //   case that touches pToggle and it writes `liveevolutionmapping` only, never the catalogue row.
+  test('EM-02 add-evolution dialog writes a new evolutionmappingvideo row (count increments by 1)', async ({ page }) => {
+    // Precondition (idempotent, PRECONDITION ONLY): drop any evolutionmappingvideo row for pNew. pNew is
+    // seeded with NO catalogue rows (seed-evomap.js step 3 seeds pLive/p0/pDel/pToggle only), so anything
+    // present here is a row a PREVIOUS run's click left behind; clearing it keeps `before` a clean 0 and
+    // stops the row lookup below resolving a stale doc instead of the one this run's click produced.
+    await clearAppWrittenCatalogueFor(evoProfileIds.pNew);
     // Pre-state (anti-circular): pNew's current non-deleted catalogue count (the app reads these too).
     // Use the dedicated pNew participant so this case never contends with the p0 read-path cases.
     const before = await countNonDeletedFor(evoProfileIds.pNew);
@@ -90,33 +107,56 @@ test.describe('Evolution Mapping — admin write depth (real dialogs → Firesto
     await loginAsEvoAdmin(page);
     await page.goto('/evolutionmapping', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/evolutionmapping/, { timeout: 30_000 });
-    // Ensure the catalogue + profile map have loaded (a known seeded row renders), so the add FAB +
-    // getProfileMap() are ready before we open the dialog.
-    await expect(page.locator(ROW).filter({ hasText: evoTitles.D1 })).toBeVisible({ timeout: 30_000 });
+    // Ensure the catalogue has loaded (a known seeded row renders) so the add FAB is mounted before we
+    // open the dialog. EV_T1/pToggle is used deliberately — see the run-order note above: it is a seeded
+    // catalogue row no case in this suite ever mutates.
+    await expect(page.locator(ROW).filter({ hasText: evoTitles.T1 }),
+      'EM-02: the catalogue must finish loading before the add FAB is used').toBeVisible({ timeout: 30_000 });
 
-    // [REAL-UI] open the add dialog (FAB only shows when selection is empty — it is on first load).
+    // [REAL-UI] open the add dialog. The FAB renders only while selection is empty
+    // (evolution-mapping.component.html:41) — it is, on first load — and opens the dialog with NO `data`,
+    // i.e. create mode (evolution-mapping.component.ts:431-443).
     await page.locator('[aria-label="add evolution"]').click();
     const dialog = page.locator('mat-dialog-container');
     await expect(dialog, 'EM-02: the add dialog must open').toBeVisible({ timeout: 20_000 });
 
-    // Step 1 — participant select. mapProfile keys profile_data doc-id → name, and the seeder sets
-    // name = the participant EMAIL, so type pNew's email to filter to exactly one option, then click it.
+    // Step 1 — participant select (evolutiom-mapping-add.component.html:70-88; the sole combobox in the
+    // dialog in create mode). Each option's TEXT is `mapProfile[key]` (html:86), and mapProfile maps
+    // profile_data doc-id -> profile_data.name (authguard.service.ts:602). seedAuthChain writes
+    // profile_data.name = the participant EMAIL (fixtures/seed-test-project.js:430), and filterOptions()
+    // matches on that same string (evolutiom-mapping-add.component.ts:100-104) — so pNew's email is the
+    // only value that can narrow this list to one option. The filter is bound to (keyup) (html:78), hence
+    // pressSequentially inside pickSearchSelectOption, never .fill().
     const partSelect = dialog.getByRole('combobox').first();
     await expect(partSelect, 'EM-02: participant select must render in the dialog').toBeVisible({ timeout: 20_000 });
     await pickSearchSelectOption(page, partSelect, evoActors.participantNew, evoActors.participantNew);
 
-    // Step 2 — the video-TYPE card (onSelect queried `participant videos` for pNew; its sole seeded
-    // source video carries the run-unique Interview type). Click the type card.
+    // Step 2 — the video-TYPE card. onSelect() queried `participant videos` where profileid == the picked
+    // key AND delete == false (evolutiom-mapping-add.component.ts:119-125) and derived videoTypes from the
+    // distinct `type`s (ts:135); pNew's sole seeded source video (seed-evomap.js PV_N) carries the
+    // run-unique Interview type. Cards render at html:98-109; clicking runs onTypeSelect (ts:141-144).
     const typeCard = dialog.locator('.video-title-card', { hasText: evoVideoTypes.interview });
     await expect(typeCard.first(), 'EM-02: the seeded video-type card must appear').toBeVisible({ timeout: 15_000 });
     await typeCard.first().click();
 
-    // Step 3 — the SOURCE-video card (by its unique seeded title). Clicking adds it to selectedVideos.
+    // Step 3 — the SOURCE-video card (html:121-137), by its unique seeded title. Clicking runs
+    // onVideoTitleSelect (ts:159-200) which, in create mode (data == null), adds the title to
+    // selectedVideos (ts:190) — the set addEvolution() iterates.
     const videoCard = dialog.locator('.video-title-card', { hasText: evoTitles.PV1 });
     await expect(videoCard.first(), 'EM-02: the seeded source video must be selectable').toBeVisible({ timeout: 15_000 });
     await videoCard.first().click();
+    // Wait for the DOM signal that selectedVideos actually took the title before clicking Save.
+    // addEvolution() guards on `selectedVideos.size === 0` with an alert() that returns WITHOUT writing
+    // (ts:247-251), so a Save that lands first silently no-ops and the count never moves. The card's
+    // .selected class is bound to isVideoSelected() (html:125 -> ts:202-204) — i.e. exactly that guard
+    // going truthy. (Same discipline as EM-03's pre-selection wait below.)
+    await expect(dialog.locator('.video-title-card.selected').filter({ hasText: evoTitles.PV1 }),
+      'EM-02: the picked source video must be in selectedVideos before Save').toBeVisible({ timeout: 15_000 });
 
-    // Step 4 — Save Mapping (app batch.set's a NEW evolutionmappingvideo doc with deleted:false).
+    // Step 4 — Save Mapping (html:180-183). mat-icon is aria-hidden so the accessible name is just the
+    // label, and it reads "Save Mapping" for one selection / "Save Mappings" for several (html:182) —
+    // hence the non-exact regex. Clicking runs addEvolution() -> writeBatch.set of a NEW
+    // evolutionmappingvideo doc per selected video, with deleted:false (ts:252-266).
     const saveBtn = dialog.getByRole('button', { name: /Save Mapping/i });
     await expect(saveBtn, 'EM-02: Save Mapping button must appear once a video is selected').toBeVisible({ timeout: 15_000 });
     await saveBtn.click();
@@ -128,15 +168,26 @@ test.describe('Evolution Mapping — admin write depth (real dialogs → Firesto
       (n) => n === before + 1,
       { label: `EM-02: pNew catalogue count ${before} -> ${before + 1}`, timeoutMs: 30_000 },
     );
-    // And the app created a NON-deleted row titled from the picked source video (app-derived title), with
-    // the (no-op converted) source url — both are values the PRODUCT wrote, not the test.
+    // And the app created a NON-deleted row titled from the picked source video (the title comes from the
+    // source doc the APP read back, ts:259) carrying that video's url passed through convertDropboxUrl
+    // (ts:260). That conversion is a NO-OP here: it only rewrites urls containing the literal
+    // "dropbox.com" (ts:147) and the seeded host is "dl.dropboxusercontent.com", which does not contain
+    // that substring — so the stored url must equal the seeded source url verbatim. Both are values the
+    // PRODUCT wrote, not the test.
     expect(await hasNonDeletedTitleFor(evoProfileIds.pNew, evoTitles.PV1),
       'EM-02: a non-deleted row titled from the picked source video exists').toBe(true);
     const rows = await queryWhere('evolutionmappingvideo', [['profileid', '==', evoProfileIds.pNew]]);
     const created = rows.find((r) => r.title === evoTitles.PV1 && r.deleted !== true);
     expect(created?.videourl, 'EM-02: the app stored the source video url on the new row').toBe(evoUrls.PV1);
-    // Re-run-stable: `before` is recomputed live each run, so +1 holds regardless of rows a prior run
-    // left behind (global-setup teardown clears them between full suite runs).
+    // ...and stamped the PICKED participant on the row (ts:258, profileid := selectedProfile — the
+    // mapProfile key, i.e. the profile_data doc id), so this is a real catalogue row for pNew, not an
+    // orphan that merely happened to land in the collection.
+    expect(created?.profileid, 'EM-02: the app stored the picked participant on the new row').toBe(evoProfileIds.pNew);
+
+    // CLEANUP: the app-written row carries no testrunid, so remove it here rather than leaning on the
+    // seed teardown's natural-key sweep — re-runs then start from the same state. Runs AFTER every
+    // assertion, so it can never weaken one.
+    await clearAppWrittenCatalogueFor(evoProfileIds.pNew);
   });
 
   // ===========================================================================================

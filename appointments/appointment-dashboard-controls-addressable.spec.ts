@@ -10,7 +10,7 @@ test.describe('appointment-dashboard — interactive controls addressable + moun
 
   test('appointment-dashboard (/appointment-dashboard) — controls addressable', async ({ page }) => {
     await page.goto('/appointment-dashboard', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('apdb-start')).toBeTruthy();
     expect(page.getByTestId('apdb-end')).toBeTruthy();
     expect(page.getByTestId('apdb-toggleappointmenttype')).toBeTruthy();
