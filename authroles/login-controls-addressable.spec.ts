@@ -16,7 +16,11 @@ test.describe('login — interactive controls addressable + mount smoke', () => 
 
   test('login (/login) — controls addressable', async ({ page }) => {
     await page.goto('/login', { waitUntil: 'domcontentloaded' });
-    expect(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
+    // This IS the /login page — the "must not bounce" guard used for authenticated routes does not apply
+    // here. Assert we reached the login route and (soft) a primary control renders; the register-form
+    // controls live on a toggled tab, so they are addressable-referenced below rather than asserted visible.
+    expect(page.url(), 'login route should load at /login').toMatch(/login/);
+    await expect.soft(page.getByTestId('lgn-email').first()).toBeVisible({ timeout: 15_000 });
     expect(page.getByTestId('lgn-dologin')).toBeTruthy();
     expect(page.getByTestId('lgn-dologin')).toBeTruthy();
     expect(page.getByTestId('lgn-email')).toBeTruthy();
