@@ -91,7 +91,9 @@ test.describe('Location Log — All-logs delete (real UI, write-path, anti-circu
     await page.getByRole('tab', { name: 'All logs' }).click();
 
     // [REAL-UI] find the seeded row by the participant's resolved name, then delete it.
-    const row = page.locator('table[mat-table] tr', { hasText: `participant0+` });
+    // .first(): the "All logs" table can render more than one row matching the participant tag (strict-mode
+    // violation otherwise); the seeded LOCLOG1 row is the delete target and .first() resolves it stably.
+    const row = page.locator('table[mat-table] tr', { hasText: `participant0+` }).first();
     await expect(row, 'LOC-03: the seeded log row must render in "All logs"').toBeVisible({ timeout: 30_000 });
     await row.getByRole('button', { name: /^Delete log for /i }).click();
 
