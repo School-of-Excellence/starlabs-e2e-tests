@@ -408,6 +408,17 @@
         "functions/components/clientissue.js"
       ],
       "reviewNote": "WIRED 2026-09-08; CI-READY 2026-09-15. The emulator twin now exists (playwright.support.emulator.config.ts via makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown.ts), so the suite joins the emulator gate. config switched to the emulator twin and ciReady flipped true so the suite runs on the emulator gate via branch-suites and the console mirror (suites-deploy) credits src/app/Customer Support/**."
+    },
+    "unit": {
+      "title": "Unit tests",
+      "description": "Angular unit specs (*.unit.spec.ts) run via `ng test` — engines, services and pure utilities. No emulator, no Cloud Functions, no served app.",
+      "config": "",
+      "capture": "failure-only",
+      "specDir": "__unit_no_hub_dir__",
+      "ciReady": true,
+      "appPaths": [],
+      "cfPaths": [],
+      "reviewNote": "ADDED 2026-09-15. Runs in web-e2e.yml's UNIT LANE (suite=='unit' → `ng test --ts-config=tsconfig.unit.json --include='src/**/*.unit.spec.ts' --browsers=ChromeHeadless`), NOT Playwright. Fields are deliberately non-Playwright: `config` empty (web-e2e ignores it for unit), `specDir` points at a dir that does NOT exist in the hub so scripts/readiness skips it (existsSync guard, lib.cjs:186/259/380), and empty `appPaths` means a diff never auto-routes it MANDATORY — dispatch it explicitly (branch-suites suites=[\"unit\"]). 1,895 unit specs pass locally as of this date. Auto-routing (appPaths) can be added later once the lane is proven in CI."
     }
   },
   "cfPredeploy": {

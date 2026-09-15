@@ -87,7 +87,14 @@ jobs:
       - name: Checkout app (the caller repo, e.g. starlabs-angular)
         uses: actions/checkout@v4
 
+      # ── UNIT-LANE GUARD (2026-09-15) ──────────────────────────────────────────────────────────
+      # The `unit` suite (suites-manifest.json) runs `ng test`, NOT Playwright — it needs no engine,
+      # no Cloud Functions, no emulator and no served app. Every heavy step below is gated
+      # `if: inputs.suite != 'unit'`, so for the 13 e2e suites (suite != 'unit') the path is UNCHANGED
+      # (the guard is always true). A single additive `unit` step runs `ng test` instead. See the
+      # matching `- name: Run unit tests` step below.
       - name: Clone the E2E engine repo (starlabs-e2e-tests) → ./e2e
+        if: inputs.suite != 'unit'
         uses: actions/checkout@v4
         with:
           repository: School-of-Excellence/starlabs-e2e-tests
@@ -96,6 +103,7 @@ jobs:
           token: ${{ secrets.REPO_PAT }}
 
       - name: Clone the Cloud Functions repo (real triggers) → ./starlabs-cloud-function
+        if: inputs.suite != 'unit'
         run: |
           if [ -z "${{ secrets.REPO_PAT }}" ]; then
             echo "::error::REPO_PAT secret is not set — needed to clone the private CF repo."; exit 1
@@ -109,6 +117,7 @@ jobs:
       # setup-emulator-config.sh (APP_PATH) and deploy-cf-emulator.sh (CF_PATH + firebase's relative
       # functions.source) resolve exactly as they do on a dev machine.
       - name: Wire hub-style symlinks (app + cloud-function) for the e2e scripts
+        if: inputs.suite != 'unit'
         run: |
           ln -sfn "$GITHUB_WORKSPACE" e2e/app
           ln -sfn "$GITHUB_WORKSPACE/starlabs-cloud-function" e2e/starlabs-cloud-function
@@ -119,14 +128,17 @@ jobs:
           node-version: '22'   # functions/package.json engines.node == 22
 
       - uses: actions/setup-java@v4
+        if: inputs.suite != 'unit'
         with:
           distribution: temurin
           java-version: '21'   # the Firestore/Auth emulators require a JRE
 
       - name: Overlay emulator config from the e2e repo onto the app
+        if: inputs.suite != 'unit'
         run: bash e2e/ci/setup-emulator-config.sh   # runs from the app root (pwd)
 
       - name: Install firebase-tools
+        if: inputs.suite != 'unit'
         run: npm i -g firebase-tools@latest
 
       - name: Install app deps
@@ -155,9 +167,11 @@ jobs:
           fi
 
       - name: Install Cloud Functions deps
+        if: inputs.suite != 'unit'
         run: cd starlabs-cloud-function/functions && npm ci
 
       - name: Install e2e deps
+        if: inputs.suite != 'unit'
         run: cd e2e && npm ci
 
       # NO `--with-deps` — deliberate, 2026-09-09.
@@ -178,9 +192,11 @@ jobs:
       # lacks a library, the failure surfaces at browser LAUNCH with a clear missing-library message
       # — and the fix is then to install that one library, not to re-enable a whole apt update.
       - name: Install Playwright chromium
+        if: inputs.suite != 'unit'
         run: cd e2e && npx playwright install chromium
 
       - name: Boot Firebase emulator + Cloud Functions
+        if: inputs.suite != 'unit'
         run: |
           cd e2e && nohup bash scripts/deploy-cf-emulator.sh > /tmp/emu.log 2>&1 &
           for i in $(seq 1 90); do grep -q "All emulators ready" /tmp/emu.log && break; sleep 2; done
@@ -188,6 +204,7 @@ jobs:
           grep -E "functions: Loaded|All emulators ready" /tmp/emu.log
 
       - name: Boot emulator-wired Angular app
+        if: inputs.suite != 'unit'
         run: |
           nohup npm run start:emulator > /tmp/app.log 2>&1 &
           for i in $(seq 1 120); do curl -sf http://localhost:4200 >/dev/null 2>&1 && break; sleep 3; done
@@ -195,21 +212,49 @@ jobs:
 
       - name: Run isolated e2e suite (the gate)   # ── CHANGE 4 (was "Run isolated queue e2e suite") ──
         id: gate
+        if: inputs.suite != 'unit'
         run: cd e2e && EMU_REUSE=1 EMU_REUSE_APP=1 TESTRUNID=run1 bash scripts/run-isolated.sh
         # ↑ run-isolated.sh now reads CONFIG + SUITE_DIR from the env (set above). No per-suite change here.
 
+      # ── UNIT LANE (2026-09-15) — runs ONLY for suite == 'unit'. No emulator, no CF, no served app. ──
+      # `ng test` globs ALL *.spec.ts by default, which pulls in the empty CLI-stub *.component.spec.ts
+      # files that are NOT in tsconfig.unit.json → a compile "missing from compilation" load error that
+      # aborts Karma. `--include='src/**/*.unit.spec.ts'` scopes the run to the real unit specs (the same
+      # scoping the app's unit-tests.yml routing applies). Exit code = ng test result = this leg's pass/fail,
+      # which branch-suites aggregates and reports to the console via recordSuiteRun.
+      - name: Run unit tests (ng test)
+        id: unit
+        if: inputs.suite == 'unit'
+        run: |
+          export CHROME_BIN="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser || command -v chromium)"
+          echo "CHROME_BIN=$CHROME_BIN"
+          npx ng test --watch=false \
+            --ts-config=tsconfig.unit.json \
+            --include='src/**/*.unit.spec.ts' \
+            --browsers=ChromeHeadless \
+            --code-coverage
+
       - name: Upload Playwright report
-        if: always()
+        if: always() && inputs.suite != 'unit'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: e2e/playwright-report
           retention-days: 14
 
+      - name: Upload unit coverage
+        if: always() && inputs.suite == 'unit'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-coverage
+          path: coverage
+          retention-days: 14
+          if-no-files-found: ignore
+
       # APPEND-ONLY HISTORY (M6): record this run immutably to starlabs-cicd (Firestore cicd-audit + Storage).
       # Best-effort — no-ops if STARLABS_CICD_SA is unset, and never fails the gate (HISTORY_STRICT unset).
       - name: Record run in append-only history
-        if: always()
+        if: always() && inputs.suite != 'unit'   # unit lane reports via branch-suites recordSuiteRun; no playwright report/attachments to record here
         env:
           STARLABS_CICD_SA_JSON: ${{ secrets.STARLABS_CICD_SA }}
         run: |
