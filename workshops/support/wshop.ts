@@ -306,6 +306,35 @@ export async function resetParticipantWorkshopP0(): Promise<void> {
 }
 
 /**
+ * The instant WDC-10 stamps on p0's completed step, in the machine's local zone (seed-time Node and the
+ * test browser share it). The dashboard renders it with formatDateTime → "15 Sept 2026, 8:05 pm".
+ */
+export const wsP0CompletedAt = new Date(2026, 8, 15, 20, 5, 0, 0);
+
+/**
+ * Same 1-of-2 precondition as resetParticipantWorkshopP0, plus a KNOWN `completed` timestamp and a
+ * `platform_name` on the completed step, so the card's date/time and platform pill assert against known
+ * inputs. PRECONDITION write only — the spec asserts the FORMAT and LABEL the app derived.
+ */
+export async function stampParticipantWorkshopP0Completed(platformName = 'eiflixapp'): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('participant workshop').doc(wsIds.PW_A).set({
+    challenges: [
+      {
+        type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One',
+        challenges: [
+          { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: 'completed',
+            completed: T.fromDate(wsP0CompletedAt), platform_name: platformName },
+          { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: '' },
+        ],
+      },
+    ],
+  }, { merge: true });
+}
+
+/**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the
  * settings-toggle test WS-10 starts from false. PRECONDITION write only.

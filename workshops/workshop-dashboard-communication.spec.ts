@@ -19,7 +19,10 @@
 //     dismissed composer returns no payload).
 // All reads are single-equality / collection scans — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
-import { wsIds, wsAddIds, wsMetaNames, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames } from './support/wshop';
+import {
+  wsIds, wsAddIds, wsMetaNames, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames,
+  resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed,
+} from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere } from '../queue/support/firestore-admin';
 
@@ -333,16 +336,55 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
     await expect(p0Row, 'WDC-08: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
     await p0Row.click();
 
-    // [ASSERT] p0's seeded participant-workshop rows (seed-workshops.js pwChallengesP0: 2 sub-challenges)
-    // carry NO platform_name, so the app must render the fallback on every card — the value the APP chose
-    // for a missing field, never one the test wrote.
+    // [ASSERT] p0's seeded participant-workshop rows (seed-workshops.js pwChallengesP0: one COMPLETED
+    // sub-challenge, one untouched) carry NO platform_name. The pill is only shown on a completed step, so
+    // exactly one pill renders, and it reads the fallback — the value the APP chose for a missing field,
+    // never one the test wrote. (WS-12 may complete the second step before us — then it is two pills.)
+    const completedChips = page.locator('.pd-sub .pd-chip.completed');
+    await expect(completedChips.first(), 'WDC-08: the seeded completed step renders').toBeVisible({ timeout: 30_000 });
+    const done = await completedChips.count();
     const pills = page.getByTestId('wdash-sub-platform');
-    await expect(pills, 'WDC-08: one platform pill per sub-challenge card').toHaveCount(2, { timeout: 30_000 });
+    await expect(pills, 'WDC-08: a pill on every completed step, none on untouched ones').toHaveCount(done, { timeout: 15_000 });
     for (const pill of await pills.all()) {
       await expect(pill, 'WDC-08: a row without a platform reads "EiFlix Web"').toHaveText(/EiFlix Web/);
     }
+    // Untouched steps show no pill at all.
+    const untouched = page.locator('.pd-sub').filter({ has: page.locator('.pd-chip.notstarted') });
+    expect(await untouched.count(), 'WDC-08: the seed leaves at least one untouched step').toBeGreaterThanOrEqual(1);
+    await expect(untouched.first().getByTestId('wdash-sub-platform'), 'WDC-08: no pill on an untouched step').toHaveCount(0);
     // The document-level platform (how p0 enrolled) sits in the hero strip; the seed stores none → web.
     await expect(page.getByTestId('wdash-pd-platform'), 'WDC-08: hero shows the enrolment platform').toContainText('EiFlix Web');
+  });
+
+  // ===========================================================================================
+  // WDC-10 — a completed step's date carries the clock time; an untouched step shows no date at all
+  // ===========================================================================================
+  test('WDC-10 a completed step shows its platform label and its date WITH time; an untouched step shows neither', async ({ page }) => {
+    // Precondition (anti-circular): a KNOWN completed instant and raw platform value on p0's first step.
+    // The app must turn them into "15 Sept 2026, 8:05 pm" and "EiFlix App" — the format and label are the
+    // app's, never strings the test wrote. Restored to the plain seed state afterwards for WS-12.
+    await stampParticipantWorkshopP0Completed('eiflixapp');
+    try {
+      await openDashboard(page);
+      const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
+      await expect(p0Row, 'WDC-10: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
+      await p0Row.click();
+
+      const completedCard = page.locator('.pd-sub').filter({ has: page.locator('.pd-chip.completed') }).first();
+      await expect(completedCard, 'WDC-10: the completed card renders').toBeVisible({ timeout: 30_000 });
+      // Day + 12-hour time, en-IN ("Sept" on current ICU, "Sep" on older builds — both are the same day).
+      await expect(completedCard.locator('.pd-meta-item').filter({ hasText: /2026/ }), 'WDC-10: completed date carries the clock time')
+        .toHaveText(/15 Sept? 2026, 8:05 pm/, { timeout: 15_000 });
+      await expect(completedCard.getByTestId('wdash-sub-platform'), 'WDC-10: raw "eiflixapp" is shown as EiFlix App')
+        .toHaveText(/EiFlix App/);
+
+      const untouched = page.locator('.pd-sub').filter({ has: page.locator('.pd-chip.notstarted') }).first();
+      await expect(untouched, 'WDC-10: the untouched step renders').toBeVisible();
+      await expect(untouched.locator('.pd-meta-item'), 'WDC-10: no date on an untouched step').toHaveCount(0);
+      await expect(untouched.getByTestId('wdash-sub-platform'), 'WDC-10: no platform pill on an untouched step').toHaveCount(0);
+    } finally {
+      await resetParticipantWorkshopP0();
+    }
   });
 
   // ===========================================================================================

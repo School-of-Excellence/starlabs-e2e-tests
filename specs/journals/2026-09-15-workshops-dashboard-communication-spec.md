@@ -58,3 +58,11 @@ Fix (no seed change): `wsMetaNames` (= the actor emails) + `alignWorkshopMetadat
 converge; the spec keys every metadata person on those, called from both `beforeEach` hooks. Phone / country
 code are identical on both sides, and the new_user_data people have no profile_data, so "NU Alpha <run>"
 still stands. WDC-01/08/09 and the addressable case had already passed.
+
+## Completed-only platform pill + completed date with time (app change, same day)
+
+WDC-08 now expects one pill per completed chip and none on an untouched step. New **WDC-10** stamps a
+KNOWN instant (`wsP0CompletedAt`, 15 Sept 2026 20:05 local) and a raw `platform_name: 'eiflixapp'` on p0's
+completed step (`stampParticipantWorkshopP0Completed()`, precondition write) and asserts what the app
+derived: "15 Sept 2026, 8:05 pm" and "EiFlix App"; the untouched step shows neither a date nor a pill.
+`finally` restores the plain seed state (`resetParticipantWorkshopP0`) so WDC-09 and WS-12 are unaffected.
