@@ -153,6 +153,15 @@ const ROUTES = [
   { route: '/sales-numbers', label: 'Sales Numbers' },                        // JP-24
   { route: '/delivery-dashboard', label: 'Delivery Dashboard' },              // JP-25
   { route: '/journey-coach-health', label: 'Journey Coach Health' },          // JP-26
+  // 2026-09-14 interactive-control-coverage pass (onboarding-controls/dashboards.spec.ts): three
+  // routable Journey Onboarding dashboards whose specs navigate directly. They were added to the spec
+  // but NOT here, so routeConfig() returned empty roles+profiles and the data-driven authGuard bounced
+  // the seeded admin with "No roles or profiles configured for screen: X" — the routed component never
+  // mounted (jcd/esn/jted toBeAttached failures). Each is a flat single-segment STAFF route, granted
+  // like the rest. (Confirmed via a [DIAG mount] probe: url fell back to '/', hostCount 0.)
+  { route: '/JourneycoachDashboard-new', label: 'Journey Coach Dashboard' },  // jcd
+  { route: '/ecosystem', label: 'Eco System' },                               // esn
+  { route: '/team-evolution-dashboard', label: 'Team Evolution Dashboard' },  // jted
 ];
 
 async function seedJourney() {
