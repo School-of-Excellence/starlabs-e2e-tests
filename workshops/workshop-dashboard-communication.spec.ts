@@ -371,6 +371,26 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
     await expect(stepRows.first()).toContainText(/[1-9]\d* completed/);
     await expect(stepRows.first()).toContainText('0 in progress');
     expect(page.getByTestId('wdash-platform-steps-card')).toBeTruthy();
+
+    // The section sits at the BOTTOM of the main column — after the archive sections, before the panel.
+    const order = await page.evaluate(() => {
+      const plat = document.querySelector('[data-testid="wdash-platform-section"]');
+      const pd = document.querySelector('#participantDataCard');
+      return !!plat && !!pd && !!(pd.compareDocumentPosition(plat) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(order, 'WDC-09: Platform Usage renders below Participant Data').toBe(true);
+
+    // [REAL-UI] clicking an enrolment platform opens the side panel with exactly those participants —
+    // the same panel the metric cards open (onPlatformClick → selectedParticipants → applyFilterSide).
+    await enrollRows.first().click();
+    const panel = page.locator('.participant-panel.panel-visible');
+    await expect(panel, 'WDC-09: the side panel opens').toBeVisible({ timeout: 15_000 });
+    await expect(panel.locator('.panel-header'), 'WDC-09: header names the platform').toContainText('Enrolled via');
+    await expect(panel.locator('.panel-header')).toContainText('EiFlix Web');
+    await expect(panel.locator('mat-card.participant-card'), 'WDC-09: one card per progress document')
+      .toHaveCount(pwDocs.length, { timeout: 30_000 });
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await expect(panel).toHaveCount(0, { timeout: 15_000 });
   });
 
   // ===========================================================================================
