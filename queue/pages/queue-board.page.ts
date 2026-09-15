@@ -69,7 +69,14 @@ const SEL = {
   stageCountChip: '.stage-count-chip',                   // each card chip when expanded (html:1136)
 
   // --- comms sidebar (operator.md §F) ---
-  commsSelectAll: '[data-testid="dqmg-act-6"]',  // .select-all-wrapper — LIVE board dynamic-queue-manager.component.html:60 (toggleSelectAll()). NOT qm-comms-selectall: that id exists only in the COMMENTED-OUT clone (dynamic-queue-manager-clone:175); the live board's select-all carries the auto-hook dqmg-act-6 (credited by queue-dialog-addressable-studio.spec.ts). Old selector never matched the live board → OP-09 "element not found".
+  // The board mounted at /dynamicqueuemanager on meena-development is the CLONE component
+  // (app.routes.ts:198 → DynamicQueueManagerCloneComponent; the non-clone is commented out at :197).
+  // The clone's comms panel has NO Select-All control: the .select-all-wrapper (qm-comms-selectall) is
+  // COMMENTED OUT in dynamic-queue-manager-clone.component.html:183-188, and dqmg-act-6 belongs to the
+  // OTHER (non-clone) component's HTML (dynamic-queue-manager.component.html:60) which this route never
+  // serves. So "select all" is driven by clicking every participant row instead (there is no single
+  // toggle). commsPanel is the panel-open signal: <main *ngIf="selectedChatStage != null"> (clone :15).
+  commsPanel: '.communication-container',                 // comms panel <main>, renders when selectedChatStage!=null (clone html:15)
   commsRecipientCount: '[data-testid="qm-comms-recipient-count"]', // span on Whatsapp btn (html:45)
   commsSend: '[data-testid="qm-comms-send"]',            // .send-btn, only when a comm type chosen (html:161)
   commsStageSelect: '.communication-container mat-select', // "Select Stages" multi-select (html:21)
@@ -399,27 +406,8 @@ export class QueueBoardPage {
       const header = await this.resolveStageHeader(stage as StageRef);
       await header.locator(SEL.stageCommsIcon).click();
     }
-    try {
-      await expect(this.page.locator(SEL.commsSelectAll), 'openComms: comms panel (Select-All) did not appear.').toBeVisible({ timeout: 15_000 });
-    } catch (e) {
-      // [DIAG — remove after root-cause] dump the comms area so we SEE why dqmg-act-6 is absent.
-      const dump = await this.page.evaluate(() => {
-        const q = (s: string) => Array.from(document.querySelectorAll(s)).length;
-        const sidebar = document.querySelector('.comms-sidebar, [class*="comms"], .communication-panel, aside, .sidebar');
-        return {
-          selectAllCount: q('[data-testid="dqmg-act-6"]'),
-          selectAllWrapperCount: q('.select-all-wrapper'),
-          participantsSection: q('.participants-section'),
-          commTypeButtons: q('[data-testid="dqmg-btn-4"], .comm-btn'),
-          sidebarClass: sidebar ? (sidebar.className || sidebar.tagName) : '(no comms sidebar element)',
-          sidebarHTML: sidebar ? (sidebar as HTMLElement).innerHTML.slice(0, 1500) : '(none)',
-          bodyHasCommsText: document.body.innerText.includes('Select All') || document.body.innerText.includes('Participants'),
-        };
-      }).catch((err) => ({ evalError: String(err) }));
-      // eslint-disable-next-line no-console
-      console.log('[DIAG openComms] ', JSON.stringify(dump, null, 2));
-      throw e;
-    }
+    // Panel is open once the comms <main> (gated by selectedChatStage != null) has rendered.
+    await expect(this.page.locator(SEL.commsPanel), 'openComms: comms panel did not appear.').toBeVisible({ timeout: 15_000 });
   }
 
   /**
@@ -435,22 +423,45 @@ export class QueueBoardPage {
   }
 
   /**
-   * Toggle "Select All" in the comms panel (html:175, toggleSelectAll()). Idempotent toward
-   * `want`: only clicks when the current checked state (`.custom-checkbox.checked` via areAllSelected())
-   * differs. NOTE: Select-All only has rows to select once stages are chosen in "Select Stages" — the
-   * panel's participant list is empty until then (html:184), so choose stages first (selectCommsStages
-   * or open comms via a stage's icon which pre-fills selectedChatStage but NOT selectedStages).
+   * Select (want=true) or deselect (want=false) EVERY participant row in the comms panel. The clone
+   * component ships NO Select-All toggle (the .select-all-wrapper is commented out — clone html:183-188),
+   * so "select all" is done by toggling each participant row through the product's own
+   * `toggleTokenSelection(token)` row click. Idempotent: a row is only clicked when its current selected
+   * state differs from `want`. Rows come from either the merged list (`dqmc-act-20-*`, when stages are
+   * chosen in "Select Stages") or the single-stage list (`dqmc-act-21-*`), both class `.participant-item`.
+   * NOTE: the list is empty until a stage is chosen (selectCommsStages) or comms was opened via a stage's
+   * icon (which pre-fills selectedChatStage). Verifies via the app-computed recipient count.
    */
   async commsSelectAll(want = true): Promise<void> {
-    const wrapper = this.page.locator(SEL.commsSelectAll);
-    await expect(wrapper).toBeVisible();
-    const checked = await wrapper.locator('.custom-checkbox.checked').count();
-    if ((checked > 0) !== want) {
-      await wrapper.click();
+    const items = this.page.locator(SEL.commsParticipantItem);
+    await expect(items.first(), 'commsSelectAll: no participant rows in the comms panel (are stages chosen and populated?).').toBeVisible({ timeout: 10_000 });
+    const n = await items.count();
+    for (let i = 0; i < n; i++) {
+      const item = items.nth(i);
+      const selected = await this.isCommsRowSelected(item);
+      if (selected !== want) {
+        await item.click();
+      }
     }
-    if (want) {
-      await expect(wrapper.locator('.custom-checkbox.checked'), 'commsSelectAll: Select-All did not become checked (are there participants in the chosen stages?).').toHaveCount(1, { timeout: 10_000 });
-    }
+    // Confirm via the PRODUCT's recipient count (getSelectedTokens().length) — not a test-side tally.
+    await expect
+      .poll(() => this.commsRecipientCount(), {
+        ...POLL,
+        message: `commsSelectAll: recipient count did not reach ${want ? n : 0} after toggling all rows.`,
+      })
+      .toBe(want ? n : 0);
+  }
+
+  /**
+   * Whether a comms participant row is currently selected. The merged list renders a real
+   * `<input type="checkbox" [checked]="isTokenSelected(token)">` (clone html:201); the single-stage list
+   * renders a styled `.custom-checkbox.checked` div (clone html:260). Check both forms.
+   */
+  private async isCommsRowSelected(item: Locator): Promise<boolean> {
+    if ((await item.locator('.custom-checkbox.checked').count()) > 0) return true;
+    const cb = item.locator('input[type="checkbox"]');
+    if ((await cb.count()) > 0) return cb.first().isChecked();
+    return false;
   }
 
   /**

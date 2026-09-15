@@ -13,6 +13,27 @@ test.beforeEach(async ({ page }) => {
   guard = attachJourneyGuard(page);
   await installJourneyStubs(page);
 });
+
+// [DIAG — remove after root-cause] Assert a routed component's host attaches; on failure, dump the live
+// browser console (error-level + pageerror, via the guard) + current URL + a DOM probe so CI reveals WHY
+// the route did not activate (lazy-chunk import rejection, injector error, redirect, …). run-isolated.sh
+// passes [DIAG] lines through.
+async function mountOrDiag(page: import('@playwright/test').Page, selector: string, label: string): Promise<void> {
+  try {
+    await expect(page.locator(selector), `${label}: ${selector} must mount`).toBeAttached({ timeout: 30_000 });
+  } catch (e) {
+    const probe = await page.evaluate((sel) => ({
+      url: location.href,
+      hostCount: document.querySelectorAll(sel).length,
+      routedComponents: Array.from(document.querySelectorAll('router-outlet ~ *, router-outlet + *')).map((el) => el.tagName.toLowerCase()).slice(0, 10),
+      anyAppTag: Array.from(document.querySelectorAll('[class],*')).map((el) => el.tagName.toLowerCase()).filter((t) => t.startsWith('app-')).slice(0, 15),
+      bodyText: (document.body.innerText || '').slice(0, 400),
+    })).catch((err) => ({ evalError: String(err) }));
+    // eslint-disable-next-line no-console
+    console.log(`[DIAG mount ${label}] `, JSON.stringify({ probe, consoleErrors: guard.all.slice(-40) }, null, 2));
+    throw e;
+  }
+}
 test.afterEach(() => assertNoFatal(guard, 'journey onboarding dashboards: no fatal console errors / pageerrors'));
 
 test.describe('Journey Onboarding — routable screens: controls addressable', () => {
@@ -20,7 +41,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
   test('jcd — journeycoach-dashboard controls are addressable at /JourneycoachDashboard-new', async ({ page }) => {
     await loginAsJourneyAdmin(page);
     await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('app-journeycoach-dashboard'), 'jcd: app-journeycoach-dashboard must mount').toBeAttached({ timeout: 30_000 });
+    await mountOrDiag(page, 'app-journeycoach-dashboard', 'jcd');
     const controls = [
       page.getByTestId('jcd-btn-001'),
       page.getByTestId('jcd-btn-002'),
@@ -692,7 +713,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
   test('esn — eco-system-new controls are addressable at /ecosystem', async ({ page }) => {
     await loginAsJourneyAdmin(page);
     await page.goto('/ecosystem', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('app-eco-system-new'), 'esn: app-eco-system-new must mount').toBeAttached({ timeout: 30_000 });
+    await mountOrDiag(page, 'app-eco-system-new', 'esn');
     const controls = [
       page.getByTestId('esn-li-001'),
       page.getByTestId('esn-li-002'),
@@ -733,7 +754,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
   test('jted — team-evolution-dashboard controls are addressable at /team-evolution-dashboard', async ({ page }) => {
     await loginAsJourneyAdmin(page);
     await page.goto('/team-evolution-dashboard', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('app-team-evolution-dashboard'), 'jted: app-team-evolution-dashboard must mount').toBeAttached({ timeout: 30_000 });
+    await mountOrDiag(page, 'app-team-evolution-dashboard', 'jted');
     const controls = [
       page.getByTestId('jted-a-001'),
       page.getByTestId('jted-a-002'),
