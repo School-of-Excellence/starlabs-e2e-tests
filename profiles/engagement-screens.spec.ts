@@ -39,15 +39,7 @@ test.beforeEach(async ({ page }) => {
   guard = attachConsoleGuard(page);
   await installProfileStubs(page);
 });
-test.afterEach(({ page }, testInfo) => {
-  // [DIAG — remove after pinpointing] print the failing test + the FULL (untruncated) captured errors and
-  // the live URL, so the CI log names which screen throws the `reading 'name'` crash and its stack.
-  if (guard.fatals.length) {
-    // eslint-disable-next-line no-console
-    console.log(`\n[DIAG] test="${testInfo.title}" url="${page.url()}"\n[DIAG] guard.all:\n${guard.all.join('\n')}\n`);
-  }
-  assertNoFatal(guard, 'engagement screens: no fatal console errors / pageerrors');
-});
+test.afterEach(() => assertNoFatal(guard, 'engagement screens: no fatal console errors / pageerrors'));
 
 test.describe('Profiles — AppEngagement screens (real UI)', () => {
   for (const [id, route, host, heading] of [

@@ -69,7 +69,7 @@ const SEL = {
   stageCountChip: '.stage-count-chip',                   // each card chip when expanded (html:1136)
 
   // --- comms sidebar (operator.md §F) ---
-  commsSelectAll: '[data-testid="qm-comms-selectall"]',  // .select-all-wrapper (html:175)
+  commsSelectAll: '[data-testid="dqmg-act-6"]',  // .select-all-wrapper — LIVE board dynamic-queue-manager.component.html:60 (toggleSelectAll()). NOT qm-comms-selectall: that id exists only in the COMMENTED-OUT clone (dynamic-queue-manager-clone:175); the live board's select-all carries the auto-hook dqmg-act-6 (credited by queue-dialog-addressable-studio.spec.ts). Old selector never matched the live board → OP-09 "element not found".
   commsRecipientCount: '[data-testid="qm-comms-recipient-count"]', // span on Whatsapp btn (html:45)
   commsSend: '[data-testid="qm-comms-send"]',            // .send-btn, only when a comm type chosen (html:161)
   commsStageSelect: '.communication-container mat-select', // "Select Stages" multi-select (html:21)
