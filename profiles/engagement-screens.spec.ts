@@ -6,14 +6,23 @@
 // `dashboard` grant (authGuard matches the FIRST path segment, so all three needed their own) and none is
 // a routed dialog — scripts/check-routable-dialogs.mjs reports all three clean.
 //
-// SCOPE, stated plainly: these are MOUNT + EMPTY-STATE cases, weaker than an oracle, and labelled as such
-// rather than dressed up. Each screen reads collections this suite does not seed —
+// SCOPE, stated plainly: these are MOUNT + (near-)EMPTY-STATE cases, weaker than an oracle, and labelled
+// as such rather than dressed up. Each screen reads collections this suite barely seeds —
 //   /communitymanager  : community category / community post / community post tags / event collection
 //   /ahcrm             : arena events / big cohorts / event collection / event participation request
 //   /atctaxonomy       : atc taxonomy
-// so all three render their empty state. That is worth pinning for a specific reason: it proves none of
-// them THROWS on absent data, which is the failure mode that took /bigProfile and /bigchatscreen down
-// earlier in this branch, and which no test would have caught on these screens either.
+// so all three render an essentially empty state. That is worth pinning for a specific reason: it proves
+// none of them THROWS on absent data, which is the failure mode that took /bigProfile and /bigchatscreen
+// down earlier in this branch, and which no test would have caught on these screens either.
+//
+// ONE deliberate seed (seed-profiles.js ID.EVT0): a single CURRENT `event collection` doc. /ahcrm's
+// app-participant-list builds `where('eventref','in', <refs of events with end_date >= now>)`
+// (participant-list.component.ts:238/268); with ZERO current events that array is empty and Firestore
+// rejects the query ("A non-empty array is required for 'in' filters") — surfaced CI-only (per-file reseed
+// gives this screen only the profiles seed) and caught by the console guard as a REAL app fragility. Rather
+// than change app logic (out of scope) or silence the guard (it is right to flag an invalid query), we seed
+// the realistic non-empty state (production always has events) so the screen runs its populated path. The
+// unguarded empty-'in' is filed as an app finding for the participant-list owners.
 //
 // ON NOT SEEDING `atc taxonomy` (PA-46): the app CLAUDE.md lists it as reference-only config and therefore
 // safe to READ, and check-atc-coupling.mjs agrees the route is in scope. The content seeder nonetheless

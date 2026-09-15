@@ -54,6 +54,14 @@ const ID = {
   // A dedicated profile for the productsdata_to_pmd projection cases (kept off p0/p1 so its
   // activeproduct/consumedproducts arrays are fully owned by these CF cases).
   PRODPF: `${TESTRUNID}_prodprofile`,
+  // One CURRENT event so the AppEngagement A&H CRM screen (/ahcrm, app-participant-list) has a
+  // non-empty upcoming-events set. Its loadEventParticipantReq() builds
+  // `where('eventref','in', <event refs>)` from the events whose end_date >= now
+  // (participant-list.component.ts:238/268); with zero such events the array is empty and Firestore
+  // rejects the query ("A non-empty array is required for 'in' filters") — a REAL app fragility the
+  // console guard deliberately catches. We do not touch app logic; we seed the realistic non-empty
+  // state (production always has events) so the screen exercises its populated path.
+  EVT0: `${TESTRUNID}_EVT0`,
 };
 
 // The uP! Life Report formid the form-tracker tab-2 query filters by (participant-form-tracker.ts:144).
@@ -163,6 +171,15 @@ async function seedProfiles() {
   await productRef(ID.P1).set({ id: ID.P1, docid: ID.P1, product: `TEST Product ${TESTRUNID}`, mode: 'Priority Mode', atcmodel: null, ...tag });
   await productRef(ID.P2).set({ id: ID.P2, docid: ID.P2, product: `TEST Product Two ${TESTRUNID}`, mode: 'Priority Mode', atcmodel: null, ...tag });
   await packageRef(ID.PKG1).set({ docid: ID.PKG1, package: `TEST Package ${TESTRUNID}`, ...tag });
+
+  // 3b) ONE current event (start in the past, end in the future) so /ahcrm's app-participant-list
+  //     loadEvents() (end_date >= now) yields a non-empty upcoming set → its `where('eventref','in',…)`
+  //     is valid. See ID.EVT0 note. Mount+heading is all engagement-screens.spec asserts; this only
+  //     removes the empty-'in' the app throws on an events-less project.
+  await db.collection('event collection').doc(ID.EVT0).set({
+    docid: ID.EVT0, id: ID.EVT0, event_name: `TEST Event ${TESTRUNID}`, name: `TEST Event ${TESTRUNID}`,
+    start_date: past, end_date: future, ...tag,
+  });
 
   // 4) PARTICIPANT PROFILES — overwrite the auth-chain profile_data with the fields the screens read.
   //    profile_data drives the CF profiledata_to_participantmetadata; the screens render the resulting
@@ -336,7 +353,7 @@ async function seedProfiles() {
 
 // Collections this seed writes (for teardown). formsByClient lives in the forms DB — swept separately.
 const SEEDED = [
-  'journey', 'products', 'package',
+  'journey', 'products', 'package', 'event collection',
   'profile_data', 'participant metadata', 'participantjourneyproduct', 'participantsproduct',
   'ask AH', 'love letter', 'appflowbreaks',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
