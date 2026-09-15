@@ -221,6 +221,12 @@ test.describe('Authoring — queue-creation-v3 stepper', () => {
         { timeout: 10_000, message: 'could not clear the auto-added products FormArray via window.ng (dev build / queueform.products)' },
       )
       .toBe(0);
+    // 4c. Select the required Event (formControlName="eventid", Validators.required ts:167). It is
+    //     populated from the `event collection` (ts:172), not typed; the whole-form submit guard
+    //     (queueform.valid, ts:846) blocks onsubmit() until it is set. The precondition seeds one
+    //     `event collection` doc (authoring-precondition.js), and this picks it via the real overlay.
+    await creation.pickFirstEvent();
+
     // Now wait until the component reports the WHOLE `queueform` valid (the exact ts:846 onsubmit gate)
     // before the Submit click, so onsubmit() actually writes the batch + closes the dialog.
     await waitForQueueFormValid(page);
@@ -293,25 +299,6 @@ const STEP0_GATE_CONTROLS = [
  * surfacing the real cause rather than the downstream chip-input timeout.
  */
 async function waitForStepZeroValid(page: Page): Promise<void> {
-  // [DIAG — remove after root-cause] name the still-invalid step-0 controls in a [DIAG] line
-  // (run-isolated passes the literal "[DIAG]" through) so the AUTH-01 precondition gap is diagnosable
-  // from CI without the trace: which STEP0_GATE_CONTROLS never validated + their errors/values.
-  const dumpInvalid = async () => {
-    const info = await page.evaluate((controls) => {
-      const ng = (window as unknown as { ng?: { getComponent?: (el: Element) => unknown } }).ng;
-      const host = document.querySelector('app-queue-creation-v3');
-      if (!ng || typeof ng.getComponent !== 'function' || !host) return '<no host / no window.ng>';
-      const cmp = ng.getComponent(host) as { queueform?: { get?: (n: string) => { valid?: boolean; errors?: unknown; value?: unknown } | null } } | null;
-      const form = cmp?.queueform;
-      if (!form || typeof form.get !== 'function') return '<queueform not ready>';
-      return controls
-        .filter((n) => form.get!(n)?.valid !== true)
-        .map((n) => { const c = form.get!(n); let v: string; try { v = JSON.stringify(c?.value); } catch { v = String(c?.value); } return `${n}{errors:${JSON.stringify(c?.errors)},value:${(v || '').slice(0, 40)}}`; })
-        .join(' | ');
-    }, [...STEP0_GATE_CONTROLS]).catch((e) => `<eval failed: ${String(e)}>`);
-    return info;
-  };
-  try {
   await expect
     .poll(
       async () =>
@@ -342,12 +329,6 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
       },
     )
     .toEqual([]);
-  } catch (e) {
-    // run-isolated only surfaces "[DIAG]"/Error breadcrumbs (test stdout is not echoed), so raise the
-    // named invalid control(s) as the thrown Error message rather than console.log.
-    const info = await dumpInvalid();
-    throw new Error(`[DIAG] AUTH step0-invalid: ${info}`);
-  }
 }
 
 /**
@@ -363,33 +344,6 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
  * object). This asserts the product's OWN validity — it does not relax or bypass any assertion.
  */
 async function waitForQueueFormValid(page: Page): Promise<void> {
-  // [DIAG — remove after root-cause] name the still-invalid controls (top-level + one level into any
-  // invalid FormGroup/FormArray, with errors) and raise them via the thrown Error (run-isolated only
-  // surfaces "[DIAG]"/Error breadcrumbs, not test stdout).
-  const dumpInvalid = async () =>
-    page.evaluate(() => {
-      const ng = (window as unknown as { ng?: { getComponent?: (el: Element) => unknown } }).ng;
-      const host = document.querySelector('app-queue-creation-v3');
-      if (!ng || typeof ng.getComponent !== 'function' || !host) return '<no host / no window.ng>';
-      const cmp = ng.getComponent(host) as { queueform?: any } | null;
-      const form = cmp?.queueform;
-      if (!form || !form.controls) return '<queueform not ready>';
-      const describe = (name: string, c: any, depth: number): string[] => {
-        if (!c || c.valid === true) return [];
-        const errs = c.errors ? JSON.stringify(c.errors) : 'null';
-        const out = [`${name}{errors:${errs}}`];
-        if (depth > 0 && c.controls) {
-          const kids = c.controls;
-          const keys = Array.isArray(kids) ? kids.map((_: unknown, i: number) => String(i)) : Object.keys(kids);
-          for (const k of keys) out.push(...describe(`${name}.${k}`, Array.isArray(kids) ? kids[Number(k)] : kids[k], depth - 1));
-        }
-        return out;
-      };
-      const invalid: string[] = [];
-      for (const name of Object.keys(form.controls)) invalid.push(...describe(name, form.controls[name], 2));
-      return invalid.join(' | ') || '<form.valid but poll disagreed>';
-    }).catch((e) => `<eval failed: ${String(e)}>`);
-  try {
   await expect
     .poll(
       async () =>
@@ -420,8 +374,4 @@ async function waitForQueueFormValid(page: Page): Promise<void> {
       },
     )
     .toEqual([]);
-  } catch (e) {
-    const info = await dumpInvalid();
-    throw new Error(`[DIAG] AUTH queueform-invalid: ${info}`);
-  }
 }

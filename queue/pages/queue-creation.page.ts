@@ -71,6 +71,10 @@ const SEL = {
   venue: 'mat-select[formcontrolname="venue"]',             // html:100
   // Step 1 "Product Mapping" → the Queue Stages chip grid + its input (html:286-311).
   stagesChipGrid: 'mat-chip-grid[formcontrolname="stages"]',
+  // "Select Event" multi-select in the Map-Events section (html:255, formControlName="eventid",
+  // Validators.required ts:167). Options come from the `event collection` (ts:172); the whole-form
+  // submit guard blocks until eventid is set — so a smoke create MUST pick one.
+  eventSelect: '[data-testid="qcv3-sel-20"]',
   // The "Create Queue" trigger on the queue-list screen (queue-list.component.html:11).
   createQueueBtn: 'button.queuebtn',
   // --- The REMAINING step-0 required fields (all on the "Queue Details" step). The step-0
@@ -349,6 +353,42 @@ export class QueueCreationPage {
     throw new Error(
       `pickFirstProfile(${field}): no selectable option with a bound value — seed the staff auth ` +
         'chain (users_roles + profile_data) so returnprofile() lists at least one profile.',
+    );
+  }
+
+  /**
+   * Open the "Select Event" multi-select (`qcv3-sel-20`, formControlName="eventid") and click its first
+   * REAL option (skipping the leading ngx-mat-select-search box), returning that option's bound `value`
+   * (= `event.docid`, html:260). `eventid` is Validators.required (ts:167) and the whole-form submit
+   * guard (`queueform.valid`, ts:846) blocks onsubmit() until it is set, but the field is populated from
+   * the `event collection` (ts:172), not typed — so a smoke create must pick a seeded event here. Throws
+   * (after closing the overlay) if the select renders zero real options — surfacing a missing
+   * `event collection` seed rather than silently leaving the form invalid. Drives the REAL overlay.
+   * @returns the selected event docid (the value the APP bound to the option).
+   */
+  async pickFirstEvent(): Promise<string> {
+    const select = this.host.locator(SEL.eventSelect);
+    await expect(select).toBeVisible({ timeout: 15_000 });
+    await select.scrollIntoViewIfNeeded().catch(() => {});
+    await openMatSelect(this.page, select);
+    const options = this.overlayOption();
+    await expect(options.first()).toBeVisible({ timeout: 10_000 });
+    const count = await options.count();
+    for (let i = 0; i < count; i++) {
+      const opt = options.nth(i);
+      const value = await this.optionValueOrNull(opt);
+      if (value != null && value.length > 0) {
+        await opt.click();
+        // multi-select stays open after a pick; close so it doesn't cover later controls.
+        await this.closeOverlay();
+        return value;
+      }
+    }
+    await this.closeOverlay();
+    throw new Error(
+      'pickFirstEvent: the "Select Event" (qcv3-sel-20) select has ZERO options — seed at least one ' +
+        '`event collection` doc (with a `name`) as a precondition; eventid is required and the submit ' +
+        'guard (queueform.valid) never passes otherwise.',
     );
   }
 

@@ -74,6 +74,24 @@ async function seedAuthoringPreconditions(opts = {}) {
     _testdata: true,
   });
 
+  // 3. ONE `event collection` doc so the "Select Event" multi-select renders a real option. The
+  //    queueform's `eventid` control is Validators.required (queue-creation-v3.component.ts:167) and
+  //    the whole-form submit guard (`queueform.valid`, ts:846) blocks onsubmit() until it is set — but
+  //    it is populated from Firestore, not typed: the component loads `eventList` from the
+  //    `event collection` (ts:172, orderBy end_date desc) and the select binds option
+  //    value=`event.docid` (html:255-260), filtered by `name` (filterEvents, ts:1407). Without a seeded
+  //    event the select is EMPTY, `eventid` stays invalid, and AUTH-01 hangs at the submit gate. The
+  //    spec picks this option via the page object; anti-circularity holds (the spec asserts the doc the
+  //    COMPONENT writes, never this event's fields — it only needs A valid selectable event).
+  const eventDocId = `${testrunid}_event_0`;
+  await db.collection('event collection').doc(eventDocId).set({
+    docid: eventDocId,
+    name: `E2E Event ${testrunid}`,
+    end_date: new Date(),
+    testrunid,
+    _testdata: true,
+  });
+
   return {
     testrunid,
     operatorEmail: operatorAdmin.email,
@@ -81,6 +99,8 @@ async function seedAuthoringPreconditions(opts = {}) {
     operatorProfileId: operatorAdmin.profileid,
     venueLocation: venueLocation(testrunid),
     eventLocationDocId,
+    eventDocId,
+    eventName: `E2E Event ${testrunid}`,
   };
 }
 
@@ -103,8 +123,9 @@ async function teardownAuthoring(opts = {}) {
     snap.docs.forEach((d) => batch.delete(d.ref));
     if (snap.size) await batch.commit();
   }
-  // Remove this run's seeded venue (idempotent).
+  // Remove this run's seeded venue + event (idempotent).
   await db.collection('event location').doc(`${testrunid}_evloc_0`).delete().catch(() => undefined);
+  await db.collection('event collection').doc(`${testrunid}_event_0`).delete().catch(() => undefined);
 }
 
 module.exports = { seedAuthoringPreconditions, teardownAuthoring, venueLocation };
