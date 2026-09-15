@@ -93,7 +93,14 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     const episodeSelect = dialog.locator('.field-group').filter({ hasText: 'Select Episodes' }).locator('mat-select');
     await openSelect(page, episodeSelect);
     await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: `TEST_EPISODE_${RUN}_1` }).first().click();
-    await page.keyboard.press('Escape');
+    // Close the episode panel WITHOUT letting Escape reach the dialog. MatDialog closes on Escape when no
+    // overlay consumes it, and its ~150 ms exit animation let the next two steps pass against a fading DOM
+    // before the Submit wait timed out twice (branch-suites run 34959789430, both retries: the failure
+    // snapshot shows the list page with no dialog). Press Escape only while a listbox is actually open,
+    // then prove both states before moving on.
+    if (await page.getByRole('listbox').count()) await page.keyboard.press('Escape');
+    await expect(page.getByRole('listbox'), 'CN-04: the episode panel is closed').toHaveCount(0, { timeout: 5_000 });
+    await expect(dialog, 'CN-04: the Create Series dialog must still be open after closing the panel').toBeVisible();
     await expect(dialog.locator('.drag-item'), 'CN-04: the picked episode is in the sequence list').toHaveCount(1);
     // The thumbnail is REQUIRED in create mode (html: `!isEditMode && !thumbImageFile` disables Submit). The
     // hero zone's hidden input comes first, the thumbnail zone's second (html:96 / :120). Storage is stubbed

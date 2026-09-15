@@ -106,7 +106,9 @@ export async function selectMatOptions(page: Page, trigger: Locator, optionNames
   for (const name of optionNames) {
     await panel.getByRole('option', { name, exact: typeof name === 'string' }).click();
   }
-  await page.keyboard.press('Escape');
+  // Only while a panel is open: an Escape with no overlay to consume it reaches the host MatDialog and
+  // closes it (CN-04, branch-suites run 34959789430).
+  if (await page.getByRole('listbox').count()) await page.keyboard.press('Escape');
   await expect(page.getByRole('listbox'), 'the mat-select panel should close on Escape')
     .toHaveCount(0, { timeout: 5_000 });
 }
