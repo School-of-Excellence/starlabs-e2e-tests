@@ -156,6 +156,32 @@ port_up() {
 # Healthy == the three ports the specs depend on are all listening (functions is the one that dies).
 emulator_healthy() { port_up 8080 && port_up 9099 && port_up 5001; }
 
+# DEGRADATION probe (option 1, 2026-09-15): the emulator can stay UP but slow to a crawl under accumulated
+# load — Firestore write latency climbing to multiple seconds — enough to blow a spec's 30s snapshot-render
+# polls (e.g. workshop-dashboard WS-11/12, whose enrolled→participant-workshop→rebuild chain then never
+# lands in time) even though all three ports are listening. Port checks miss this. So before each file we
+# time TWO Firestore writes: the first absorbs a post-(re)boot warmup spike, the SECOND is the real signal.
+# A slow-or-failing 2nd write => treat the emulator as degraded so ensure_emulator_healthy restarts it,
+# giving the next file a fresh, fast emulator. Set EMU_MAX_WRITE_MS=0 to disable the degradation gate.
+EMU_MAX_WRITE_MS="${EMU_MAX_WRITE_MS:-2500}"
+emulator_fast() {
+  [ "$IS_EMULATOR" = "1" ] || return 0
+  [ "${EMU_MAX_WRITE_MS}" = "0" ] && return 0
+  FIRESTORE_EMULATOR_HOST="127.0.0.1:8080" FIREBASE_PROJECT="$FIREBASE_PROJECT" EMU_MAX_WRITE_MS="$EMU_MAX_WRITE_MS" \
+  node -e '
+    const admin = require("firebase-admin");
+    if (!admin.apps.length) admin.initializeApp({ projectId: process.env.FIREBASE_PROJECT || "starlabs-cicd" });
+    const max = Number(process.env.EMU_MAX_WRITE_MS || 2500);
+    const ref = admin.firestore().collection("_emu_health").doc("probe");
+    const write = () => { const t = Date.now(); return ref.set({ at: Date.now() }).then(() => Date.now() - t); };
+    const guard = setTimeout(() => process.exit(1), (max * 2) + 8000);
+    (async () => {
+      try { await write(); const ms = await write(); ref.delete().catch(() => {}); clearTimeout(guard); process.exit(ms <= max ? 0 : 1); }
+      catch { clearTimeout(guard); process.exit(1); }
+    })();
+  ' >/dev/null 2>&1
+}
+
 emu_state() {
   printf 'functions:5001=%s firestore:8080=%s auth:9099=%s' \
     "$(port_up 5001 && echo up || echo DOWN)" \
@@ -221,9 +247,16 @@ start_emulator() {
 # No-op on cloud (no local emulator).
 ensure_emulator_healthy() {
   [ "$IS_EMULATOR" = "1" ] || return 0
-  emulator_healthy && return 0
-  [ "$EMU_AUTORESTART" = "1" ] || { echo "🛑 emulator unhealthy ($(emu_state)) and EMU_AUTORESTART=0" >&2; return 1; }
-  echo "⚠️  emulator unhealthy ($(emu_state)) — reaping orphans + restarting"
+  # Fresh AND fast: ports up (emulator_healthy) is necessary but not sufficient — a still-listening but
+  # write-degraded emulator (emulator_fast fails) is restarted too, so the next file gets a fast one.
+  if emulator_healthy; then
+    if emulator_fast; then return 0; fi
+    reason="degraded (slow Firestore writes > ${EMU_MAX_WRITE_MS}ms)"
+  else
+    reason="unhealthy ($(emu_state))"
+  fi
+  [ "$EMU_AUTORESTART" = "1" ] || { echo "🛑 emulator $reason and EMU_AUTORESTART=0" >&2; return 1; }
+  echo "⚠️  emulator $reason — reaping orphans + restarting"
   restarts=$(( restarts + 1 ))
   kill_emulator
   start_emulator

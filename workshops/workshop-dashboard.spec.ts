@@ -78,7 +78,7 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
     // the participant name (mapProfile[profileid].name) and a progress-text "{{ pct.toFixed(0) }}%".
     const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]')
       .filter({ hasText: `WS Alpha ${RUN}` });
-    await expect(p0Row, 'WS-11: the enrolled participant progress row must render').toBeVisible({ timeout: 30_000 });
+    await expect(p0Row, 'WS-11: the enrolled participant progress row must render').toBeVisible({ timeout: 90_000 });
 
     // [ASSERT] the app computed progressPercentage = completed/total = 1/2 = 50% from the participant-
     // workshop doc it streamed; the rendered progress-text must read "50%". Known inputs (1 of 2) →
@@ -110,7 +110,7 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
 
     const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]')
       .filter({ hasText: `WS Alpha ${RUN}` });
-    await expect(p0Row, 'WS-12: the enrolled participant row must render').toBeVisible({ timeout: 30_000 });
+    await expect(p0Row, 'WS-12: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
 
     // [REAL-UI] click the "Move Next" action button (moveParticipantToNext()).
     const moveBtn = p0Row.getByRole('button', { name: /Move Next/i });
