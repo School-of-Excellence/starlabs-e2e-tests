@@ -30,6 +30,40 @@ export const wsActors = {
   participant2: `participant2+${RUN}@example.com`,
 };
 
+/**
+ * `participant metadata`.name / .email are NOT ours to choose — they are CF-OWNED. The deployed trigger
+ * profiledata_to_participantmetadata (starlabs-cloud-function/functions/components/participantmetadata.js)
+ * fires on every profile_data write and merge-sets {name, email, countrycode, phonenumber} :=
+ * profile_data.{name, email, countrycode, number}, and seedAuthChain sets profile_data.name = the actor's
+ * EMAIL. That CF write is async and lands seconds AFTER seed-workshops.js wrote "WS Alpha <run>", so the
+ * dashboard and the Communication dialog render the EMAIL as the name (observed in CI 2026-09-15: the card
+ * read "participant0+wshop@example.com"). These are the names a spec can rely on; call
+ * alignWorkshopMetadataNames() first so the precondition holds in BOTH orders (same approach as evomap's
+ * evoMetaNames — see evomap/support/evomap.ts). Phone (9999900000) and country code (+91) are identical on
+ * both sides, and new_user_data people have no profile_data, so their seeded names ("NU Alpha <run>") stand.
+ */
+export const wsMetaNames = {
+  p0: wsActors.participant0,
+  p1: wsActors.participant1,
+  p2: wsActors.participant2,
+};
+
+/**
+ * PRECONDITION write only: put the CF's terminal name/email onto p0/p1/p2's `participant metadata` so a
+ * spec sees the same values whether the CF landed before or after the seed. {merge:true} keeps the seeded
+ * customerstatus / activejourney / phone fields the specs also assert on.
+ */
+export async function alignWorkshopMetadataNames(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const pairs: [string, string][] = [
+    [wsProfileIds.p0, wsMetaNames.p0], [wsProfileIds.p1, wsMetaNames.p1], [wsProfileIds.p2, wsMetaNames.p2],
+  ];
+  for (const [pf, email] of pairs) {
+    await db.collection('participant metadata').doc(pf).set({ name: email, email: email.toLowerCase() }, { merge: true });
+  }
+}
+
 /** Seeded profileids (for asserting app-written refs / progress rows). */
 export const wsProfileIds = {
   admin: `${RUN}_pf_admin`,

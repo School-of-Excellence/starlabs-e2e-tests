@@ -44,3 +44,17 @@ No Java runtime on the authoring Mac (Firestore emulator cannot boot) and no `ST
 the Material/Playwright sources (findings fixed: flat DocResult, block-level checkbox hosts, the two
 `disableClose` composers, composer console errors, the timeout budget). First real run = the console's
 dispatch; the evidence report will name the step if anything differs.
+
+## First CI run (branch suites, run 34954615045) — 6 failed, and why
+
+WDC-02..07 failed on one cause: every lookup keyed on the seed's metadata NAME ("WS Alpha wshop"), but the
+panel card rendered `participant0+wshop@example.com`. `participant metadata`.name/.email are **CF-owned**:
+`profiledata_to_participantmetadata` fires on the auth chain's `profile_data` write (name = actor email) and
+merge-sets name/email/countrycode/phonenumber seconds after `seed-workshops.js` wrote its labels. evomap hit
+the identical trap (EM-13/14) and documented it in `evomap/support/evomap.ts`.
+
+Fix (no seed change): `wsMetaNames` (= the actor emails) + `alignWorkshopMetadataNames()` in
+`support/wshop.ts`, a precondition merge-write of the CF's terminal name/email onto p0/p1/p2 so both orders
+converge; the spec keys every metadata person on those, called from both `beforeEach` hooks. Phone / country
+code are identical on both sides, and the new_user_data people have no profile_data, so "NU Alpha <run>"
+still stands. WDC-01/08/09 and the addressable case had already passed.

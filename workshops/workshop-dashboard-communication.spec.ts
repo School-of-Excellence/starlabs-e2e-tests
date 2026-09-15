@@ -19,14 +19,18 @@
 //     dismissed composer returns no payload).
 // All reads are single-equality / collection scans — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
-import { wsIds, wsAddIds, installWshopStubs, loginAsWshopAdmin } from './support/wshop';
+import { wsIds, wsAddIds, wsMetaNames, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
-const ALPHA = `WS Alpha ${RUN}`;     // p0 — enrolled, metadata, journey JRN_BIG
-const BRAVO = `WS Bravo ${RUN}`;     // p1 — enrollednotstarted (still counted as enrolled), metadata
-const CHARLIE = `WS Charlie ${RUN}`; // p2 — metadata, NOT enrolled in W_DASH
+// The metadata people are identified by the name the CF-owned field actually carries — their actor
+// EMAIL (see wsMetaNames in support/wshop.ts) — never by the seed's "WS Alpha <run>" label, which the
+// profiledata_to_participantmetadata trigger overwrites seconds after the seed. alignWorkshopMetadataNames()
+// in beforeEach makes that true in both orders. new_user_data people keep their seeded names.
+const ALPHA = wsMetaNames.p0;        // p0 — enrolled, metadata, journey JRN_BIG
+const BRAVO = wsMetaNames.p1;        // p1 — enrollednotstarted (still counted as enrolled), metadata
+const CHARLIE = wsMetaNames.p2;      // p2 — metadata, NOT enrolled in W_DASH
 const NU_ALPHA = `NU Alpha ${RUN}`;  // new_user_data — NEW user, not enrolled
 const NU_BRAVO = `NU Bravo ${RUN}`;  // new_user_data — NEW user, not enrolled
 
@@ -77,6 +81,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
     // login (30 s) + header (30 s) + the dialog's full-collection load (60 s) must fit with room to spare.
     test.setTimeout(180_000);
     guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();   // precondition: CF-terminal names on p0/p1/p2 (see wshop.ts)
     await installWshopStubs(page);
   });
   test.afterEach(() => assertNoFatal(guard, 'dashboard communication: no fatal console errors / pageerrors'));
@@ -153,6 +158,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
     const dialog = await openCommunication(page);
 
     // [REAL-UI] p0 + p1 are enrolled in W_DASH; p2 has metadata but no enrollment; NU Alpha is a new user.
+    // Rows are found by the actor email (the CF-owned name), which is unique per person.
     await expect(row(dialog, ALPHA), 'WDC-03: p0 is Enrolled').toContainText('Enrolled', { timeout: 30_000 });
     await expect(row(dialog, ALPHA)).not.toContainText('Not enrolled');
     await expect(row(dialog, BRAVO), 'WDC-03: p1 (enrollednotstarted) still counts as Enrolled').toContainText('Enrolled');
@@ -456,6 +462,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
 test.describe('Workshop dashboard — Communication dialog hands off to the side-panel composers', () => {
   test.beforeEach(async ({ page }) => {
     test.setTimeout(180_000);
+    await alignWorkshopMetadataNames();
     await installWshopStubs(page);
   });
 
