@@ -199,9 +199,20 @@ async function settleSpecialistPendingInvite(page: Page, tokenId: string): Promi
     (rows) => rows.some((r) => (r.clientresponse ?? null) === null),
     { label: `pending studioinvitation observable for token ${tokenId} (specialist will see the pending phase)`, timeoutMs: 20_000 },
   );
-  // Give the specialist's onSnapshot + Angular change-detection a beat to bind `studioInvitation` to the
-  // PENDING invite before the participant flips it to approved (so the approved emission triggers assignStudio).
-  await page.waitForTimeout(2_500);
+  // Real-time sync (the load-bearing wait): block until the SPECIALIST'S OWN onSnapshot has actually
+  // OPENED the invitation-countdown dialog (QueueInvitationApprovalComponent, data-testid qia-countdown,
+  // dynamic-studio.component.ts:599-600) on the PENDING invite. The app only runs the approve→assignStudio
+  // branch when `invitationCountdown != null` when the invite flips to approved (ts:550/561/566). Waiting
+  // only for the doc to be queryable (above) + a fixed sleep raced the participant's accept AHEAD of the
+  // specialist opening its countdown, so invitationCountdown stayed null, the approved branch never ran,
+  // and the AssignQueueStudio dialog (aqs-submit) never opened (SS-05/06). Waiting for the countdown UI to
+  // actually appear makes the ordering deterministic.
+  await expect(
+    page.locator('[data-testid="qia-countdown"]'),
+    'settleSpecialistPendingInvite: the specialist invitation-countdown (qia-countdown) never opened on ' +
+      'the pending invite — the specialist onSnapshot did not surface the pending studioinvitation (check ' +
+      'the app-created invite matches specialistpairing/queueref/studioid/expiry at dynamic-studio.ts:546).',
+  ).toBeVisible({ timeout: 20_000 });
 }
 
 test.describe('Studio core — SS-00 … SS-08 (real /dynamicstudio UI + CF/app side-effects)', () => {
@@ -516,27 +527,7 @@ test.describe('Studio core — SS-00 … SS-08 (real /dynamicstudio UI + CF/app 
     // assignStudio(), which OPENS the AssignQueueStudio dialog (dynamic-studio.ts:566-571/1050-1065). The
     // §3a `live assignment` write happens on the dialog SUBMIT — so complete the (single-studio
     // pre-selected) dialog via the real submit to produce the live assignment the assertion below checks.
-    // [DIAG — remove after root-cause] If the assign dialog never opens, dump the APP-created invite's
-    // fields + the acting specialist profileid + ongoingQueue docid via a thrown Error (run-isolated
-    // surfaces Error breadcrumbs, not test stdout). Key question: does createdby === actingProfileId
-    // (the dynamic-studio.ts:568 gate)?
-    try {
-      await studio.assignStudioOpenSession();
-    } catch (e) {
-      const rows = await invitesForToken(participantTok).catch(() => [] as any[]);
-      const info = rows
-        .map((r: any) => {
-          const q = r.queueref;
-          const qid = q && (q.id || (q.path ? String(q.path).split('/').pop() : undefined));
-          const exp = r.expirydate && (r.expirydate._seconds ?? r.expirydate.seconds ?? r.expirydate);
-          return `inv{createdby:${r.createdby},clientresponse:${r.clientresponse},specialistpairing:${JSON.stringify(r.specialistpairing)},studioid:${r.studioid ?? r.studioId},invitedstudio:${JSON.stringify(r.invitedstudio)},queuerefId:${qid},expiry:${exp}}`;
-        })
-        .join(' ; ');
-      const match = rows.some((r: any) => r.createdby === seed.actingProfileId);
-      throw new Error(
-        `[DIAG] SS-05 aqs-open-failed acting:${seed.actingProfileId} ongoingQueueDocId:${seed.queueGenDocId} createdbyMatch:${match} | ${info || '<no invites for token>'}`,
-      );
-    }
+    await studio.assignStudioOpenSession();
 
     // The listener+assign produced the §3a writes, including a NEW `live assignment` (status 'live') for
     // this participant. Assert the population grew by at least one (the APP/CF output) vs the baseline.
