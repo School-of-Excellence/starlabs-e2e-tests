@@ -363,6 +363,33 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
  * object). This asserts the product's OWN validity — it does not relax or bypass any assertion.
  */
 async function waitForQueueFormValid(page: Page): Promise<void> {
+  // [DIAG — remove after root-cause] name the still-invalid controls (top-level + one level into any
+  // invalid FormGroup/FormArray, with errors) and raise them via the thrown Error (run-isolated only
+  // surfaces "[DIAG]"/Error breadcrumbs, not test stdout).
+  const dumpInvalid = async () =>
+    page.evaluate(() => {
+      const ng = (window as unknown as { ng?: { getComponent?: (el: Element) => unknown } }).ng;
+      const host = document.querySelector('app-queue-creation-v3');
+      if (!ng || typeof ng.getComponent !== 'function' || !host) return '<no host / no window.ng>';
+      const cmp = ng.getComponent(host) as { queueform?: any } | null;
+      const form = cmp?.queueform;
+      if (!form || !form.controls) return '<queueform not ready>';
+      const describe = (name: string, c: any, depth: number): string[] => {
+        if (!c || c.valid === true) return [];
+        const errs = c.errors ? JSON.stringify(c.errors) : 'null';
+        const out = [`${name}{errors:${errs}}`];
+        if (depth > 0 && c.controls) {
+          const kids = c.controls;
+          const keys = Array.isArray(kids) ? kids.map((_: unknown, i: number) => String(i)) : Object.keys(kids);
+          for (const k of keys) out.push(...describe(`${name}.${k}`, Array.isArray(kids) ? kids[Number(k)] : kids[k], depth - 1));
+        }
+        return out;
+      };
+      const invalid: string[] = [];
+      for (const name of Object.keys(form.controls)) invalid.push(...describe(name, form.controls[name], 2));
+      return invalid.join(' | ') || '<form.valid but poll disagreed>';
+    }).catch((e) => `<eval failed: ${String(e)}>`);
+  try {
   await expect
     .poll(
       async () =>
@@ -393,4 +420,8 @@ async function waitForQueueFormValid(page: Page): Promise<void> {
       },
     )
     .toEqual([]);
+  } catch (e) {
+    const info = await dumpInvalid();
+    throw new Error(`[DIAG] AUTH queueform-invalid: ${info}`);
+  }
 }
