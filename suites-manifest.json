@@ -105,6 +105,8 @@
       "capture": "all",
       "specDir": "queue",
       "ciReady": true,
+      "_onlyWhy": "The queue GATE is the curated subset operator.spec + the logic self-tests (matches queue-e2e.yml:37). The full queue/ directory (37 files) carries a known flaky/divergent tail (studio-V2, big, count-drift) the operator decided to LEAVE (2026-09-15). branch-suites (the console lane) reads `only` so its queue leg runs the SAME gate as the per-app caller, instead of the whole directory — keeping the two lanes consistent.",
+      "only": "queue/operator.spec.ts queue/invariants-selftest.spec.ts queue/oracle-selftest.spec.ts",
       "appPaths": [
         "src/app/queue system/**",
         "src/app/big/**",
