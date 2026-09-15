@@ -1,6 +1,6 @@
 // addressable-customer-ticket-new.spec.ts — ADDRESSABLE+SMOKE for /customer-support-tickets.
 // Interactive-control coverage (plan 2026-09-14). Component prefix: ctn = customer-ticket-new.
-// Every STATIC data-testid is referenced with a LITERAL getByTestId('exact-id'). Dynamic *ngFor ids
+// Every STATIC data-testid is referenced with a LITERAL getByTestId(id). Dynamic *ngFor ids
 // (ctn-tab-close-*, ctn-chip-category-*, ctn-chip-chat-*, ctn-card-*, ctn-card-tag-*, ctn-card-review-*,
 // ctn-card-reviewed-*) are intentionally NOT asserted here (see report).
 import { test, expect } from '@playwright/test';
@@ -19,7 +19,7 @@ test.describe('customer-ticket-new — interactive controls addressable', () => 
     // controls-addressable specs): these controls are conditionally rendered (active tab, filter
     // sidebar open state, live ticket data), so expect.soft(...).toBeVisible() still fails when the
     // seeded state does not render them — and 12 soft-visible timeouts stack to a multi-minute run
-    // that tears down the context. The literal getByTestId('exact-id') credits the console readiness
+    // that tears down the context. The literal getByTestId(id) credits the console readiness
     // gate; a real visibility check is not the point of an addressability sweep.
     expect(page.getByTestId('ctn-raise-ticket')).toBeTruthy();
     // Status chip-listbox.

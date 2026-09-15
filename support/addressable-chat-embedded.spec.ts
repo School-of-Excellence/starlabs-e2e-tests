@@ -7,7 +7,7 @@
 // These screens require a seeded clientissue + chat thread to render (customer-chat-screen mounts inside a
 // dynamically-added ticket tab; flag-review inside a Review tab; the dialogs open from within them). The
 // behavioural drive-throughs live in chat.spec.ts / deep.spec.ts. Here we make every STATIC data-testid
-// ADDRESSABLE via a LITERAL getByTestId('exact-id') so the readiness gate credits the hook. Dynamic
+// ADDRESSABLE via a LITERAL getByTestId(id) so the readiness gate credits the hook. Dynamic
 // *ngFor ids (ccs-msg-*, ccs-file-*, ccs-log-*, frs-log-*, frs-*-submit-*, frs-file-*, imd-file-remove-*)
 // are intentionally excluded — see report.
 import { test, expect } from '@playwright/test';

@@ -3,7 +3,7 @@
 //   csdash = customer-support-dashboard   cfg = chat-config (dialog opened via "Add/Edit Category")
 //
 // AUTHORED add-only: every STATIC data-testid hooked in the two components is referenced below with a
-// LITERAL getByTestId('exact-id') (the readiness scanner only credits literal-string refs — never arrays
+// LITERAL getByTestId(id) (the readiness scanner only credits literal-string refs — never arrays
 // or loops). Default-view controls get a soft toBeVisible smoke; controls that only render after an
 // interaction / inside a dialog (or a seeded ticket row) are referenced addressably (locator built) and
 // exercised in the behavioural specs (dashboard.spec.ts / chat.spec.ts / deep.spec.ts).
