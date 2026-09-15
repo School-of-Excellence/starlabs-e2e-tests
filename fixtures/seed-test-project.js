@@ -789,8 +789,18 @@ async function seedStudioFlowPreconditions(db, admin, testrunid, cohort, opts = 
 
     const invId = `${testrunid}_inv_${p.profileid}`;
     await db.collection('studioinvitation').doc(invId).set(buildDoc('studioinvitation', {
-      ...ctx, docid: invId, studioId, tokenDocId: tok, profileid: p.profileid,
-      stage: stagename, invitedstudio: [studioId], specialistpairing: [],
+      // Align the seeded invite to the specialist's LIVE studio subscription
+      // (dynamic-studio.component.ts:546): it filters `specialistpairing array-contains this.profileid`
+      // AND `queueref == doc('queue generation', ongoingQueue.docid)` AND `studioid in studioID` AND
+      // `expirydate >= now`, and only opens the assign dialog when the invite it already sees flips to
+      // clientresponse=='approved' AND `createdby === this.profileid` (:568). The old seed wrote
+      // specialistpairing:[] and omitted queueDocId, so `queueref` resolved against undefined and the
+      // specialist never matched/saw the invite → the countdown/AssignQueueStudio dialog never opened
+      // (SS-05/06/10 aqs-submit "element(s) not found"). Pin the acting specialist + run queue so the
+      // precondition satisfies the query; the builder supplies studioid + a future expirydate.
+      ...ctx, docid: invId, studioId, queueDocId, tokenDocId: tok, profileid: p.profileid,
+      stage: stagename, invitedstudio: [studioId], specialistpairing: [diagnosticsSpecialist],
+      createdby: diagnosticsSpecialist,
     }));
 
     const laId = `${testrunid}_la_${p.profileid}`;
