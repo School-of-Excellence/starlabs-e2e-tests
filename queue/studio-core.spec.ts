@@ -244,7 +244,7 @@ test.describe('Studio core — SS-00 … SS-08 (real /dynamicstudio UI + CF/app 
     // which otherwise filters browser console output. Prefixed [DIAG] so run-isolated passes it through.
     if (testInfo.status !== testInfo.expectedStatus) {
       // eslint-disable-next-line no-console
-      console.log(`[DIAG studio] FAIL ${testInfo.title}\n[DIAG studio] browser errors:\n${(guard?.all ?? []).join('\n[DIAG studio] ')}`);
+      console.log(`[DIAG] FAIL ${testInfo.title}\n[DIAG] browser errors:\n${(guard?.all ?? []).join('\n[DIAG] ')}`);
     }
     // A real uncaught app error / error-level console message fails the case (stubbed-external noise
     // is allowlisted in console-guard). Belt to the StudioPage's own action-level confirmations.
