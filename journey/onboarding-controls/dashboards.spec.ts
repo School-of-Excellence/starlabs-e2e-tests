@@ -25,13 +25,16 @@ async function mountOrDiag(page: import('@playwright/test').Page, selector: stri
     const probe = await page.evaluate((sel) => ({
       url: location.href,
       hostCount: document.querySelectorAll(sel).length,
-      routedComponents: Array.from(document.querySelectorAll('router-outlet ~ *, router-outlet + *')).map((el) => el.tagName.toLowerCase()).slice(0, 10),
-      anyAppTag: Array.from(document.querySelectorAll('[class],*')).map((el) => el.tagName.toLowerCase()).filter((t) => t.startsWith('app-')).slice(0, 15),
-      bodyText: (document.body.innerText || '').slice(0, 400),
+      appTags: Array.from(document.querySelectorAll('*')).map((el) => el.tagName.toLowerCase()).filter((t) => t.startsWith('app-')).slice(0, 15),
+      bodyText: (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 250),
     })).catch((err) => ({ evalError: String(err) }));
+    // run-isolated.sh only passes lines containing the LITERAL "[DIAG]" or an Error:/Received/Locator
+    // breadcrumb — so embed the probe in BOTH a [DIAG] console line AND the thrown Error message (the
+    // latter is always surfaced), single-line + truncated to survive the head -40 breadcrumb window.
+    const payload = JSON.stringify({ probe, consoleErrors: guard.all.slice(-25) }).slice(0, 1500);
     // eslint-disable-next-line no-console
-    console.log(`[DIAG mount ${label}] `, JSON.stringify({ probe, consoleErrors: guard.all.slice(-40) }, null, 2));
-    throw e;
+    console.log(`[DIAG] mount ${label} ${payload}`);
+    throw new Error(`[DIAG] mount ${label} FAILED — ${payload}`);
   }
 }
 test.afterEach(() => assertNoFatal(guard, 'journey onboarding dashboards: no fatal console errors / pageerrors'));
