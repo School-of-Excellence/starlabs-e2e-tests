@@ -293,6 +293,26 @@ const STEP0_GATE_CONTROLS = [
  * surfacing the real cause rather than the downstream chip-input timeout.
  */
 async function waitForStepZeroValid(page: Page): Promise<void> {
+  // [DIAG — remove after root-cause] name the still-invalid step-0 controls in a [DIAG] line
+  // (run-isolated passes the literal "[DIAG]" through) so the AUTH-01 precondition gap is diagnosable
+  // from CI without the trace: which STEP0_GATE_CONTROLS never validated + their errors/values.
+  const dumpInvalid = async () => {
+    const info = await page.evaluate((controls) => {
+      const ng = (window as unknown as { ng?: { getComponent?: (el: Element) => unknown } }).ng;
+      const host = document.querySelector('app-queue-creation-v3');
+      if (!ng || typeof ng.getComponent !== 'function' || !host) return '<no host / no window.ng>';
+      const cmp = ng.getComponent(host) as { queueform?: { get?: (n: string) => { valid?: boolean; errors?: unknown; value?: unknown } | null } } | null;
+      const form = cmp?.queueform;
+      if (!form || typeof form.get !== 'function') return '<queueform not ready>';
+      return controls
+        .filter((n) => form.get!(n)?.valid !== true)
+        .map((n) => { const c = form.get!(n); let v: string; try { v = JSON.stringify(c?.value); } catch { v = String(c?.value); } return `${n}{errors:${JSON.stringify(c?.errors)},value:${(v || '').slice(0, 40)}}`; })
+        .join(' | ');
+    }, [...STEP0_GATE_CONTROLS]).catch((e) => `<eval failed: ${String(e)}>`);
+    // eslint-disable-next-line no-console
+    console.log(`[DIAG] AUTH step0-invalid: ${info}`);
+  };
+  try {
   await expect
     .poll(
       async () =>
@@ -323,6 +343,10 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
       },
     )
     .toEqual([]);
+  } catch (e) {
+    await dumpInvalid();
+    throw e;
+  }
 }
 
 /**

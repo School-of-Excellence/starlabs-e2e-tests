@@ -57,8 +57,11 @@ export interface CohortsOpenOpts {
 
 const SEL = {
   // --- Page shell --------------------------------------------------------------------------------
-  // No data-testid exists; the brand chip "B!G Cohorts" is the stable mount signal (html:12-15).
-  brand: '.brand',                                   // contains text "B!G Cohorts" (html:12)
+  // No data-testid exists; the header brand block is the stable mount signal. The cohort-management
+  // component was redesigned — it renders `.topbar-brand` ("COHORT Management") in the loaded state
+  // (outside the `*ngIf="loading"` overlay), NOT a `.brand` "B!G Cohorts" chip. The old `.brand`
+  // selector matched 0 elements → open() timed out (BIG-08). Anchor on the current header block.
+  brand: '.topbar-brand',                            // loaded-state header (cohort-management.component.html:15)
   loader: '.loader-wrap',                            // *ngIf="loading" spinner wrapper (html:2)
   // --- Cohort cards ------------------------------------------------------------------------------
   card: 'article.card',                              // one per cohort (#cohortCard template, html:241)
