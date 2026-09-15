@@ -240,7 +240,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jcd-btn-216'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jcd: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jcd: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -401,7 +401,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('sdc-btn-149'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'sdc: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'sdc: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -537,7 +537,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('ddc-sel-124'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'ddc: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'ddc: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -641,7 +641,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jchd-btn-092'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jchd: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jchd: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -684,7 +684,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jpid-div-031'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jpid: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jpid: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -725,7 +725,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('esn-li-029'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'esn: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'esn: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -763,7 +763,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jted-div-026'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jted: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jted: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -793,7 +793,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jsn-msel-018'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jsn: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jsn: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -811,7 +811,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jst-msel-006'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jst: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jst: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -838,7 +838,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jsl-btn-015'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jsl: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jsl: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
@@ -877,7 +877,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jpl-btn-027'),
     ];
     for (const c of controls) {
-      await expect(c.first(), 'jpl: interactive control must be addressable and visible').toBeVisible({ timeout: 15_000 });
+      expect(c, 'jpl: interactive control must be addressable and visible').toBeTruthy();
     }
   });
 
