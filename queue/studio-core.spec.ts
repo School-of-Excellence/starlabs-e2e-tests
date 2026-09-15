@@ -238,7 +238,14 @@ test.describe('Studio core — SS-00 … SS-08 (real /dynamicstudio UI + CF/app 
     await loginAsSpecialist(page, 0);
   });
 
-  test.afterEach(async () => {
+  test.afterEach(async ({}, testInfo) => {
+    // [DIAG — remove after studio root-cause] On failure, surface EVERY captured browser console error /
+    // pageerror (guard.all) so the real crash (e.g. a dialog constructor throw) shows up in the CI log,
+    // which otherwise filters browser console output. Prefixed [DIAG] so run-isolated passes it through.
+    if (testInfo.status !== testInfo.expectedStatus) {
+      // eslint-disable-next-line no-console
+      console.log(`[DIAG studio] FAIL ${testInfo.title}\n[DIAG studio] browser errors:\n${(guard?.all ?? []).join('\n[DIAG studio] ')}`);
+    }
     // A real uncaught app error / error-level console message fails the case (stubbed-external noise
     // is allowlisted in console-guard). Belt to the StudioPage's own action-level confirmations.
     assertNoFatal(guard, 'studio surface: no fatal console errors / pageerrors');
