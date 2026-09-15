@@ -618,27 +618,12 @@ test.describe('SS-09…SS-16 — Specialist / Studio session', () => {
     // participant. The seed places the member into exactly ONE other live-assignment ⇒ ≥1 button,
     // and CRUCIALLY a studio the member is NOT a bonus participant of must NOT leak in.
     const otherStudioButtons = page.locator('.otherstudio button');
-    try {
-      await expect
-        .poll(async () => await otherStudioButtons.count(), {
-          timeout: 30_000,
-          message: 'the other-studio block should render the invited studio (outsideLiveAssignment filter)',
-        })
-        .toBeGreaterThan(0);
-    } catch (e) {
-      // [DIAG — remove after root-cause] dump the app's ongoingQueue.docid + studioID (the
-      // outsideLiveAssignment query keys, dynamic-studio.ts:412) vs the seeded otherLa's queueid, so we
-      // see whether queueid==ongoingQueue.docid actually matches. Raised via thrown Error (surfaced by
-      // run-isolated).
-      const appState = await page.evaluate(() => {
-        const ng = (window as any).ng;
-        const host = document.querySelector('app-dynamic-studio');
-        if (!ng?.getComponent || !host) return '<no app-dynamic-studio host / no window.ng>';
-        const c: any = ng.getComponent(host);
-        return `ongoingQueue.docid:${c?.ongoingQueue?.docid} studioID:${JSON.stringify(c?.studioID)} outsideLA.len:${(c?.outsideLiveAssignment || c?.otherStudios || []).length}`;
-      }).catch((err) => `<eval failed: ${String(err)}>`);
-      throw new Error(`[DIAG] SS-14 no-other-studio member:${member} seededQueueid:${QUEUE_GEN_DOCID} | ${appState}`);
-    }
+    await expect
+      .poll(async () => await otherStudioButtons.count(), {
+        timeout: 30_000,
+        message: 'the other-studio block should render the invited studio (outsideLiveAssignment filter)',
+      })
+      .toBeGreaterThan(0);
 
     // Visibility-leak guard: the count must equal the number of live-assignments that actually carry
     // this member in bonusactivityparticipant (APP filter == seeded reality). We seeded exactly 1.
