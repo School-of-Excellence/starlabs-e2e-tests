@@ -399,7 +399,27 @@ export class QueueBoardPage {
       const header = await this.resolveStageHeader(stage as StageRef);
       await header.locator(SEL.stageCommsIcon).click();
     }
-    await expect(this.page.locator(SEL.commsSelectAll), 'openComms: comms panel (Select-All) did not appear.').toBeVisible({ timeout: 15_000 });
+    try {
+      await expect(this.page.locator(SEL.commsSelectAll), 'openComms: comms panel (Select-All) did not appear.').toBeVisible({ timeout: 15_000 });
+    } catch (e) {
+      // [DIAG — remove after root-cause] dump the comms area so we SEE why dqmg-act-6 is absent.
+      const dump = await this.page.evaluate(() => {
+        const q = (s: string) => Array.from(document.querySelectorAll(s)).length;
+        const sidebar = document.querySelector('.comms-sidebar, [class*="comms"], .communication-panel, aside, .sidebar');
+        return {
+          selectAllCount: q('[data-testid="dqmg-act-6"]'),
+          selectAllWrapperCount: q('.select-all-wrapper'),
+          participantsSection: q('.participants-section'),
+          commTypeButtons: q('[data-testid="dqmg-btn-4"], .comm-btn'),
+          sidebarClass: sidebar ? (sidebar.className || sidebar.tagName) : '(no comms sidebar element)',
+          sidebarHTML: sidebar ? (sidebar as HTMLElement).innerHTML.slice(0, 1500) : '(none)',
+          bodyHasCommsText: document.body.innerText.includes('Select All') || document.body.innerText.includes('Participants'),
+        };
+      }).catch((err) => ({ evalError: String(err) }));
+      // eslint-disable-next-line no-console
+      console.log('[DIAG openComms] ', JSON.stringify(dump, null, 2));
+      throw e;
+    }
   }
 
   /**
