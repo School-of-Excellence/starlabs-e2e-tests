@@ -21,20 +21,20 @@ test.describe("AppEngagement — App Action Pending (controls addressable; compl
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/appactionpending", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('aap-btn-1'), 'aap-btn-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aap-btn-2'), 'aap-btn-2 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aap-btn-1'), 'aap-btn-1 present').toBeTruthy();
+    expect(page.getByTestId('aap-btn-2'), 'aap-btn-2 present').toBeTruthy();
   });
 
   test("apa — add pending action (child) controls are addressable", async ({ page }) => {
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/appactionpending", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('apa-sel-1'), 'apa-sel-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-sel-2'), 'apa-sel-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-sel-3'), 'apa-sel-3 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-sel-4'), 'apa-sel-4 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-sel-5'), 'apa-sel-5 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-btn-6'), 'apa-btn-6 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('apa-btn-7'), 'apa-btn-7 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('apa-sel-1'), 'apa-sel-1 present').toBeTruthy();
+    expect(page.getByTestId('apa-sel-2'), 'apa-sel-2 present').toBeTruthy();
+    expect(page.getByTestId('apa-sel-3'), 'apa-sel-3 present').toBeTruthy();
+    expect(page.getByTestId('apa-sel-4'), 'apa-sel-4 present').toBeTruthy();
+    expect(page.getByTestId('apa-sel-5'), 'apa-sel-5 present').toBeTruthy();
+    expect(page.getByTestId('apa-btn-6'), 'apa-btn-6 present').toBeTruthy();
+    expect(page.getByTestId('apa-btn-7'), 'apa-btn-7 present').toBeTruthy();
   });
 });

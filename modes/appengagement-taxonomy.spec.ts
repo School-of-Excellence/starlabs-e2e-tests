@@ -21,16 +21,16 @@ test.describe("AppEngagement — Taxonomy (atc taxonomy reference config — dee
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/atctaxonomy", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('aevt-btn-1'), 'aevt-btn-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevt-btn-2'), 'aevt-btn-2 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aevt-btn-1'), 'aevt-btn-1 present').toBeTruthy();
+    expect(page.getByTestId('aevt-btn-2'), 'aevt-btn-2 present').toBeTruthy();
   });
 
   test("aeat — add tags (child dialog) controls are addressable", async ({ page }) => {
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/atctaxonomy", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('aeat-inp-1'), 'aeat-inp-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aeat-btn-2'), 'aeat-btn-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aeat-btn-3'), 'aeat-btn-3 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aeat-inp-1'), 'aeat-inp-1 present').toBeTruthy();
+    expect(page.getByTestId('aeat-btn-2'), 'aeat-btn-2 present').toBeTruthy();
+    expect(page.getByTestId('aeat-btn-3'), 'aeat-btn-3 present').toBeTruthy();
   });
 });

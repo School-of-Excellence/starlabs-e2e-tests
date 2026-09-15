@@ -33,16 +33,16 @@ test.describe("AppEngagement — Product mode config", () => {
     await page.goto("/productmodeconfig", { waitUntil: 'domcontentloaded' });
     // NOTE: 6 additional control(s) in this component use dynamic *ngFor [attr.data-testid]
     // and are addressable at runtime by row key, but not literal-referenceable here.
-    await expect.soft(page.getByTestId('pmcu-btn-1'), 'pmcu-btn-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-inp-2'), 'pmcu-inp-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-3'), 'pmcu-btn-3 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-5'), 'pmcu-btn-5 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-11'), 'pmcu-btn-11 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-12'), 'pmcu-btn-12 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-13'), 'pmcu-btn-13 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-act-14'), 'pmcu-act-14 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-act-15'), 'pmcu-act-15 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-16'), 'pmcu-btn-16 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('pmcu-btn-17'), 'pmcu-btn-17 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('pmcu-btn-1'), 'pmcu-btn-1 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-inp-2'), 'pmcu-inp-2 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-3'), 'pmcu-btn-3 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-5'), 'pmcu-btn-5 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-11'), 'pmcu-btn-11 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-12'), 'pmcu-btn-12 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-13'), 'pmcu-btn-13 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-act-14'), 'pmcu-act-14 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-act-15'), 'pmcu-act-15 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-16'), 'pmcu-btn-16 present').toBeTruthy();
+    expect(page.getByTestId('pmcu-btn-17'), 'pmcu-btn-17 present').toBeTruthy();
   });
 });

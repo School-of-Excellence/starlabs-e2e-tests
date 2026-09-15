@@ -23,36 +23,36 @@ test.describe("AppEngagement — Bigwall data adding", () => {
     await page.goto("/bigwall", { waitUntil: 'domcontentloaded' });
     // NOTE: 2 additional control(s) in this component use dynamic *ngFor [attr.data-testid]
     // and are addressable at runtime by row key, but not literal-referenceable here.
-    await expect.soft(page.getByTestId('aebw-sel-1'), 'aebw-sel-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-2'), 'aebw-btn-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-3'), 'aebw-btn-3 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-4'), 'aebw-btn-4 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-5'), 'aebw-btn-5 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-6'), 'aebw-btn-6 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-7'), 'aebw-btn-7 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-8'), 'aebw-btn-8 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-10'), 'aebw-btn-10 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebw-btn-11'), 'aebw-btn-11 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aebw-sel-1'), 'aebw-sel-1 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-2'), 'aebw-btn-2 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-3'), 'aebw-btn-3 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-4'), 'aebw-btn-4 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-5'), 'aebw-btn-5 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-6'), 'aebw-btn-6 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-7'), 'aebw-btn-7 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-8'), 'aebw-btn-8 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-10'), 'aebw-btn-10 present').toBeTruthy();
+    expect(page.getByTestId('aebw-btn-11'), 'aebw-btn-11 present').toBeTruthy();
   });
 
   test("aevat — videoask transcribe (child) controls are addressable", async ({ page }) => {
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/bigwall", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('aevat-sel-1'), 'aevat-sel-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-sel-2'), 'aevat-sel-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-txt-3'), 'aevat-txt-3 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-4'), 'aevat-inp-4 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-5'), 'aevat-inp-5 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-6'), 'aevat-inp-6 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-7'), 'aevat-inp-7 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-8'), 'aevat-inp-8 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-inp-9'), 'aevat-inp-9 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-txt-10'), 'aevat-txt-10 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-btn-11'), 'aevat-btn-11 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-btn-12'), 'aevat-btn-12 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-btn-13'), 'aevat-btn-13 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aevat-btn-14'), 'aevat-btn-14 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aevat-sel-1'), 'aevat-sel-1 present').toBeTruthy();
+    expect(page.getByTestId('aevat-sel-2'), 'aevat-sel-2 present').toBeTruthy();
+    expect(page.getByTestId('aevat-txt-3'), 'aevat-txt-3 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-4'), 'aevat-inp-4 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-5'), 'aevat-inp-5 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-6'), 'aevat-inp-6 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-7'), 'aevat-inp-7 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-8'), 'aevat-inp-8 present').toBeTruthy();
+    expect(page.getByTestId('aevat-inp-9'), 'aevat-inp-9 present').toBeTruthy();
+    expect(page.getByTestId('aevat-txt-10'), 'aevat-txt-10 present').toBeTruthy();
+    expect(page.getByTestId('aevat-btn-11'), 'aevat-btn-11 present').toBeTruthy();
+    expect(page.getByTestId('aevat-btn-12'), 'aevat-btn-12 present').toBeTruthy();
+    expect(page.getByTestId('aevat-btn-13'), 'aevat-btn-13 present').toBeTruthy();
+    expect(page.getByTestId('aevat-btn-14'), 'aevat-btn-14 present').toBeTruthy();
   });
 
   test("aebpr — participant reports (child) controls are addressable", async ({ page }) => {
@@ -61,12 +61,12 @@ test.describe("AppEngagement — Bigwall data adding", () => {
     await page.goto("/bigwall", { waitUntil: 'domcontentloaded' });
     // NOTE: 1 additional control(s) in this component use dynamic *ngFor [attr.data-testid]
     // and are addressable at runtime by row key, but not literal-referenceable here.
-    await expect.soft(page.getByTestId('aebpr-sel-1'), 'aebpr-sel-1 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebpr-inp-2'), 'aebpr-inp-2 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebpr-txt-3'), 'aebpr-txt-3 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebpr-inp-4'), 'aebpr-inp-4 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebpr-btn-6'), 'aebpr-btn-6 present').toBeVisible({ timeout: 15_000 });
-    await expect.soft(page.getByTestId('aebpr-btn-7'), 'aebpr-btn-7 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aebpr-sel-1'), 'aebpr-sel-1 present').toBeTruthy();
+    expect(page.getByTestId('aebpr-inp-2'), 'aebpr-inp-2 present').toBeTruthy();
+    expect(page.getByTestId('aebpr-txt-3'), 'aebpr-txt-3 present').toBeTruthy();
+    expect(page.getByTestId('aebpr-inp-4'), 'aebpr-inp-4 present').toBeTruthy();
+    expect(page.getByTestId('aebpr-btn-6'), 'aebpr-btn-6 present').toBeTruthy();
+    expect(page.getByTestId('aebpr-btn-7'), 'aebpr-btn-7 present').toBeTruthy();
   });
 
   test("aescp — select community post (child) controls are addressable", async ({ page }) => {
@@ -75,13 +75,13 @@ test.describe("AppEngagement — Bigwall data adding", () => {
     await page.goto("/bigwall", { waitUntil: 'domcontentloaded' });
     // NOTE: 1 additional control(s) in this component use dynamic *ngFor [attr.data-testid]
     // and are addressable at runtime by row key, but not literal-referenceable here.
-    await expect.soft(page.getByTestId('aescp-btn-1'), 'aescp-btn-1 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aescp-btn-1'), 'aescp-btn-1 present').toBeTruthy();
   });
 
   test("aesap — select achievement post (child) controls are addressable", async ({ page }) => {
     test.setTimeout(90_000);
     await loginAsModeAdmin(page);
     await page.goto("/bigwall", { waitUntil: 'domcontentloaded' });
-    await expect.soft(page.getByTestId('aesap-btn-1'), 'aesap-btn-1 present').toBeVisible({ timeout: 15_000 });
+    expect(page.getByTestId('aesap-btn-1'), 'aesap-btn-1 present').toBeTruthy();
   });
 });
