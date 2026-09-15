@@ -390,10 +390,10 @@
     "support": {
       "title": "Customer Support",
       "description": "Customer support dashboard, chat and ticket flows.",
-      "config": "playwright.support.config.ts",
+      "config": "playwright.support.emulator.config.ts",
       "capture": "failure-only",
       "specDir": "support",
-      "ciReady": false,
+      "ciReady": true,
       "appPaths": [
         "src/app/Customer Support/**"
       ],
@@ -401,7 +401,7 @@
         "functions/components/ticketsystem.js",
         "functions/components/clientissue.js"
       ],
-      "reviewNote": "WIRED 2026-09-08. The specs existed since the initial commit but no manifest entry claimed them, so /customersupportdashboard read as covered while no gate ever ran them. ciReady:false is deliberate and honest — there is no playwright.support.emulator.config.ts yet, so this cannot join the emulator gate until one is written (mirror lib/emulator-playwright-config makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown)."
+      "reviewNote": "WIRED 2026-09-08; CI-READY 2026-09-15. The emulator twin now exists (playwright.support.emulator.config.ts via makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown.ts), so the suite joins the emulator gate. config switched to the emulator twin and ciReady flipped true so the suite runs on the emulator gate via branch-suites and the console mirror (suites-deploy) credits src/app/Customer Support/**."
     }
   },
   "cfPredeploy": {
