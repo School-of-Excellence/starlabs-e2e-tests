@@ -52,7 +52,7 @@ test.describe('Modes — Interim Report Log: Love Letter + Dashboard tabs (contr
 
     for (const id of LOVE_LETTER_CONTROLS) {
       // eslint-disable-next-line no-await-in-loop
-      await expect(page.getByTestId(id), `IRT-LL: ${id} must be visible on the Love Letter tab`)
+      await expect(page.getByTestId(id).filter({ visible: true }).first(), `IRT-LL: ${id} must be visible on the Love Letter tab`)
         .toBeVisible({ timeout: 30_000 });
     }
   });
@@ -66,7 +66,9 @@ test.describe('Modes — Interim Report Log: Love Letter + Dashboard tabs (contr
     await expect(page).toHaveURL(/interimreportlog/, { timeout: 30_000 });
     await page.getByRole('tab', { name: /Love Letter/i }).click();
 
-    const happy = page.getByTestId('irl-metric-happy');
+    // irl-metric-happy renders in more than one tab body (both attached in the DOM); scope to the visible
+    // (active Love Letter tab) instance so the strict-mode locator resolves to a single, clickable element.
+    const happy = page.getByTestId('irl-metric-happy').filter({ visible: true }).first();
     await expect(happy, 'IRT-LL: the Happy metric box must render').toBeVisible({ timeout: 30_000 });
     await happy.click(); // filterLetterDataWithBoxClick('happy') → toggles selectedFilterTypes ⇒ .active
     await expect(happy, 'IRT-LL: the Happy box reflects the active-filter toggle the app applied')
