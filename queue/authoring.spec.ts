@@ -309,8 +309,7 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
         .map((n) => { const c = form.get!(n); let v: string; try { v = JSON.stringify(c?.value); } catch { v = String(c?.value); } return `${n}{errors:${JSON.stringify(c?.errors)},value:${(v || '').slice(0, 40)}}`; })
         .join(' | ');
     }, [...STEP0_GATE_CONTROLS]).catch((e) => `<eval failed: ${String(e)}>`);
-    // eslint-disable-next-line no-console
-    console.log(`[DIAG] AUTH step0-invalid: ${info}`);
+    return info;
   };
   try {
   await expect
@@ -344,8 +343,10 @@ async function waitForStepZeroValid(page: Page): Promise<void> {
     )
     .toEqual([]);
   } catch (e) {
-    await dumpInvalid();
-    throw e;
+    // run-isolated only surfaces "[DIAG]"/Error breadcrumbs (test stdout is not echoed), so raise the
+    // named invalid control(s) as the thrown Error message rather than console.log.
+    const info = await dumpInvalid();
+    throw new Error(`[DIAG] AUTH step0-invalid: ${info}`);
   }
 }
 
