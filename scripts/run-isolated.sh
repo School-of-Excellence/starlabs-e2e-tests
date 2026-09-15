@@ -288,6 +288,15 @@ run_file() {
   p="$(printf '%s' "$out"  | grep -oE '[0-9]+ passed'  | grep -oE '[0-9]+' | tail -1)"; p="${p:-0}"
   fl="$(printf '%s' "$out" | grep -oE '[0-9]+ failed'  | grep -oE '[0-9]+' | tail -1)"; fl="${fl:-0}"
   sk="$(printf '%s' "$out" | grep -oE '[0-9]+ skipped' | grep -oE '[0-9]+' | tail -1)"; sk="${sk:-0}"
+  # On a failing file, surface WHICH test(s) failed. The line/list reporter prints each failure as a
+  # breadcrumb header ("  N) [proj] › path.spec.ts:LINE › describe › title") followed by its Error/expect
+  # lines; the summary grep above keeps only counts + "Error:", so the failing test NAME was invisible in
+  # CI (you saw "1 failed" but not which). Echo the failure breadcrumbs + a few assertion lines so a CI-only
+  # failure is diagnosable from the log alone. Also passes through any test-side `[DIAG]` console.log.
+  if [ "${fl:-0}" -gt 0 ]; then
+    echo "   ── failing test(s) in $f ──"
+    printf '%s\n' "$out" | grep -E "^[[:space:]]*[0-9]+\) |›.*\.spec\.ts|\[DIAG\]|Received|Expected|Timed out|element\(s\) not found|Locator:" | head -40
+  fi
 }
 
 # ──────────────── main loop ────────────────
