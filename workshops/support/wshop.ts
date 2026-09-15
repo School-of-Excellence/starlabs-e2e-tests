@@ -334,6 +334,54 @@ export async function stampParticipantWorkshopP0Completed(platformName = 'eiflix
   }, { merge: true });
 }
 
+/** Seeded Firebase Auth uids (seed-workshops.js roster: `${RUN}_u_${key}`). */
+export const wsUids = { p0: `${RUN}_u_p0`, p1: `${RUN}_u_p1`, p2: `${RUN}_u_p2` };
+
+/** The support-chat group WDC-11 attaches to W_DASH (created by the precondition, deleted afterwards). */
+export const wsChatGroupId = `${RUN}_chat`;
+
+/**
+ * PRECONDITION for the "Users Not in Chat Group" card: point W_DASH at a fresh, EMPTY `supportchat`
+ * group, give p0 the `firebaseuserref` (→ user_data/{uid}) the dashboard resolves an existing user's uid
+ * from, and make sure p1 has none — so p0 is addable and p1 shows as "no login yet". The spec asserts what
+ * the APP writes into members[]; nothing here pre-empts that.
+ */
+export async function setupChatGroupPrecondition(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  await db.collection('supportchat').doc(wsChatGroupId).set({ docid: wsChatGroupId, members: [], testrunid: RUN, _testdata: true });
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ selectedgroup: wsChatGroupId }, { merge: true });
+  await db.collection('participant metadata').doc(wsProfileIds.p0).set({ firebaseuserref: db.doc(`user_data/${wsUids.p0}`) }, { merge: true });
+  await db.collection('participant metadata').doc(wsProfileIds.p1).set({ firebaseuserref: FV.delete() }, { merge: true });
+}
+
+/** Give p1 a login reference too (WDC-11b needs both enrollees addable). PRECONDITION write only. */
+export async function giveP1LoginRef(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('participant metadata').doc(wsProfileIds.p1).set({ firebaseuserref: db.doc(`user_data/${wsUids.p1}`) }, { merge: true });
+}
+
+/** Undo setupChatGroupPrecondition (and giveP1LoginRef) so the rest of the suite sees the plain seed. */
+export async function teardownChatGroupPrecondition(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ selectedgroup: FV.delete() }, { merge: true });
+  await db.collection('participant metadata').doc(wsProfileIds.p0).set({ firebaseuserref: FV.delete() }, { merge: true });
+  await db.collection('participant metadata').doc(wsProfileIds.p1).set({ firebaseuserref: FV.delete() }, { merge: true });
+  await db.collection('supportchat').doc(wsChatGroupId).delete().catch(() => undefined);
+}
+
+/** The group's current members[] — the value the APP wrote. */
+export async function chatGroupMembers(): Promise<string[]> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('supportchat').doc(wsChatGroupId).get();
+  const m = snap.exists ? (snap.data() || {})['members'] : [];
+  return Array.isArray(m) ? m.map(String) : [];
+}
+
 /**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the

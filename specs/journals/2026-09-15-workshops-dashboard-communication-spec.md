@@ -66,3 +66,12 @@ KNOWN instant (`wsP0CompletedAt`, 15 Sept 2026 20:05 local) and a raw `platform_
 completed step (`stampParticipantWorkshopP0Completed()`, precondition write) and asserts what the app
 derived: "15 Sept 2026, 8:05 pm" and "EiFlix App"; the untouched step shows neither a date nor a pill.
 `finally` restores the plain seed state (`resetParticipantWorkshopP0`) so WDC-09 and WS-12 are unaffected.
+
+## WDC-11 / 11b — Users Not in Chat Group (app change, same day)
+
+Preconditions in `wshop.ts` (`setupChatGroupPrecondition` / `giveP1LoginRef` / `teardownChatGroupPrecondition`):
+an EMPTY `supportchat/${RUN}_chat`, `selectedgroup` on W_DASH, `firebaseuserref → user_data/{uid}` on p0 (and
+on p1 for 11b). The seeded uids are `${RUN}_u_p0/p1` (roster). WDC-11: card "2" → panel → p0 has Add, p1
+shows "No login yet" → add p0 → Firestore `members` == [p0 uid] (the app's write) → panel/card follow → Add
+all disabled. WDC-11b: both addable → Add all → members has both → the card hides at zero. Everything is
+removed in `finally`, so WS-07/11/12 and the rest of the suite never see a group.

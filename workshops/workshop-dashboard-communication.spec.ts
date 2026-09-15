@@ -20,11 +20,12 @@
 // All reads are single-equality / collection scans — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
-  wsIds, wsAddIds, wsMetaNames, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames,
+  wsIds, wsAddIds, wsMetaNames, wsUids, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames,
   resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed,
+  setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, queryWhere } from '../queue/support/firestore-admin';
+import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 // The metadata people are identified by the name the CF-owned field actually carries — their actor
@@ -442,6 +443,72 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
   });
 
   // ===========================================================================================
+  // WDC-11 — "Users Not in Chat Group": the card, the panel, one add, add-all, and the live drop-off
+  // ===========================================================================================
+  test('WDC-11 the chat-group card lists enrolled people missing from the group and adds their uid to it', async ({ page }) => {
+    // Precondition (anti-circular): an EMPTY group on W_DASH; p0 resolvable (firebaseuserref), p1 not.
+    await setupChatGroupPrecondition();
+    try {
+      await openDashboard(page);
+      const card = page.getByTestId('wdash-chat-card');
+      await expect(card, 'WDC-11: the card appears once a group is set and someone is missing').toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId('wdash-chat-count'), 'WDC-11: both enrollees are missing from the empty group').toHaveText('2', { timeout: 30_000 });
+      await card.click();
+
+      const panel = page.locator('.participant-panel.panel-visible');
+      await expect(panel, 'WDC-11: the side panel opens').toBeVisible({ timeout: 15_000 });
+      await expect(panel.locator('.panel-header')).toContainText('Chat Group');
+      const cards = panel.locator('mat-card.participant-card');
+      await expect(cards, 'WDC-11: one card per missing person').toHaveCount(2, { timeout: 30_000 });
+      // p0 (has a login) gets an Add button; p1 (no login yet) gets the explanation instead.
+      const p0Card = cards.filter({ hasText: wsMetaNames.p0 });
+      const p1Card = cards.filter({ hasText: wsMetaNames.p1 });
+      await expect(p0Card.getByTestId('wdash-chat-add-btn'), 'WDC-11: p0 can be added').toHaveCount(1);
+      await expect(p1Card.getByTestId('wdash-chat-no-uid'), 'WDC-11: p1 has no login to add').toHaveCount(1);
+      await expect(p1Card.getByTestId('wdash-chat-add-btn')).toHaveCount(0);
+      const addAll = page.getByTestId('wdash-chat-add-all-btn');
+      await expect(addAll, 'WDC-11: Add all counts only the addable people').toContainText('1');
+
+      // [REAL-UI] add p0. [ASSERT] the APP arrayUnions p0's uid into supportchat.members — read back from
+      // Firestore — and the live listener drops p0 from the panel and the card count.
+      await p0Card.getByTestId('wdash-chat-add-btn').click();
+      const members = await pollUntil(chatGroupMembers, (m) => m.includes(wsUids.p0),
+        { label: 'WDC-11: supportchat.members gains p0 uid', timeoutMs: 30_000 });
+      expect(members, 'WDC-11: exactly p0 was added').toEqual([wsUids.p0]);
+      await expect(cards, 'WDC-11: p0 leaves the panel').toHaveCount(1, { timeout: 30_000 });
+      await expect(page.getByTestId('wdash-chat-count'), 'WDC-11: the card follows the group').toHaveText('1', { timeout: 30_000 });
+      await expect(addAll, 'WDC-11: nobody addable is left').toBeDisabled();
+
+      // Add-all with nothing addable must not write anything.
+      expect(await chatGroupMembers()).toEqual([wsUids.p0]);
+    } finally {
+      await teardownChatGroupPrecondition();
+    }
+  });
+
+  test('WDC-11b Add all to group adds every addable person in one write and the card disappears', async ({ page }) => {
+    await setupChatGroupPrecondition();
+    await giveP1LoginRef();                      // both enrollees addable, so the card can reach zero
+    try {
+      await openDashboard(page);
+      await expect(page.getByTestId('wdash-chat-count')).toHaveText('2', { timeout: 30_000 });
+      await page.getByTestId('wdash-chat-card').click();
+      const addAll = page.getByTestId('wdash-chat-add-all-btn');
+      await expect(addAll, 'WDC-11b: Add all offers both').toContainText('2', { timeout: 15_000 });
+      await addAll.click();
+      // [ASSERT] the APP arrayUnioned both uids in one write — read back from Firestore.
+      const members = await pollUntil(chatGroupMembers, (m) => m.includes(wsUids.p0) && m.includes(wsUids.p1),
+        { label: 'WDC-11b: supportchat.members gains both uids', timeoutMs: 30_000 });
+      expect([...members].sort()).toEqual([wsUids.p0, wsUids.p1].sort());
+      // Nobody is missing any more → the card is gone (count 0 hides it) and the panel empties.
+      await expect(page.getByTestId('wdash-chat-card'), 'WDC-11b: the card hides at zero').toHaveCount(0, { timeout: 30_000 });
+      await expect(page.locator('.participant-panel.panel-visible mat-card.participant-card')).toHaveCount(0, { timeout: 30_000 });
+    } finally {
+      await teardownChatGroupPrecondition();
+    }
+  });
+
+  // ===========================================================================================
   // Addressable — every hook this feature added, as a literal reference (console readiness gate).
   // ===========================================================================================
   test('workshop-dashboard + communication-dialog — controls addressable', async ({ page }) => {
@@ -451,6 +518,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       'wdash-exist-filter-body', 'wdash-exist-journey-option', 'wdash-exist-status-option', 'wdash-exist-status-chip', 'wdash-exist-journey-chip',
       'wdash-exist-clear-filters-btn', 'wdash-comm-open-btn', 'wdash-sub-platform', 'wdash-pd-platform',
       'wdash-platform-section', 'wdash-platform-enroll-card', 'wdash-platform-enroll-row', 'wdash-platform-steps-card', 'wdash-platform-step-row',
+      'wdash-chat-card', 'wdash-chat-count', 'wdash-chat-add-all-btn', 'wdash-chat-add-btn', 'wdash-chat-no-uid',
     ]) expect(page.getByTestId(id)).toBeTruthy();
     expect(page.getByTestId('wdash-comm-close-btn')).toBeTruthy();
     expect(page.getByTestId('wdash-comm-audience-all')).toBeTruthy();
