@@ -317,11 +317,28 @@ function analyzeElements({ appRoot, hubRoot, manifest, changedFiles, readBase })
     const parts = componentKeyOf(files[0]) ? ['.ts', '.html'] : [''];
     let headSrc = '';
     let baseSrc = '';
+    // Template-only accumulators: `unhookedInteractive` must run over TEMPLATE markup only, never a
+    // `.ts` file's source. A `.ts` can carry a tag INSIDE A STRING LITERAL (a URL-linkify replacement
+    // like `replace(re, '<a href="$1">…</a>')`, or an `<a href>` in a unit-test assertion) which is
+    // NOT an addressable template control — counting it produced phantom `newUnhooked` flags on
+    // refactor `.engine.ts` / `.unit.spec.ts` files that have no template at all. hooksIn still reads
+    // both .ts + .html (a data-testid / getByTestId ref is legitimate in either).
+    let headHtml = '';
+    let baseHtml = '';
     for (const ext of parts) {
       const rel = componentKeyOf(files[0]) ? `${key}${ext}` : key;
       const abs = path.join(appRoot, rel);
-      if (fs.existsSync(abs) && /\.(ts|html)$/.test(rel)) headSrc += fs.readFileSync(abs, 'utf8') + '\n';
-      if (/\.(ts|html)$/.test(rel)) baseSrc += (readBase(rel) || '') + '\n';
+      const isHtml = /\.html$/.test(rel);
+      if (fs.existsSync(abs) && /\.(ts|html)$/.test(rel)) {
+        const src = fs.readFileSync(abs, 'utf8') + '\n';
+        headSrc += src;
+        if (isHtml) headHtml += src;
+      }
+      if (/\.(ts|html)$/.test(rel)) {
+        const bsrc = (readBase(rel) || '') + '\n';
+        baseSrc += bsrc;
+        if (isHtml) baseHtml += bsrc;
+      }
     }
     if (!headSrc.trim()) continue; // deleted, or not a source file
 
@@ -332,7 +349,7 @@ function analyzeElements({ appRoot, hubRoot, manifest, changedFiles, readBase })
     const untestedExisting = [...headHooks].filter((h) => baseHooks.has(h) && !specRefs.has(h));
     const newUnhooked = Math.max(
       0,
-      unhookedInteractive(headSrc).length - unhookedInteractive(baseSrc).length,
+      unhookedInteractive(headHtml).length - unhookedInteractive(baseHtml).length,
     );
     const testedHooks = [...headHooks].filter((h) => specRefs.has(h));
 
