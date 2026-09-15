@@ -446,7 +446,9 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
   // WDC-11 — "Users Not in Chat Group": the card, the panel, one add, add-all, and the live drop-off
   // ===========================================================================================
   test('WDC-11 the chat-group card lists enrolled people missing from the group and adds their uid to it', async ({ page }) => {
-    // Precondition (anti-circular): an EMPTY group on W_DASH; p0 resolvable (firebaseuserref), p1 not.
+    // Precondition (anti-circular): an EMPTY group on W_DASH. p0 resolves through participant
+    // metadata.firebaseuserref; p1 has NO metadata reference and must resolve through the fallback,
+    // profile_data.user_ref (the seed's auth chain writes it for every participant).
     await setupChatGroupPrecondition();
     try {
       await openDashboard(page);
@@ -460,27 +462,31 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       await expect(panel.locator('.panel-header')).toContainText('Chat Group');
       const cards = panel.locator('mat-card.participant-card');
       await expect(cards, 'WDC-11: one card per missing person').toHaveCount(2, { timeout: 30_000 });
-      // p0 (has a login) gets an Add button; p1 (no login yet) gets the explanation instead.
       const p0Card = cards.filter({ hasText: wsMetaNames.p0 });
       const p1Card = cards.filter({ hasText: wsMetaNames.p1 });
-      await expect(p0Card.getByTestId('wdash-chat-add-btn'), 'WDC-11: p0 can be added').toHaveCount(1);
-      await expect(p1Card.getByTestId('wdash-chat-no-uid'), 'WDC-11: p1 has no login to add').toHaveCount(1);
-      await expect(p1Card.getByTestId('wdash-chat-add-btn')).toHaveCount(0);
+      await expect(p0Card.getByTestId('wdash-chat-add-btn'), 'WDC-11: p0 resolves via metadata.firebaseuserref').toHaveCount(1);
+      await expect(p1Card.getByTestId('wdash-chat-add-btn'), 'WDC-11: p1 resolves via the profile_data.user_ref fallback').toHaveCount(1, { timeout: 15_000 });
+      await expect(p1Card.getByTestId('wdash-chat-no-uid')).toHaveCount(0);
       const addAll = page.getByTestId('wdash-chat-add-all-btn');
-      await expect(addAll, 'WDC-11: Add all counts only the addable people').toContainText('1');
+      await expect(addAll, 'WDC-11: Add all counts both').toContainText('2');
 
-      // [REAL-UI] add p0. [ASSERT] the APP arrayUnions p0's uid into supportchat.members — read back from
-      // Firestore — and the live listener drops p0 from the panel and the card count.
+      // [REAL-UI] add p0 alone. [ASSERT] the APP arrayUnions p0's uid into supportchat.members — read back
+      // from Firestore — and the live listener drops p0 from the panel and the card count.
       await p0Card.getByTestId('wdash-chat-add-btn').click();
       const members = await pollUntil(chatGroupMembers, (m) => m.includes(wsUids.p0),
         { label: 'WDC-11: supportchat.members gains p0 uid', timeoutMs: 30_000 });
       expect(members, 'WDC-11: exactly p0 was added').toEqual([wsUids.p0]);
       await expect(cards, 'WDC-11: p0 leaves the panel').toHaveCount(1, { timeout: 30_000 });
       await expect(page.getByTestId('wdash-chat-count'), 'WDC-11: the card follows the group').toHaveText('1', { timeout: 30_000 });
-      await expect(addAll, 'WDC-11: nobody addable is left').toBeDisabled();
+      await expect(addAll, 'WDC-11: one addable person left').toContainText('1');
 
-      // Add-all with nothing addable must not write anything.
-      expect(await chatGroupMembers()).toEqual([wsUids.p0]);
+      // Add all → p1's uid (from profile_data.user_ref) joins; nobody is missing → card hides, panel empties.
+      await addAll.click();
+      const both = await pollUntil(chatGroupMembers, (m) => m.includes(wsUids.p1),
+        { label: 'WDC-11: supportchat.members gains p1 uid', timeoutMs: 30_000 });
+      expect([...both].sort()).toEqual([wsUids.p0, wsUids.p1].sort());
+      await expect(page.getByTestId('wdash-chat-card'), 'WDC-11: the card hides at zero').toHaveCount(0, { timeout: 30_000 });
+      await expect(cards).toHaveCount(0, { timeout: 30_000 });
     } finally {
       await teardownChatGroupPrecondition();
     }
