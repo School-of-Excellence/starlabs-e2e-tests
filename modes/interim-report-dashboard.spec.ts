@@ -33,6 +33,11 @@
 // therefore the drill-down dialog only (the inline copies are `ird-xbucket-row`), and the name click
 // is scoped to a participant row — an unscoped .first() picks the hidden inline copy, which never
 // becomes actionable.
+// Data rules proved here (operator, 2026-09-17):
+//   • the life areas are per-ATC-model — the dashboard reads the keys `interim crossover.metric`
+//     actually carries, so a model with its own area names renders correctly (IRD-02 seeds the five);
+//   • "Not progressed" is a RATED 0. An area the participant never rated is left out of the meter
+//     (the seed's 'Personal Genius' has metric null for exactly this).
 // All reads are single-equality — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
@@ -61,7 +66,10 @@ const stripCount = async (card: Locator): Promise<number> =>
 
 /** Pick a journey in the searchable JOURNEY dropdown. */
 async function pickJourney(page: Page, label: string): Promise<void> {
-  await page.getByTestId('ird-filter-journey').click();
+  // multi-select: the panel stays open after a pick, so only click the pill when it is closed
+  if (!(await page.getByTestId('ird-journey-panel').isVisible())) {
+    await page.getByTestId('ird-filter-journey').click();
+  }
   await expect(page.getByTestId('ird-journey-panel'), 'the journey dropdown must open').toBeVisible({ timeout: 30_000 });
   await page.getByTestId('ird-journey-search').fill(label);
   const option = page.getByTestId('ird-journey-option').filter({ hasText: label }).first();
@@ -140,9 +148,11 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     expect(await page.getByTestId('ird-cross-business-b3').innerText(), 'IRD-02: Business 9 lands in the 8–10 band').toBe('1');
     expect(await page.getByTestId('ird-cross-career-b2').innerText(), 'IRD-02: Career 5 lands in 4–7').toBe('1');
     expect(await page.getByTestId('ird-cross-family-b1').innerText(), 'IRD-02: Family 2 lands in 1–3').toBe('1');
-    expect(await page.getByTestId('ird-cross-health-b0').innerText(), 'IRD-02: Health 0 is Not progressed').toBe('1');
+    expect(await page.getByTestId('ird-cross-health-b0').innerText(),
+      'IRD-02: Health was RATED 0, so it is Not progressed').toBe('1');
+    // operator rule (2026-09-17): an area the participant never rated is skipped, not "not progressed"
     expect(await page.getByTestId('ird-cross-personal-genius-b0').innerText(),
-      'IRD-02: an unfilled area is Not progressed too').toBe('1');
+      'IRD-02: the unrated area is left out of the meter entirely').toBe('0');
 
     // p1 — two reports on screen, no crossover record: every cell 0, including "Not progressed".
     await filterToParticipant(page, modeActors.participant1);
@@ -214,6 +224,7 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     await expect(page.getByTestId('ird-journey-count')).toContainText('1 participant');
 
     // Journey B + p0 → dropped (p0 is on A). The negative control: the filter really narrows.
+    await page.getByTestId('ird-journey-clear').click();
     await pickJourney(page, modeContent.journeyB);
     await expect(page.getByTestId('ird-empty'), 'IRD-05: p0 is not on journey B')
       .toContainText(/No participants match/i, { timeout: 30_000 });
@@ -222,6 +233,31 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     await page.getByTestId('ird-filter-participant').fill(modeActors.participant1);
     await expect(page.getByTestId('ird-strip-all').locator('.n'), 'IRD-05: p1 is on journey B through lastcompletedjourney')
       .toHaveText('2', { timeout: 30_000 });
+  });
+
+  // ===========================================================================================
+  // IRD-12 — the JOURNEY filter is multi-select (operator, 2026-09-17): picking a second journey
+  // adds to the selection rather than replacing it, and the pool is the UNION of both.
+  // p0 (1 report) is on journey A; p1 (2 reports) is on journey B — so A+B must show all three.
+  // ===========================================================================================
+  test('IRD-12 two journeys can be selected at once and the pool is their union', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openDashboard(page);
+
+    await pickJourney(page, modeContent.journeyA);
+    const onlyA = await stripCount(page.getByTestId('ird-strip-all'));
+    expect(onlyA, 'IRD-12: journey A alone holds p0\'s single report').toBe(1);
+
+    await pickJourney(page, modeContent.journeyB);
+    await expect(page.getByTestId('ird-filter-journey'), 'IRD-12: the pill reports both selections')
+      .toContainText('2 journeys');
+    expect(await stripCount(page.getByTestId('ird-strip-all')),
+      'IRD-12: A + B is the union — p0\'s report plus p1\'s two').toBe(3);
+
+    // the × clears the whole selection, not just the last one
+    await page.getByTestId('ird-journey-clear').click();
+    await expect(page.getByTestId('ird-filter-journey'), 'IRD-12: cleared back to every journey')
+      .toContainText('All journeys');
   });
 
   // ===========================================================================================
@@ -443,6 +479,13 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     expect(page.getByTestId('ird-tag-critical')).toBeTruthy();
     expect(page.getByTestId('ird-tag-opportunity')).toBeTruthy();
     expect(page.getByTestId('ird-tag-resolved')).toBeTruthy();
+    // the per-model fallback cells (areas outside the canonical five) and the filter clears
+    expect(page.getByTestId('ird-cross-other-b0')).toBeTruthy();
+    expect(page.getByTestId('ird-cross-other-b1')).toBeTruthy();
+    expect(page.getByTestId('ird-cross-other-b2')).toBeTruthy();
+    expect(page.getByTestId('ird-cross-other-b3')).toBeTruthy();
+    expect(page.getByTestId('ird-xbucket-other')).toBeTruthy();
+    expect(page.getByTestId('ird-event-clear')).toBeTruthy();
     // By participant and the filter bar
     expect(page.getByTestId('ird-daterange')).toBeTruthy();
     expect(page.getByTestId('ird-modal-export')).toBeTruthy();

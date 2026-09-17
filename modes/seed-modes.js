@@ -306,8 +306,10 @@ async function seedModes() {
     lastupdate: T.now(), createdon: T.now(), ...tag,
   });
 
-  //      Crossover: one area ≥8 (counts as "changed" + carries a level jump), one mid, one low, one 0
-  //      and one never filled — so every band column of the matrix has a known occupant.
+  //      Crossover: one area ≥8 (counts as "changed" + carries a level jump), one mid, one low, one
+  //      RATED 0 and one NEVER RATED (metric null). The last two are the pair that proves the operator's
+  //      2026-09-17 rule: Health (rated 0) belongs in "Not progressed"; Personal Genius (never rated) is
+  //      skipped and must be left out of the meter entirely — IRD-02 asserts 1 and 0 for exactly that.
   await db.collection('interim crossover').doc(ID.XOVER_IRD).set({
     docid: ID.XOVER_IRD, profileid: PF.p0, interimlogid: ID.IRL_COMPLETED, created: T.now(),
     metric: {

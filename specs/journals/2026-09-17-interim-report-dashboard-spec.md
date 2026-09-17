@@ -51,3 +51,24 @@ environment.emulator.ts`, which is gitignored and only synthesized from `ci/over
 is the gate. The flows themselves were driven by hand against a live dev server (starlabs-test) while the
 feature was built — filters, tagging, the resolve confirmation, notes, export and the new-tab name link —
 so the selectors and the interaction order are known good; the seeded numbers are what CI will prove.
+
+## Addendum — the two data rules the operator raised (2026-09-17)
+
+**Areas are per-ATC-model, not a fixed five.** `crossover.dart` builds `participant AEL.crossovermetric`
+(and this doc's `metric`) from the participant's ATC model `category` list, so the KEYS differ per model.
+The dashboard had hard-coded Business / Career / Family / Health / Personal Genius, so a participant on a
+different model rendered "Left blank" for every unmatched area and showed a metric only where the names
+happened to line up — the reported "0 filled for all five, only 2 of 5 shown". The component now reads
+the keys the document carries and the script derives the matrix rows from the loaded pool (`syncAreas`),
+which is why every area-derived table became a function. IRD-02 keeps asserting the seeded five by name;
+cells outside that set fall back to `ird-cross-other-b*` so they stay addressable.
+
+**"Not progressed" is a rated 0.** The band was `v === null || v === 0`, so an area the participant never
+rated sat in the same column as one they deliberately scored 0. It is now `v === 0`, and the seed's
+`Personal Genius: {metric: null}` is the negative control: IRD-02 asserts Health (rated 0) = 1 and
+Personal Genius (never rated) = 0. Participants with no `interim crossover` doc at all were already out
+(crossPool, 2026-09-16).
+
+**Journey filter is multi-select** (IRD-12): `JOURNEY` is a Set, picking adds rather than replaces, the
+panel stays open, the pill reads "2 journeys", and the × clears everything. Verified against starlabs-test:
+B!G = 6, uP! = 11, both selected = 17 — an exact union, since a participant resolves to one journey.
