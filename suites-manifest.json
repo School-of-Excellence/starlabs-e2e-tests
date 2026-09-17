@@ -129,7 +129,9 @@
         "src/app/EvolutionMapping/evolution-mapping/participant-evolution-mapping/**",
         "src/app/video-player/**",
         "src/app/instance-status.service.ts",
-        "src/app/web-studio-invitation/**"
+        "src/app/web-studio-invitation/**",
+        "src/app/LiveKit-Cloud/**",
+        "src/app/openvidu-loading-game/**"
       ],
       "cfPaths": [
         "functions/components/queuesystem.js",
@@ -305,7 +307,8 @@
         "src/app/route-configuration-duplicate/**",
         "src/app/slackwebhookurls/**",
         "src/app/updatesnackbar/**",
-        "src/app/icon-list.ts"
+        "src/app/icon-list.ts",
+        "src/app/authloading/**"
       ],
       "cfPaths": [
         "functions/components/user_registration.js"
@@ -366,7 +369,8 @@
         "src/app/Participants Profile Management/participants-analytics/ah-notification/**",
         "src/app/Participants Profile Management/participants-analytics/bulk-add-products/**",
         "src/app/Participants Profile Management/participants-analytics/tag-participants/**",
-        "src/app/Channel Communication/channel-communication/**"
+        "src/app/Channel Communication/channel-communication/**",
+        "src/app/arena-design-insights/**"
       ],
       "cfPaths": []
     },

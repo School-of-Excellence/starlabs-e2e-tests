@@ -87,3 +87,31 @@ sent. A dismissed composer returns no payload, the same firewall/stub posture th
 for its composer hand-offs. Clear then empties the selection and hides the bar.
 
 The grid path is driven here; the list path (`ird-pick-row`, `ird-pick-all`) is registered in IRD-ADDR2.
+
+## Suite routing — the folders no suite claimed (2026-09-17)
+
+Walked every file under `starlabs-angular/src/app` against the whole manifest taxonomy (suite
+`appPaths` + `crossCutting` + `fenced` + `neutral`) rather than the suite globs alone — the first pass
+wrongly flagged `DialogBox`, `form-element`, `Service` and `shared`, which `crossCutting` already owns.
+
+Eight folders were genuinely unclaimed. Four had an unambiguous owner by precedent and were added:
+
+| Folder | Suite | Precedent |
+|---|---|---|
+| `LiveKit-Cloud/**` | queue | queue already owns `src/app/LiveKit/**` and `src/app/OpenVidu/**` |
+| `openvidu-loading-game/**` | queue | same — the live-session family |
+| `authloading/**` | authroles | authroles owns login / routing / exceptionalrouting |
+| `arena-design-insights/**` | events | events owns `Events/**` and the arena zone cases |
+
+Four are deliberately left alone, because each needs an operator decision rather than a guess:
+
+- **`ATC/**`, `ATC-Ops/**`, `view-ai-generated-atc/**` (54 files).** starlabs-angular CLAUDE.md makes ATC
+  data off-limits to every automated suite, so the honest home is `fenced` — but `fenced` was emptied by
+  an explicit operator decision on 2026-09-08 and its `_why` says to populate it only when a genuinely
+  un-automatable area appears. Re-populating it reverses that decision, so it is a decision to take, not
+  a glob to add. Until then these read as SUITES_MISSING whenever ATC changes.
+- **`Test Component/**` (dev-test-mic).** Looks like dev scaffolding; if it is dead it belongs in
+  `retired` or should be deleted, neither of which is a routing call.
+
+`SUITES.md` regenerated (`node scripts/gen-suites-doc.mjs`, 14 suites). Readiness for the interim-report
+branch is unchanged: MATCHED, suites [modes], uncovered [].
