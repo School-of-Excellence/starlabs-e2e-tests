@@ -96,6 +96,37 @@ test.describe('Modes — Interim Report Log: Love Letter + Dashboard tabs (contr
     }
   });
 
+  // ===========================================================================================
+  // IRT-SORT — the Ask A&H / Love Letter table sorts (operator, 2026-09-17). Both tabs instantiate the
+  // SAME table template, so the case sorts on the Love Letter tab — the one whose MatSort is the second
+  // instance, and the one that stayed unsorted until the active table's sort was the one attached.
+  // Sorting reorders the rows the page loaded; it does not re-query (the name lives in profile_data).
+  // ===========================================================================================
+  test('IRT-SORT the Love Letter table sorts by participant name, both ways', async ({ page }) => {
+    test.setTimeout(90_000);
+    await loginAsModeAdmin(page);
+    await page.goto('/interimreportlog', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/interimreportlog/, { timeout: 30_000 });
+    await page.getByRole('tab', { name: /Love Letter/i }).click();
+
+    const table = page.locator('.mat-mdc-tab-body-active table[mat-table]');
+    const nameCells = table.locator('tr.mat-mdc-row td:nth-child(3)');
+    await expect(nameCells.first(), 'IRT-SORT: the table must have rows to sort').toBeVisible({ timeout: 30_000 });
+    const before = await nameCells.allInnerTexts();
+    test.skip(before.length < 2, 'IRT-SORT: needs at least two letters in the default range to order them');
+
+    const nameHeader = table.getByRole('columnheader', { name: /^Name$/ });
+    await nameHeader.click();
+    const asc = (await nameCells.allInnerTexts()).map((t) => t.trim());
+    expect(asc, 'IRT-SORT: ascending by name — the app ordered what it had loaded')
+      .toEqual([...asc].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+
+    await nameHeader.click();
+    const desc = (await nameCells.allInnerTexts()).map((t) => t.trim());
+    expect(desc, 'IRT-SORT: a second click reverses it').toEqual([...asc].reverse());
+    expect(desc.length, 'IRT-SORT: sorting reorders the rows, it does not drop any').toBe(before.length);
+  });
+
   // IRD-ADDR interim-report dashboard tab — controls inside the interim-report tabs/modals (dashboard tab, log actions, view/notes
   // overlays) that render only after the tab activates or a dialog opens. Registered as literal getByTestId
   // so the readiness gate credits every interim-report control (this is the console-blocked feature);
