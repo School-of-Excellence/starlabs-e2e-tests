@@ -55,6 +55,21 @@ const ID = {
   // interim report log docs → PM-15 (status counts oracle)
   IRL_COMPLETED: `${TESTRUNID}_irl_completed`, // status:'completed'        → counts as completed
   IRL_ONGOING: `${TESTRUNID}_irl_ongoing`,     // no status + reports[]!=[] → counts as ongoing
+  // ---- Interim Report DASHBOARD world (IRD-01..IRD-11) -------------------------------------
+  // The dashboard tab reads `interimreport log` by createdon, then joins the four step collections
+  // by `interimlogid`, and filters by journey (participant metadata) / event (event participation
+  // request). Every doc below hangs off one of the two logs above, or is a NEGATIVE CONTROL that
+  // must be filtered OUT — without those a green test cannot tell "the filter ran" from "no data".
+  IRL_NOTSTARTED: `${TESTRUNID}_irl_notstarted`, // p1's 2nd log: no status, reports[] EMPTY → "Not started"
+  XOVER_IRD: `${TESTRUNID}_xover_ird`,           // interim crossover for IRL_COMPLETED (p0 only)
+  EVO_IRD: `${TESTRUNID}_evo_ird`,               // interim evolutionprogress for IRL_COMPLETED
+  LL_IRD: `${TESTRUNID}_ll_ird`,                 // love letter for IRL_COMPLETED, every tag false
+  ASKAH_IRD: `${TESTRUNID}_askah_ird`,           // ask AH for IRL_ONGOING — p1, so PM-13's p0 count stays 2
+  JRN_A: `${TESTRUNID}_journey_a`,               // p0.activejourney
+  JRN_B: `${TESTRUNID}_journey_b`,               // p1.lastcompletedjourney (proves the fall-through order)
+  EV_IRD: `${TESTRUNID}_event_ird`,              // event collection doc the EVENT filter selects
+  EPR_ATT: `${TESTRUNID}_epr_attended`,          // p0 attended  → kept by the filter
+  EPR_REG: `${TESTRUNID}_epr_registered`,        // p1 registered → NEGATIVE CONTROL, filter must drop it
   // recommended playlist → PM-16 (disable cascade)
   BUF1: `${TESTRUNID}_buffermix1`,             // buffermix archive group (delete:false)
   RMP1: `${TESTRUNID}_rmp1`,                   // linked recommended mix playlist doc 1 (delete:false)
@@ -275,6 +290,88 @@ async function seedModes() {
     lastupdate: T.now(), createdon: T.now(), ...tag,
   });
 
+  // 12b) INTERIM REPORT DASHBOARD world (IRD-01..IRD-11). The dashboard tab (tab 3) reads the same
+  //      `interimreport log` docs, joins `interim crossover` / `interim evolutionprogress` /
+  //      `love letter` / `ask AH` by interimlogid, resolves each participant's journey from
+  //      `participant metadata` (activejourney → lastcompletedjourney → lastsubscribedjourney) and
+  //      filters by attendance from `event participation request` (eventref + status=='attended').
+  //
+  //      Shape of the world (all createdon = now, so the default current-month range includes them):
+  //        p0 · IRL_COMPLETED  submitted · crossover + evolution + love letter
+  //        p1 · IRL_ONGOING    ongoing   · ask AH only, NO crossover  → proves the Crossover Meter
+  //                                        counts only participants who have a crossover record
+  //        p1 · IRL_NOTSTARTED not started (reports[] empty)
+  await db.collection('interimreport log').doc(ID.IRL_NOTSTARTED).set({
+    docid: ID.IRL_NOTSTARTED, profileid: PF.p1, status: null, reports: [],
+    lastupdate: T.now(), createdon: T.now(), ...tag,
+  });
+
+  //      Crossover: one area ≥8 (counts as "changed" + carries a level jump), one mid, one low, one 0
+  //      and one never filled — so every band column of the matrix has a known occupant.
+  await db.collection('interim crossover').doc(ID.XOVER_IRD).set({
+    docid: ID.XOVER_IRD, profileid: PF.p0, interimlogid: ID.IRL_COMPLETED, created: T.now(),
+    metric: {
+      Business: { metric: 9, startpoint: 'Crisis', endpoint: 'Stable', jumpedfrom: 'Just out of Crisis' },
+      Career: { metric: 5, startpoint: 'Crisis', endpoint: 'Stable' },
+      Family: { metric: 2, startpoint: 'Crisis', endpoint: 'Stable' },
+      Health: { metric: 0, startpoint: 'Crisis', endpoint: 'Stable' },
+      'Personal Genius': { metric: null, startpoint: 'Crisis', endpoint: 'Stable' },
+    },
+    ...tag,
+  });
+
+  //      Evolution: 4 answered adjustments — 1 No Change (25% → 1–25% band), 1 Somewhat Change (25%),
+  //      2 Changed (50% → 26–50% band). Hours: 2/day + 7/week = 3.0 hrs/day. summary.savedyears is what
+  //      the dashboard shows as Total years saved (it never recomputes it).
+  await db.collection('interim evolutionprogress').doc(ID.EVO_IRD).set({
+    docid: ID.EVO_IRD, profileid: PF.p0, interimlogid: ID.IRL_COMPLETED, created: T.now(), age: 40,
+    summary: { savedyears: 10.5 },
+    adjustments: [
+      { sliderValue: 'No Change', nochangevalue: 'Less Intensity', hourValue: 0, savedyears: 0 },
+      { sliderValue: 'Somewhat Change', type: 'Day', hourValue: 2, savedyears: 3.3 },
+      { sliderValue: 'Changed', type: 'Week', hourValue: 7, savedyears: 3.6 },
+      { sliderValue: 'Changed', type: 'Day', hourValue: 0, savedyears: 3.6 },
+    ],
+    ...tag,
+  });
+
+  //      Love letter (p0) — every tag false so IRD-07/08/09 can assert the tag / resolve / note the APP
+  //      writes, never a seeded true.
+  await db.collection('love letter').doc(ID.LL_IRD).set({
+    docid: ID.LL_IRD, profileid: PF.p0, interimlogid: ID.IRL_COMPLETED, loveletter: `IRD love letter ${TESTRUNID}`,
+    created: T.now(), liked: false, tagged: false, opportunity: false, critical: false, resolved: false, notes: [], ...tag,
+  });
+
+  //      Ask A&H for the dashboard hangs off p1's ongoing log (NOT p0 — PM-13 asserts exactly 2 ask-AH
+  //      rows for participant0). One doc carries BOTH asks, as the app writes them.
+  await db.collection('ask AH').doc(ID.ASKAH_IRD).set({
+    docid: ID.ASKAH_IRD, profileid: PF.p1, interimlogid: ID.IRL_ONGOING,
+    askah: `IRD ask AH ${TESTRUNID}`, installationaskah: `IRD installation ask ${TESTRUNID}`,
+    created: T.now(), liked: false, tagged: false, opportunity: false, critical: false, resolved: false, notes: [], ...tag,
+  });
+
+  //      JOURNEY filter. p0 carries activejourney (first in the app's order); p1 carries ONLY
+  //      lastcompletedjourney, so selecting journey B proves the fall-through actually runs.
+  await db.collection('journey').doc(ID.JRN_A).set({ docid: ID.JRN_A, journey: `Mode Journey A ${TESTRUNID}`, ...tag });
+  await db.collection('journey').doc(ID.JRN_B).set({ docid: ID.JRN_B, journey: `Mode Journey B ${TESTRUNID}`, ...tag });
+  await db.collection('participant metadata').doc(PF.p0).set(
+    { profileid: PF.p0, name: EMAIL.p0, customerstatus: 'active', activejourney: ID.JRN_A, ...tag }, { merge: true },
+  );
+  await db.collection('participant metadata').doc(PF.p1).set(
+    { lastcompletedjourney: ID.JRN_B, ...tag }, { merge: true },
+  );
+
+  //      EVENT filter. One event; p0 attended it, p1 only registered — the app keeps status=='attended'
+  //      only, so p1 must disappear when the event is selected.
+  const evRef = db.collection('event collection').doc(ID.EV_IRD);
+  await evRef.set({ docid: ID.EV_IRD, name: `Mode Event ${TESTRUNID}`, start_date: T.now(), ...tag });
+  await db.collection('event participation request').doc(ID.EPR_ATT).set({
+    docid: ID.EPR_ATT, profileid: PF.p0, eventref: evRef, status: 'attended', created: T.now(), ...tag,
+  });
+  await db.collection('event participation request').doc(ID.EPR_REG).set({
+    docid: ID.EPR_REG, profileid: PF.p1, eventref: evRef, status: 'registered', created: T.now(), ...tag,
+  });
+
   // 13) RECOMMENDED PLAYLIST (PM-16 disable cascade). buffermix archive group (date within the screen's
   //     default 3-month window) with delete:false, plus 2 recommended mix playlist docs whose
   //     bufferdocref → this group. The Group-tab slide toggle calls onToggleGroupDelete → updateDoc the
@@ -324,6 +421,10 @@ const SEEDED = [
   'evolutionwishlistlog', 'Atestdate',
   // App-Engagement screen preconditions (PM-08/09/13/14/15/16/17). All testrunid-tagged.
   'evolutionwishlistquestions', 'ask AH', 'interimreport log',
+  // Interim Report Dashboard world (IRD-*). `journey` and `event collection` are SHARED config
+  // collections — teardownCollections only removes this run's testrunid-tagged docs.
+  'interim crossover', 'interim evolutionprogress', 'love letter',
+  'journey', 'event collection', 'event participation request',
   'buffermix archive', 'recommended mix playlist', 'appactionpending',
   // CF-written collections (PM-10/11): clean up so re-runs start from zero checklist/evolution-log rows.
   'participant mode checklist', 'evolution log',

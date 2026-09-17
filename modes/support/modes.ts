@@ -46,6 +46,17 @@ export const modeIds = {
   ASKAH_RENDER: `${RUN}_askah_render`,
   IRL_COMPLETED: `${RUN}_irl_completed`,
   IRL_ONGOING: `${RUN}_irl_ongoing`,
+  // Interim Report Dashboard world (IRD-*)
+  IRL_NOTSTARTED: `${RUN}_irl_notstarted`,
+  XOVER_IRD: `${RUN}_xover_ird`,
+  EVO_IRD: `${RUN}_evo_ird`,
+  LL_IRD: `${RUN}_ll_ird`,
+  ASKAH_IRD: `${RUN}_askah_ird`,
+  JRN_A: `${RUN}_journey_a`,
+  JRN_B: `${RUN}_journey_b`,
+  EV_IRD: `${RUN}_event_ird`,
+  EPR_ATT: `${RUN}_epr_attended`,
+  EPR_REG: `${RUN}_epr_registered`,
   BUF1: `${RUN}_buffermix1`,
   RMP1: `${RUN}_rmp1`,
   RMP2: `${RUN}_rmp2`,
@@ -60,6 +71,13 @@ export const modeContent = {
   bufGroupTitle: `TEST Mode Playlist Group ${RUN}`,
   formContact: 'formtester@example.com',
   cfContact: 'cftester@example.com',
+  // Interim Report Dashboard world
+  loveLetterIrd: `IRD love letter ${RUN}`,
+  askahIrd: `IRD ask AH ${RUN}`,
+  instAskIrd: `IRD installation ask ${RUN}`,
+  journeyA: `Mode Journey A ${RUN}`,
+  journeyB: `Mode Journey B ${RUN}`,
+  eventIrd: `Mode Event ${RUN}`,
 };
 
 /** Searchable product names the config UI renders (must match seed-modes.js). */
@@ -317,4 +335,23 @@ export async function isWishlistCfDeployed(timeoutMs = 25_000): Promise<boolean>
   } finally {
     await ref.delete().catch(() => {});
   }
+}
+
+/**
+ * IRD-07/08/09 precondition: put the seeded love letter back to "no tag, not resolved, no notes".
+ * PRECONDITION write only — those cases assert the tag / resolveddetails / notes entry the APP writes
+ * on a real click, never this reset value (anti-circularity). Idempotent for re-runs.
+ */
+export async function resetLoveLetterIrd(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('love letter').doc(modeIds.LL_IRD).set(
+    {
+      docid: modeIds.LL_IRD, profileid: modeProfileIds.participant0, interimlogid: modeIds.IRL_COMPLETED,
+      loveletter: modeContent.loveLetterIrd, liked: false, likedetails: null, tagged: false, tagdetails: null,
+      opportunity: false, opportunitydetails: null, critical: false, criticaldetails: null,
+      resolved: false, resolveddetails: null, notes: [],
+    },
+    { merge: true },
+  );
 }
