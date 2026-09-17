@@ -71,6 +71,10 @@ const ID = {
   EV_IRD: `${TESTRUNID}_event_ird`,              // event collection doc the EVENT filter selects
   EPR_ATT: `${TESTRUNID}_epr_attended`,          // p0 attended  → kept by the filter
   EPR_REG: `${TESTRUNID}_epr_registered`,        // p1 registered → NEGATIVE CONTROL, filter must drop it
+  // Composer config the dashboard's WhatsApp / email / notification hand-off opens against (IRD-14).
+  // FIXED ids — the components read these exact docs, so they cannot be run-namespaced.
+  EMAIL_CATS: 'templateCategories',              // `email validators/templateCategories`
+  POSTMARK: 'postmarkserver',                    // `classify/postmarkserver`
   // recommended playlist → PM-16 (disable cascade)
   BUF1: `${TESTRUNID}_buffermix1`,             // buffermix archive group (delete:false)
   RMP1: `${TESTRUNID}_rmp1`,                   // linked recommended mix playlist doc 1 (delete:false)
@@ -385,6 +389,18 @@ async function seedModes() {
     docid: ID.EPR_REG, profileid: PF.p1, eventref: evRef, status: 'registered', created: T.now(), ...tag,
   });
 
+  //      Composer config (IRD-14). The dashboard hands picked participants to the SAME composers the
+  //      Log tab uses, and EmailInputComponent subscribes to `email validators/templateCategories` and
+  //      `classify/postmarkserver` on construction. Without them the dialog opens against a doc that
+  //      does not exist; the app now degrades instead of throwing (starlabs-angular), and seeding real
+  //      values means the case exercises the populated path rather than the fallback.
+  await db.collection('email validators').doc(ID.EMAIL_CATS).set({
+    categories: ['Interim Report'], subcategories: { 'Interim Report': ['Follow up'] }, ...tag,
+  }, { merge: true });
+  await db.collection('classify').doc(ID.POSTMARK).set({
+    senderemails: ['starlabs@excellenceinstallation.com'], ...tag,
+  }, { merge: true });
+
   // 13) RECOMMENDED PLAYLIST (PM-16 disable cascade). buffermix archive group (date within the screen's
   //     default 3-month window) with delete:false, plus 2 recommended mix playlist docs whose
   //     bufferdocref → this group. The Group-tab slide toggle calls onToggleGroupDelete → updateDoc the
@@ -437,6 +453,8 @@ const SEEDED = [
   // Interim Report Dashboard world (IRD-*). `journey` and `event collection` are SHARED config
   // collections — teardownCollections only removes this run's testrunid-tagged docs.
   'interim crossover', 'interim evolutionprogress', 'love letter',
+  // composer config for the IRD-14 hand-off (fixed doc ids, testrunid-tagged like everything else)
+  'email validators', 'classify',
   'journey', 'event collection', 'event participation request',
   'buffermix archive', 'recommended mix playlist', 'appactionpending',
   // CF-written collections (PM-10/11): clean up so re-runs start from zero checklist/evolution-log rows.

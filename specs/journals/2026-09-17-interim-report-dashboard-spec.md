@@ -115,3 +115,20 @@ Four are deliberately left alone, because each needs an operator decision rather
 
 `SUITES.md` regenerated (`node scripts/gen-suites-doc.mjs`, 14 suites). Readiness for the interim-report
 branch is unchanged: MATCHED, suites [modes], uncovered [].
+
+## First green-ish emulator run — what IRD-14 found (2026-09-17)
+
+13 of 14 dashboard cases passed on the emulator. IRD-14 failed on the **console guard**, not an
+assertion: opening the Email composer produced `TypeError: Cannot read properties of undefined
+(reading 'senderemails')` and `… (reading 'categories')`.
+
+That is the guard doing its job. `EmailInputComponent` subscribes to `email validators/
+templateCategories` and `classify/postmarkserver` and dereferences the emission; AngularFire's
+`docData` emits **undefined** for a missing document, so the dialog threw on open — and the fallback
+sender list in the same function was unreachable, since the property read threw first. Fixed in the app
+(starlabs-angular 545db1c6).
+
+The seed now creates both docs (fixed ids — the components read those exact paths, so they cannot be
+run-namespaced; both are testrunid-tagged and in the teardown list). Seeding them is deliberate even
+though the app now degrades: a case that only ever saw the empty state would not notice the categories
+dropdown breaking, so the emulator should exercise the POPULATED path.
