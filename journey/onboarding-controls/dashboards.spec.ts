@@ -729,7 +729,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
     }
   });
 
-  // ── team-evolution-dashboard  (prefix: jted, 26 controls) — route /team-evolution-dashboard ──
+  // ── team-evolution-dashboard  (prefix: jted, 27 controls) — route /team-evolution-dashboard ──
   test('jted — team-evolution-dashboard controls are addressable at /team-evolution-dashboard', async ({ page }) => {
     await loginAsJourneyAdmin(page);
     await page.goto('/team-evolution-dashboard', { waitUntil: 'domcontentloaded' });
@@ -761,6 +761,7 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jted-div-024'),
       page.getByTestId('jted-inp-025'),
       page.getByTestId('jted-div-026'),
+      page.getByTestId('jted-div-027'),
     ];
     for (const c of controls) {
       expect(c, 'jted: interactive control must be addressable and visible').toBeTruthy();
