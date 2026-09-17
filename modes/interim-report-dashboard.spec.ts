@@ -27,6 +27,12 @@
 //     resolveddetails and notes entry the APP wrote, with .user == the logged-in admin's profileid.
 //   • IRD-10/11 assert the browser-level effect the app asked for (a .xlsx download; a NEW tab at
 //     /userprofile/<profileid>) — nothing is written.
+//
+// Scoping note (learned from the first gate run): the By-step view stays in the DOM behind By
+// participant, and its Areas-changed panel renders the SAME shared table markup. `ird-modal-row` is
+// therefore the drill-down dialog only (the inline copies are `ird-xbucket-row`), and the name click
+// is scoped to a participant row — an unscoped .first() picks the hidden inline copy, which never
+// becomes actionable.
 // All reads are single-equality — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
@@ -350,9 +356,11 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     await filterToParticipant(page, modeActors.participant0);
     await page.getByTestId('ird-view-people').click();
 
+    const row = page.getByTestId('ird-people-row').first();
+    await expect(row, 'IRD-11: the participant row must render').toBeVisible({ timeout: 30_000 });
     const [profile] = await Promise.all([
       context.waitForEvent('page', { timeout: 60_000 }),
-      page.getByTestId('ird-participant-name').first().click(),
+      row.getByTestId('ird-participant-name').click(),
     ]);
     await expect(profile, 'IRD-11: the new tab lands on that participant profile')
       .toHaveURL(new RegExp(`userprofile/${modeProfileIds.participant0}`), { timeout: 30_000 });
@@ -404,7 +412,8 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     expect(page.getByTestId('ird-evo-some-q2')).toBeTruthy();
     expect(page.getByTestId('ird-evo-some-q3')).toBeTruthy();
     expect(page.getByTestId('ird-evo-some-q4')).toBeTruthy();
-    // the Areas-changed panel and its buckets
+    // the Areas-changed panel, its buckets and their inline rows
+    expect(page.getByTestId('ird-xbucket-row')).toBeTruthy();
     expect(page.getByTestId('ird-xbucket-seeall')).toBeTruthy();
     expect(page.getByTestId('ird-xbucket-x0')).toBeTruthy();
     expect(page.getByTestId('ird-xbucket-x1')).toBeTruthy();
