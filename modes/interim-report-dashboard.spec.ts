@@ -447,14 +447,21 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     await openDashboard(page);
     await filterToParticipant(page, modeActors.participant0);
 
-    // the bar only exists once something is picked
-    await expect(page.getByTestId('ird-sendbar'), 'IRD-14: nothing picked yet').toBeHidden();
+    // the communication row exists only while participants are picked (operator). toBeHidden() checks
+    // what RENDERS — a `hidden` attribute alone is not enough, since a display rule can outrank it.
+    await expect(page.getByTestId('ird-sendbar'), 'IRD-14: nothing picked yet, so no communication row')
+      .toBeHidden();
 
     // p0 scored 9 in Business → the 8–10 cell holds exactly them
     const cell = page.locator('td.xc').filter({ has: page.getByTestId('ird-cross-business-b3') });
     await cell.getByTestId('ird-pick-cell').click();
     await expect(page.getByTestId('ird-pick-count'), 'IRD-14: the cell picked the participant behind its count')
       .toContainText('1 participant selected', { timeout: 30_000 });
+
+    // and ONLY that cell is ticked — the tick is explicit state, not "are all these people picked",
+    // which used to light up every other cell holding the same participant
+    await expect(page.getByTestId('ird-pick-cell').and(page.locator('[aria-checked="true"]')),
+      'IRD-14: exactly one cell reads as selected').toHaveCount(1);
 
     // all three channels are offered, and Email opens the Log tab's composer for that participant
     await expect(page.getByTestId('ird-send-whatsapp')).toBeVisible();
