@@ -72,3 +72,18 @@ Personal Genius (never rated) = 0. Participants with no `interim crossover` doc 
 **Journey filter is multi-select** (IRD-12): `JOURNEY` is a Set, picking adds rather than replaces, the
 panel stays open, the pill reads "2 journeys", and the × clears everything. Verified against starlabs-test:
 B!G = 6, uP! = 11, both selected = 17 — an exact union, since a participant resolves to one journey.
+
+## IRD-13 / IRD-14 — Resolved-any-tag and picking participants for a send
+
+**IRD-13** needs a letter the old rule would have hidden: `LL_RESOLVED` hangs off p1's ongoing log,
+is `resolved: true` and carries neither `tagged` nor `critical`. So the Resolved card must count it (1)
+while "Sent to Journey Coaching" stays 0 — one document proving both halves of the operator's rule.
+It lives on p1 for the same reason the ask does: p0's counts are asserted elsewhere.
+
+**IRD-14** drives the new picking path end to end: the send bar is hidden until something is picked,
+the Business 8–10 cell (where p0's 9 lands) picks exactly that participant, all three channels are
+offered, and Email opens the Log tab's composer — which the case then **dismisses**, so nothing is ever
+sent. A dismissed composer returns no payload, the same firewall/stub posture the workshops suite uses
+for its composer hand-offs. Clear then empties the selection and hides the bar.
+
+The grid path is driven here; the list path (`ird-pick-row`, `ird-pick-all`) is registered in IRD-ADDR2.

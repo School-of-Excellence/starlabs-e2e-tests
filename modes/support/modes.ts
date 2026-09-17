@@ -51,6 +51,7 @@ export const modeIds = {
   XOVER_IRD: `${RUN}_xover_ird`,
   EVO_IRD: `${RUN}_evo_ird`,
   LL_IRD: `${RUN}_ll_ird`,
+  LL_RESOLVED: `${RUN}_ll_resolved`,
   ASKAH_IRD: `${RUN}_askah_ird`,
   JRN_A: `${RUN}_journey_a`,
   JRN_B: `${RUN}_journey_b`,
@@ -73,6 +74,7 @@ export const modeContent = {
   cfContact: 'cftester@example.com',
   // Interim Report Dashboard world
   loveLetterIrd: `IRD love letter ${RUN}`,
+  loveLetterResolved: `IRD resolved letter ${RUN}`,
   askahIrd: `IRD ask AH ${RUN}`,
   instAskIrd: `IRD installation ask ${RUN}`,
   journeyA: `Mode Journey A ${RUN}`,

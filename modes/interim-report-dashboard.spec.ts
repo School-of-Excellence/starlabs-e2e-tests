@@ -12,6 +12,8 @@
 //   p1 · IRL_ONGOING     ongoing     · ask AH (both asks), NO crossover
 //   p1 · IRL_NOTSTARTED  not started · reports[] empty
 //   journeys A (p0.activejourney) and B (p1.lastcompletedjourney) · one event p0 ATTENDED and p1 only REGISTERED
+//   p1 also owns LL_RESOLVED — a letter that is resolved but carries NO Needs Attention / Critical tag,
+//   the control for "Resolved counts every resolved letter" (IRD-13)
 //
 // Anti-circularity:
 //   • Every case first narrows the screen with the PARTICIPANT filter to one seeded, run-unique actor
@@ -405,6 +407,73 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     await profile.close();
   });
 
+
+  // ===========================================================================================
+  // IRD-13 — the Resolved card counts EVERY resolved letter (operator, 2026-09-17), not only the
+  // ones routed to Journey Coaching. p1's letter is resolved and carries neither Needs Attention
+  // nor Critical, so it must appear under Resolved while "Sent to Journey Coaching" stays 0.
+  // ===========================================================================================
+  test('IRD-13 Resolved counts a resolved letter that carries no JC tag', async ({ page }) => {
+    test.setTimeout(120_000);
+    // Independent oracle: the seeded letter really is resolved and really is untagged for JC.
+    const seeded = await getDoc('love letter', modeIds.LL_RESOLVED);
+    expect(seeded!.resolved, 'IRD-13: the control letter is resolved').toBe(true);
+    expect(seeded!.tagged, 'IRD-13: …and NOT Needs Attention').toBe(false);
+    expect(seeded!.critical, 'IRD-13: …and NOT Critical').toBe(false);
+
+    await openDashboard(page);
+    await filterToParticipant(page, modeActors.participant1);
+
+    await expect(page.getByTestId('ird-esc-resolved'), 'IRD-13: the untagged-but-resolved letter is counted')
+      .toContainText('1', { timeout: 30_000 });
+    await expect(page.getByTestId('ird-jc-total'), 'IRD-13: it was never sent to Journey Coaching')
+      .toContainText('0');
+    await expect(page.getByTestId('ird-esc-open'), 'IRD-13: and it is not Open either').toContainText('0');
+
+    // the card opens the list it counted
+    await page.getByTestId('ird-esc-resolved').click();
+    await expect(page.getByTestId('ird-letter-row').filter({ hasText: modeContent.loveLetterResolved }),
+      'IRD-13: the Resolved list holds that letter').toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('ird-modal-close').click();
+  });
+
+  // ===========================================================================================
+  // IRD-14 — picking participants from the grids / lists and handing them to the three composers
+  // (operator, 2026-09-17). Nothing is ever sent: the case asserts the composer the app OPENED for
+  // the picked participant, then dismisses it — a dismissed dialog returns no payload.
+  // ===========================================================================================
+  test('IRD-14 a grid cell picks its participants and hands them to the composers', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openDashboard(page);
+    await filterToParticipant(page, modeActors.participant0);
+
+    // the bar only exists once something is picked
+    await expect(page.getByTestId('ird-sendbar'), 'IRD-14: nothing picked yet').toBeHidden();
+
+    // p0 scored 9 in Business → the 8–10 cell holds exactly them
+    const cell = page.locator('td.xc').filter({ has: page.getByTestId('ird-cross-business-b3') });
+    await cell.getByTestId('ird-pick-cell').click();
+    await expect(page.getByTestId('ird-pick-count'), 'IRD-14: the cell picked the participant behind its count')
+      .toContainText('1 participant selected', { timeout: 30_000 });
+
+    // all three channels are offered, and Email opens the Log tab's composer for that participant
+    await expect(page.getByTestId('ird-send-whatsapp')).toBeVisible();
+    await expect(page.getByTestId('ird-send-notification')).toBeVisible();
+    await page.getByTestId('ird-send-email').click();
+    const composer = page.getByRole('dialog').last();
+    await expect(composer, 'IRD-14: the email composer opens for the picked participant')
+      .toBeVisible({ timeout: 60_000 });
+
+    // dismiss — nothing is sent from a closed composer
+    await page.keyboard.press('Escape');
+    const cancel = composer.getByRole('button', { name: /cancel|close/i }).first();
+    if (await cancel.isVisible().catch(() => false)) await cancel.click();
+
+    // Clear empties the selection and puts the bar away
+    await page.getByTestId('ird-pick-clear').click();
+    await expect(page.getByTestId('ird-sendbar'), 'IRD-14: Clear puts the bar away').toBeHidden({ timeout: 30_000 });
+  });
+
   // ===========================================================================================
   // IRD-ADDR2 — the dashboard controls the cases above do not drive, registered as literal
   // getByTestId so the readiness gate credits every ird-* hook on the screen (the scanner only sees
@@ -492,6 +561,9 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     expect(page.getByTestId('ird-people-rowhead')).toBeTruthy();
     expect(page.getByTestId('ird-people-search')).toBeTruthy();
     expect(page.getByTestId('ird-view-step')).toBeTruthy();
+    // picking participants from a list (the grid path is driven by IRD-14)
+    expect(page.getByTestId('ird-pick-row')).toBeTruthy();
+    expect(page.getByTestId('ird-pick-all')).toBeTruthy();
     // the parent tab's Export (Love Letter / Ask A&H tables)
     expect(page.getByTestId('irl-export-records')).toBeTruthy();
   });

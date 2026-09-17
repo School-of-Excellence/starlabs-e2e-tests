@@ -64,6 +64,7 @@ const ID = {
   XOVER_IRD: `${TESTRUNID}_xover_ird`,           // interim crossover for IRL_COMPLETED (p0 only)
   EVO_IRD: `${TESTRUNID}_evo_ird`,               // interim evolutionprogress for IRL_COMPLETED
   LL_IRD: `${TESTRUNID}_ll_ird`,                 // love letter for IRL_COMPLETED, every tag false
+  LL_RESOLVED: `${TESTRUNID}_ll_resolved`,       // p1's letter: RESOLVED but neither Needs Attention nor Critical
   ASKAH_IRD: `${TESTRUNID}_askah_ird`,           // ask AH for IRL_ONGOING — p1, so PM-13's p0 count stays 2
   JRN_A: `${TESTRUNID}_journey_a`,               // p0.activejourney
   JRN_B: `${TESTRUNID}_journey_b`,               // p1.lastcompletedjourney (proves the fall-through order)
@@ -342,6 +343,16 @@ async function seedModes() {
   await db.collection('love letter').doc(ID.LL_IRD).set({
     docid: ID.LL_IRD, profileid: PF.p0, interimlogid: ID.IRL_COMPLETED, loveletter: `IRD love letter ${TESTRUNID}`,
     created: T.now(), liked: false, tagged: false, opportunity: false, critical: false, resolved: false, notes: [], ...tag,
+  });
+
+  //      A second letter, on p1's ongoing log, that is RESOLVED but carries NO Needs Attention /
+  //      Critical tag. It is the control for the operator's 2026-09-17 rule: the Resolved card counts
+  //      every resolved letter, so this one shows there while "Sent to Journey Coaching" ignores it.
+  await db.collection('love letter').doc(ID.LL_RESOLVED).set({
+    docid: ID.LL_RESOLVED, profileid: PF.p1, interimlogid: ID.IRL_ONGOING,
+    loveletter: `IRD resolved letter ${TESTRUNID}`, created: T.now(),
+    liked: true, tagged: false, opportunity: false, critical: false, resolved: true,
+    resolveddetails: { user: PF.admin, time: T.now() }, notes: [], ...tag,
   });
 
   //      Ask A&H for the dashboard hangs off p1's ongoing log (NOT p0 — PM-13 asserts exactly 2 ask-AH
