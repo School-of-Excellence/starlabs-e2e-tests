@@ -178,6 +178,9 @@ test.describe('Journey Onboarding — dialog / non-routable components (addressa
       page.getByTestId('cwp-btn-017'),
       page.getByTestId('cwp-btn-018'),
       page.getByTestId('cwp-btn-019'),
+      // 2026-09-17: the GST Company picker (multi-company billing — the dialog re-resolves the payment
+      // against this selection before committing the batch, starlabs-angular 0f55208d).
+      page.getByTestId('cwp-sel-020'),
     ];
     for (const c of controls) await expect(c.first()).toBeVisible();
   });

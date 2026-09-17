@@ -296,8 +296,14 @@ test.describe('Content — routable screens: controls addressable (smoke)', () =
       page.getByTestId('cu-btn-009'),
       page.getByTestId('cu-btn-010'),
       page.getByTestId('cu-btn-011'),
+      // 2026-09-17: bulk availability actions + the row/select-all checkboxes (starlabs-angular 0f55208d)
+      page.getByTestId('cu-btn-012'),
+      page.getByTestId('cu-btn-013'),
+      page.getByTestId('cu-btn-014'),
+      page.getByTestId('cu-chk-015'),
+      page.getByTestId('cu-chk-016'),
     ];
-    expect(controls.length, 'cu: control set present').toBe(11);
+    expect(controls.length, 'cu: control set present').toBe(16);
     // Soft-present: report any control missing/hidden on first paint without failing the mount smoke.
     for (const c of controls) expect(c, `addressable`).toBeTruthy(); // reference-only: controls render on data the seed may not have
   });
