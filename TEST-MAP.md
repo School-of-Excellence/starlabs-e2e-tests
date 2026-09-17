@@ -153,7 +153,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 | **queue** | `playwright.queue.config.ts` | ~188 | 2 | meta | Queue Manager: staging, stage-log, assignment, dashboards |
 | **appointments** | `playwright.appointments.config.ts` | 18 | 1 | 0 | Booking join-chain, slots, roster, team-hours, studio |
 | **events** | `playwright.events.config.ts` | 15 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones |
-| **modes** | `playwright.modes.config.ts` | 23 +16 engine | 0 | 2 | Mode rollup/arc engine, wishlist, app-engagement |
+| **modes** | `playwright.modes.config.ts` | 34 +16 engine | 0 | 2 | Mode rollup/arc engine, wishlist, app-engagement (incl. the interim-report dashboard) |
 | **content** | `playwright.content.config.ts` | 11 | 4 | 4 | Series/episodes, tier access, playlists, HLS |
 | **workshops** | `playwright.workshops.config.ts` | 14 | 4 | 0 | Workshop authoring, scheduling, attendance |
 | **comms** | `playwright.comms.config.ts` | 10 | 2 | 7 | Notifications, templates, broadcasts |
@@ -167,7 +167,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 \* the journey product-delivery cases (JP-PD/JP-EDIT) **validate two real production source fixes** end-to-end
 (`delivery-sequence.component.ts` null-guard `16b578a`; `product-delivery.component.ts` fresh-per-emit view-model).
 
-**Totals:** ~208 component-group cases (incl. the modes 16-case engine) + ~188 queue ≈ **~396 passing**, with **20 fixme** + **~18 CF-skip** documented in-file.
+**Totals:** ~219 component-group cases (incl. the modes 16-case engine) + ~188 queue ≈ **~407 passing**, with **20 fixme** + **~18 CF-skip** documented in-file.
 
 ### Legend
 
