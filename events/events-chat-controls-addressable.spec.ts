@@ -3,8 +3,9 @@
 // specs/plans/2026-09-14-interactive-control-coverage-plan.md).
 //
 // Screens (all default-DB, NOT ATC-fenced):
-//   /group-chat        -> Events/Chat/chat-screen           (prefix chs)
-//   /group-chat-screen -> Events/Chat/group-chat-screen     (prefix gcs)
+//   Events/Chat/chat-screen           (prefix chs) — UNROUTED since app 2e329eb1; hooks stay registered
+//   /group-chat -> Events/Chat/group-chat-screen (prefix gcs) — the route moved here in 2e329eb1;
+//                  /group-chat-screen no longer exists. Behaviour is driven in comms/chat.spec.ts.
 //   create-group-dialog (dialog opened from chat-screen)    (prefix cgd)
 //
 // Every hooked control is referenced with a LITERAL getByTestId(<id>) call so the readiness gate's
@@ -137,7 +138,7 @@ test.describe('Events Chat interactive controls — addressable + mount smoke', 
   });
 
   test('group-chat-screen controls are addressable', async ({ page }) => {
-    await page.goto('/group-chat-screen', { waitUntil: 'domcontentloaded' });
+    await page.goto('/group-chat', { waitUntil: 'domcontentloaded' });
     expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     // (removed visibility smoke — control needs seeded chat data; addressable-registered below)
     expect(page.getByTestId('gcs-header-nav')).toBeTruthy();

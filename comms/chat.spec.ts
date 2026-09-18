@@ -1,25 +1,31 @@
-// chat.spec.ts — Group Chat (Support Chats): the REAL-UI message-send + sidebar-render cases.
+// chat.spec.ts — Group Chat (/group-chat): the REAL-UI sidebar-render, message-send and role-gate cases.
 //
+// SCREEN: /group-chat renders Events/Chat/group-chat-screen (hook prefix `gcs`) since app 2e329eb1 — it
+// used to render chat-screen (`.chat-name` / `.chat-item` / `button.create-group-btn`), which is why this
+// file was rewritten 2026-09-18 after comms run1 failed all three cases on the old selectors.
 // Recon: e2e/recon-allcomp/comms-notifications.md (CN-09 / CN-08 / CN-17).
-// Anti-circularity:
-//   CN-09 asserts a group the APP RENDERED in its active-chats sidebar — built from its own
-//         collectionSnapshots(supportchat where isdelete==false orderBy last_modification desc) stream
-//         (chat-screen.component.ts:220-248). The seed is the precondition; the rendered sidebar is the app's.
-//   CN-08 drives the REAL message-send UI and asserts the message text the APP RENDERED back from the
-//         supportchat/{id}/messages stream it established — never a value the test read straight from its
-//         own write. The text is unique per run+timestamp so a stale message can't satisfy it.
-//   CN-17 asserts a role-gated control: the chatxadmin actor sees the create/restore moderation affordance
-//         the component renders only when chatAdmin/adminRole is true (chat-screen.ts:157, html:126).
 //
-// Logs in as the chat-admin (chatxadmin+admin) so the active-chat query is the no-index branch
-// (where isdelete==false orderBy last_modification desc). The non-admin branch adds
-// where(members array-contains uid) which would need a composite index (recon §7 / queue index policy).
+// What the screen does (group-chat-screen.component.ts):
+//   · ngOnInit paints static DEMO rows, then bootstrapLive() resolves the user's profile_data (user_ref ==
+//     user_data/{uid}); only then does it go live and REPLACE the demo rows with its own stream.
+//   · loadGroups(): supportchat where type=='group' and isdelete==false, plus — for anyone who is NOT
+//     chatxadmin/admin — where members array-contains uid. That filter is the screen's role gate.
+//   · send() → writeMessage(): setDoc supportchat/{id}/messages/{id} {message, sender_uid, …} and
+//     updateDoc on the group's last_* fields.
+//
+// Seeded world (seed-comms.js §5): `Seeded Group <run>` (type group, members admin/chatadmin/p0/p1).
+//   chatadmin+<run>  roles {chatxadmin, admin}  → sees every group
+//   staff+<run>      roles {eventcoordinator}   → granted /group-chat, member of NO group (negative control)
+//
+// ANTI-CIRCULARITY: the seed is a precondition. CN-09 asserts a row the APP rendered from its own query;
+// CN-08 asserts the message the app rendered back and the message doc the APP wrote (text unique per run +
+// timestamp, sender the app resolved); CN-17 asserts the app's query EXCLUDED a group for a non-member.
 import { test, expect } from '@playwright/test';
 import {
-  commsIds, installCommsStubs, loginAsChatAdmin, resetChatGroup,
+  commsIds, commsUids, installCommsStubs, loginAsChatAdmin, loginAsCommsStaff, resetChatGroup,
 } from './support/comms';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, pollUntil } from '../queue/support/firestore-admin';
+import { pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.COMM_RUNID || 'comm';
 const GROUP_NAME = `Seeded Group ${RUN}`;
@@ -33,86 +39,94 @@ test.describe('Comms — group chat (real UI, anti-circular)', () => {
   test.afterEach(() => assertNoFatal(guard, 'comms chat: no fatal console errors / pageerrors'));
 
   // ===========================================================================================
-  // CN-09 — the seeded group renders in the active-chats sidebar (app built it from its stream)
+  // CN-09 — the seeded group renders in the group list (app built it from its live stream)
   // ===========================================================================================
-  test('CN-09 the seeded group renders in the active-chats sidebar', async ({ page }) => {
+  test('CN-09 the seeded group renders in the group list', async ({ page }) => {
     await resetChatGroup(); // precondition: ensure the group is active (isdelete:false) for re-runs
     await loginAsChatAdmin(page);
     await page.goto('/group-chat', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/group-chat/, { timeout: 30_000 });
 
-    // [REAL-UI] the active-chats list renders each chat.chatname (mapped from group_name) in a .chat-name.
-    // The app built this list from its collectionSnapshots(supportchat …) query — not a seeded counter.
-    const groupName = page.locator('.chat-name', { hasText: GROUP_NAME });
-    await expect(groupName, 'CN-09: the seeded group must appear in the active-chats sidebar').toBeVisible({ timeout: 30_000 });
+    // [REAL-UI] a live row carries group_name. The name is run-unique, so a demo row can never satisfy it.
+    const row = page.getByTestId('gcs-list-row').filter({ hasText: GROUP_NAME });
+    await expect(row, 'CN-09: the seeded group must appear in the group list').toBeVisible({ timeout: 30_000 });
+    await expect(row.locator('.wc-row-name'), 'CN-09: the row shows the group name').toHaveText(GROUP_NAME);
   });
 
   // ===========================================================================================
-  // CN-08 — sending a message renders it back in the message list (app stream round-trip)
+  // CN-08 — sending a message renders it back and the app writes the message doc
   // ===========================================================================================
-  test('CN-08 sending a message renders it back in the message list', async ({ page }) => {
+  test('CN-08 sending a message renders it back in the thread', async ({ page }) => {
     await resetChatGroup();
     await loginAsChatAdmin(page);
     await page.goto('/group-chat', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/group-chat/, { timeout: 30_000 });
 
-    // Open the seeded group from the sidebar (real click → selectChat → subscribes to its messages).
-    const groupItem = page.locator('.chat-item', { hasText: GROUP_NAME });
-    await expect(groupItem, 'CN-08: the seeded group must be selectable').toBeVisible({ timeout: 30_000 });
-    await groupItem.click();
+    // Open the seeded group (real click → openItem → subscribes to its messages).
+    const row = page.getByTestId('gcs-list-row').filter({ hasText: GROUP_NAME });
+    await expect(row, 'CN-08: the seeded group must be selectable').toBeVisible({ timeout: 30_000 });
+    await row.click();
 
-    // The message input + send button render once a chat is selected (html:522/540).
-    const input = page.locator('.message-input textarea');
-    await expect(input, 'CN-08: the message input must render after selecting the group').toBeVisible({ timeout: 20_000 });
+    const input = page.getByTestId('gcs-composer-input');
+    await expect(input, 'CN-08: the composer must render once the group is open').toBeVisible({ timeout: 20_000 });
 
-    // Unique message text so neither a seeded last_message nor a prior run can satisfy the assertion.
+    // Unique text so neither the seeded last_message nor a prior run can satisfy the assertions.
     const text = `e2e ${RUN} ping ${Date.now()}`;
     await input.fill(text);
-    // The send button is disabled until newMessage.trim() is non-empty; fill() makes it enabled.
-    const sendBtn = page.locator('button.send-button');
-    await expect(sendBtn, 'CN-08: send button must enable once text is typed').toBeEnabled({ timeout: 10_000 });
-    await sendBtn.click();
+    // The send button only exists while the draft is non-empty (*ngIf draft.trim()).
+    const send = page.getByTestId('gcs-composer-send');
+    await expect(send, 'CN-08: send appears once text is typed').toBeEnabled({ timeout: 10_000 });
+    await send.click();
 
-    // [ASSERT] the app re-rendered the message from the supportchat/{id}/messages stream it owns. We read
-    // the rendered .message-text, NOT the value straight off our write (anti-circular round-trip).
-    const rendered = page.locator('.message-text', { hasText: text });
-    await expect(rendered, 'CN-08: the sent message must render back from the app message stream').toBeVisible({ timeout: 30_000 });
+    // [ASSERT] the thread shows the message …
+    await expect(page.locator('.wc-bubble', { hasText: text }), 'CN-08: the sent message must render in the thread')
+      .toBeVisible({ timeout: 30_000 });
+    await expect(input, 'CN-08: the composer clears after sending').toHaveValue('');
 
-    // Corroborate the app's write landed in the right subcollection (the app decided the doc shape /
-    // sender_uid / pending) — read app OUTPUT, asserting the message we typed was the one persisted.
+    // … and the APP wrote it: the message doc (sender resolved by the app from the signed-in profile) …
     const msgs = await pollUntil(
       () => queryMessages(commsIds.CHAT_GROUP),
       (rows) => rows.some((m: any) => m.message === text),
       { label: 'CN-08: a supportchat message doc with the typed text', timeoutMs: 30_000 },
     );
     const mine = msgs.find((m: any) => m.message === text);
-    expect(mine!.sender_uid, 'CN-08: the message must carry a sender_uid the app set').toBeTruthy();
+    expect(mine!.sender_uid, 'CN-08: sender_uid is the signed-in chat-admin').toBe(commsUids.chatadmin);
+    expect(mine!.type, 'CN-08: a text-only message').toBe('text');
+    // … and the group's preview fields (resetChatGroup put 'Seeded last message' there first).
+    await pollUntil(() => getGroup(commsIds.CHAT_GROUP), (g) => g?.last_message === text,
+      { label: 'CN-08: supportchat.last_message updated by the app', timeoutMs: 30_000 });
   });
 
   // ===========================================================================================
-  // CN-17 — chatxadmin sees the moderation affordances the component gates on chatAdmin/adminRole
+  // CN-17 — the group list is role-gated: a non-member, non-chat-admin staffer sees none of it
   // ===========================================================================================
-  test('CN-17 chat-admin sees the create-group moderation control', async ({ page }) => {
-    await loginAsChatAdmin(page);
+  test('CN-17 a staffer who is neither chat-admin nor a member does not get the group', async ({ page }) => {
+    await resetChatGroup();
+    await loginAsCommsStaff(page);
     await page.goto('/group-chat', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/group-chat/, { timeout: 30_000 });
 
-    // [REAL-UI] the create-group affordance is always present, but it opens the group editor only for an
-    // authorised user; the chatxadmin actor reaches /group-chat (granted) AND the component resolved
-    // chatAdmin=true (chat-screen.ts:157). We assert the sidebar header + create-group button rendered for
-    // this role (the screen mounted under the chatxadmin's resolved roles, not bounced).
-    const createBtn = page.locator('button.create-group-btn');
-    await expect(createBtn, 'CN-17: chat-admin must see the create-group control').toBeVisible({ timeout: 30_000 });
-    await expect(page.getByRole('heading', { name: /Support Chats/i }), 'CN-17: the chat shell must mount').toBeVisible();
+    // The staffer's screen went LIVE (profile_data resolved) and its membership-filtered query came back
+    // empty: the empty state replaces the demo rows. Without this, "the group is absent" could equally
+    // mean the screen never left demo mode.
+    await expect(page.getByText('No groups yet — create one'), 'CN-17: the live, member-filtered list is empty')
+      .toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('gcs-list-row').filter({ hasText: GROUP_NAME }),
+      'CN-17: a non-member staffer must not see the seeded group').toHaveCount(0);
+    // The control is not role-gated on this screen — it renders for the staffer too.
+    await expect(page.getByTestId('gcs-header-create'), 'CN-17: the create control renders').toBeVisible();
   });
 });
 
-// ----- helper: read the app's message subcollection (READ app OUTPUT for the round-trip corroboration) ---
+// ----- helpers: read the app's OUTPUT for the round-trip corroboration ---------------------------------
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const seed = require('../fixtures/seed-test-project');
 async function queryMessages(chatId: string): Promise<any[]> {
-  const admin = seed.initAdmin();
-  const db = admin.firestore();
+  const db = seed.initAdmin().firestore();
   const snap = await db.collection('supportchat').doc(chatId).collection('messages').get();
   return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+}
+async function getGroup(chatId: string): Promise<any> {
+  const snap = await seed.initAdmin().firestore().collection('supportchat').doc(chatId).get();
+  return snap.exists ? snap.data() : null;
 }

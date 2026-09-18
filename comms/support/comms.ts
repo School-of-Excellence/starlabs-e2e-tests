@@ -93,6 +93,11 @@ export async function loginAsChatAdmin(page: Page): Promise<void> {
   await loginAs(page, commsActors.chatadmin, PASSWORD);
 }
 
+/** Log in as the seeded NON-chat-admin staffer (eventcoordinator) — granted /group-chat, member of no group. */
+export async function loginAsCommsStaff(page: Page): Promise<void> {
+  await loginAs(page, commsActors.staff, PASSWORD);
+}
+
 // CommonJS — reuse the allowlist-guarded admin init (only ever the test project).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const seed = require('../../fixtures/seed-test-project');
