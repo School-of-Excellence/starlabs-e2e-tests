@@ -41,7 +41,10 @@ import { Locator, Page, expect } from '@playwright/test';
  * failure. Still far below the 120s a missed click used to cost.
  */
 export async function openMatSelect(page: Page, trigger: Locator, attempts = 6): Promise<Locator> {
-  const panel = page.getByRole('listbox');
+  // A panel that is still animating out (the previous select's, closed by a pick or an Escape a moment
+  // ago) is still a role=listbox in the DOM. Let it go first, so neither the checks below nor a caller's
+  // `.cdk-overlay-pane mat-option` lookup can land on it. Best-effort: nothing breaks if one lingers.
+  await expect(page.getByRole('listbox')).toHaveCount(0, { timeout: 3_000 }).catch(() => {});
 
   let last: unknown;
   for (let i = 1; i <= attempts; i++) {
@@ -55,13 +58,31 @@ export async function openMatSelect(page: Page, trigger: Locator, attempts = 6):
     // `.toPass({ timeout: 30_000 })`, which retried through any error — including that one. Retrying
     // only the assertion loses that tolerance and turns a self-healing wait into a hard failure.
     try {
-      if (i === 1) {
-        // Keyboard path: no label to intercept, so this is the reliable one where focus works.
-        await trigger.focus();
-        await page.keyboard.press('Enter');
-      } else {
-        // Click path, forced past the floating <mat-label>.
-        await trigger.click({ force: true });
+      // NEVER re-issue the open on a select that is already open. A click on an open mat-select's trigger
+      // TOGGLES it shut — and the closing panel still reads as visible for its exit animation, so the
+      // check below used to pass and hand the caller a panel that was being torn down. Branch-suites run
+      // 35310755074: CN-43 waited 120s on a page-size option that was "not stable" then "detached", and
+      // CN-04's Escape guard saw the fading panel and closed the Create Series dialog instead.
+      const state = await expandedState(trigger);
+      if (state !== 'true') {
+        if (i === 1) {
+          // Keyboard path: no label to intercept, so this is the reliable one where focus works.
+          await trigger.focus();
+          await page.keyboard.press('Enter');
+        } else {
+          // Click path, forced past the floating <mat-label>.
+          await trigger.click({ force: true });
+        }
+      }
+      // THIS select's panel, not "a listbox": MatSelect sets aria-expanded and points aria-controls at its
+      // own panel id while open. A page-wide getByRole('listbox') also matched a neighbour's fading panel,
+      // raised a strict-mode violation on a panel that HAD opened, and sent the loop into the toggle above.
+      // A trigger without aria-expanded (not a mat-select host) keeps the page-wide check.
+      let panel = page.getByRole('listbox');
+      if ((await expandedState(trigger)) !== null) {
+        await expect(trigger).toHaveAttribute('aria-expanded', 'true', { timeout: 2_000 });
+        const id = await trigger.getAttribute('aria-controls', { timeout: 1_000 });
+        if (id) panel = page.locator(`[id="${id}"]`);
       }
       await panel.waitFor({ state: 'visible', timeout: 2_000 });
       return panel;
@@ -79,6 +100,19 @@ export async function openMatSelect(page: Page, trigger: Locator, attempts = 6):
     'probably wrong, matches several elements that never collapse to one, or the select is disabled — ' +
     `NOT flaky. Last error: ${(last as Error)?.message ?? last}`,
   );
+}
+
+/**
+ * The trigger's aria-expanded: 'true' / 'false' on a mat-select host, null when the element has no such
+ * attribute, 'unresolved' when the locator cannot be read right now (missing, or several matches).
+ */
+async function expandedState(trigger: Locator): Promise<string | null> {
+  return trigger.getAttribute('aria-expanded', { timeout: 1_000 }).catch(() => 'unresolved');
+}
+
+/** True only while this select's panel is actually open — a fading panel does not count. */
+export async function isMatSelectOpen(trigger: Locator): Promise<boolean> {
+  return (await expandedState(trigger)) === 'true';
 }
 
 /**
@@ -106,9 +140,10 @@ export async function selectMatOptions(page: Page, trigger: Locator, optionNames
   for (const name of optionNames) {
     await panel.getByRole('option', { name, exact: typeof name === 'string' }).click();
   }
-  // Only while a panel is open: an Escape with no overlay to consume it reaches the host MatDialog and
-  // closes it (CN-04, branch-suites run 34959789430).
-  if (await page.getByRole('listbox').count()) await page.keyboard.press('Escape');
+  // Only while THIS panel is open: an Escape with no overlay to consume it reaches the host MatDialog and
+  // closes it (CN-04, branch-suites run 34959789430). A listbox count is not enough — a panel that is
+  // animating out still counts, and it consumes nothing (run 35310755074).
+  if (await isMatSelectOpen(trigger)) await page.keyboard.press('Escape');
   await expect(page.getByRole('listbox'), 'the mat-select panel should close on Escape')
     .toHaveCount(0, { timeout: 5_000 });
 }

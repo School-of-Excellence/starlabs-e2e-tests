@@ -17,17 +17,17 @@ export const ROW = 'tr.mat-mdc-row, tr[mat-row], tr.data-row';
  * That is now _shared/mat-select.ts's job (keyboard-first open, asserts the panel, retries); callers here
  * keep picking their own options (paginator page sizes, etc.) out of the open panel.
  */
-export async function openSelect(page: Page, trigger: Locator): Promise<void> {
+export async function openSelect(page: Page, trigger: Locator): Promise<Locator> {
   await expect(trigger).toBeVisible({ timeout: 20_000 });
-  await openMatSelect(page, trigger);
+  return openMatSelect(page, trigger);
 }
 
 /** Select the LARGEST page-size option of a mat-paginator (default: the first paginator on the page). */
 export async function showAllRows(page: Page, paginator?: Locator): Promise<number> {
   const pag = paginator ?? page.locator('mat-paginator').first();
   await expect(pag).toBeVisible({ timeout: 30_000 });
-  await openSelect(page, pag.locator('mat-select'));
-  const options = page.locator('.cdk-overlay-pane mat-option');
+  // the paginator's OWN panel — a page-wide option lookup can land on a neighbouring select's panel
+  const options = (await openSelect(page, pag.locator('mat-select'))).locator('mat-option');
   const texts = (await options.allTextContents()).map((t) => parseInt(t.trim(), 10)).filter((n) => !Number.isNaN(n));
   const max = Math.max(...texts);
   await options.filter({ hasText: new RegExp(`^\\s*${max}\\s*$`) }).first().click();

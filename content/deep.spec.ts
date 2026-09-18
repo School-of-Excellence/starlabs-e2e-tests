@@ -29,7 +29,7 @@ import {
   deleteCreatedAdsPlaylist, deleteCreatedLearningMaterial, resetContentUrlTitle,
 } from './support/content';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { openMatSelect, selectMatOption, selectMatOptions } from '../_shared/mat-select';
+import { isMatSelectOpen, openMatSelect, selectMatOption, selectMatOptions } from '../_shared/mat-select';
 import { getDoc, queryWhere, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.CONT_RUNID || 'cont';
@@ -97,8 +97,9 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     // overlay consumes it, and its ~150 ms exit animation let the next two steps pass against a fading DOM
     // before the Submit wait timed out twice (branch-suites run 34959789430, both retries: the failure
     // snapshot shows the list page with no dialog). Press Escape only while a listbox is actually open,
-    // then prove both states before moving on.
-    if (await page.getByRole('listbox').count()) await page.keyboard.press('Escape');
+    // then prove both states before moving on. "Open" is the select's own aria-expanded, not a listbox
+    // count: a panel still animating out counts as a listbox but consumes no Escape (run 35310755074).
+    if (await isMatSelectOpen(episodeSelect)) await page.keyboard.press('Escape');
     await expect(page.getByRole('listbox'), 'CN-04: the episode panel is closed').toHaveCount(0, { timeout: 5_000 });
     await expect(dialog, 'CN-04: the Create Series dialog must still be open after closing the panel').toBeVisible();
     await expect(dialog.locator('.drag-item'), 'CN-04: the picked episode is in the sequence list').toHaveCount(1);
