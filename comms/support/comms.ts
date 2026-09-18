@@ -111,7 +111,9 @@ export async function resetChatGroup(): Promise<void> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   await db.collection('supportchat').doc(commsIds.CHAT_GROUP).set(
-    { isdelete: false, last_message: 'Seeded last message', last_pending: [] }, { merge: true },
+    // group_admin too: a reused emulator can hold a group seeded before the field existed (CN-08 posts).
+    { isdelete: false, last_message: 'Seeded last message', last_pending: [], group_admin: [commsUids.chatadmin] },
+    { merge: true },
   );
 }
 

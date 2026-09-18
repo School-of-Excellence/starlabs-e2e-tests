@@ -13,7 +13,9 @@
 //   · send() → writeMessage(): setDoc supportchat/{id}/messages/{id} {message, sender_uid, …} and
 //     updateDoc on the group's last_* fields.
 //
-// Seeded world (seed-comms.js §5): `Seeded Group <run>` (type group, members admin/chatadmin/p0/p1).
+// Seeded world (seed-comms.js §5): `Seeded Group <run>` (type group, members admin/chatadmin/p0/p1,
+//   group_admin [chatadmin] — posting needs member AND group_admin, canMessage; without it the thread shows
+//   "Contact the group admin…" instead of a composer, which is how CN-08 failed on comms run 2).
 //   chatadmin+<run>  roles {chatxadmin, admin}  → sees every group
 //   staff+<run>      roles {eventcoordinator}   → granted /group-chat, member of NO group (negative control)
 //

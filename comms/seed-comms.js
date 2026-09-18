@@ -207,6 +207,9 @@ async function seedComms() {
     type: 'group',
     members: memberUids,
     creator_uid: UID.chatadmin,
+    // group-chat-screen posts only for a member who is ALSO in group_admin (canMessage — no exemption for
+    // an empty array). chatadmin is both → CN-08 can send; admin/p0/p1 are members but NOT admins.
+    group_admin: [UID.chatadmin],
     isdelete: false,
     last_message: 'Seeded last message',
     last_sender_uid: UID.chatadmin,
