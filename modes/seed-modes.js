@@ -395,7 +395,9 @@ async function seedModes() {
   //      does not exist; the app now degrades instead of throwing (starlabs-angular), and seeding real
   //      values means the case exercises the populated path rather than the fallback.
   await db.collection('email validators').doc(ID.EMAIL_CATS).set({
-    categories: ['Interim Report'], subcategories: { 'Interim Report': ['Follow up'] }, ...tag,
+    // BOTH flat string arrays — EmailInputComponent filters them with .filter(e => e.includes(q)) and
+    // renders them with *ngFor. A map here raised NG0900 ("Only arrays and iterables are allowed").
+    categories: ['Interim Report'], subcategories: ['Follow up'], ...tag,
   }, { merge: true });
   await db.collection('classify').doc(ID.POSTMARK).set({
     senderemails: ['starlabs@excellenceinstallation.com'], ...tag,
