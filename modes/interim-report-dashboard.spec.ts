@@ -482,6 +482,137 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
   });
 
   // ===========================================================================================
+  // IRD-15 — the filters survive leaving the dashboard (operator, 2026-09-18: "when I go to some other
+  // screen the values are being changed"). The tab is lazy (matTabContent), so leaving it DESTROYS the
+  // component; it used to come back on the defaults — all journeys, no name, By step — and therefore
+  // on different numbers. Clear still resets everything (the negative control: the kept state is the
+  // user's selection, not a sticky one the user cannot get rid of).
+  // ===========================================================================================
+  test('IRD-15 the filters and view are kept after leaving the tab and coming back', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openDashboard(page);
+
+    // p1 on journey B (lastcompletedjourney) → 2 reports; then the By participant view
+    await filterToParticipant(page, modeActors.participant1);
+    await pickJourney(page, modeContent.journeyB);
+    await expect(page.getByTestId('ird-strip-all').locator('.n')).toHaveText('2', { timeout: 30_000 });
+    await page.keyboard.press('Escape');
+    await page.getByTestId('ird-view-people').click();
+    await expect(page.getByTestId('ird-view-people')).toHaveClass(/\bon\b/);
+
+    // leave for another tab — the dashboard component is destroyed — then come back
+    await page.getByRole('tab').first().click();
+    await expect(page.getByTestId('ird-strip-all'), 'IRD-15: the dashboard is gone while another tab is open')
+      .toHaveCount(0, { timeout: 30_000 });
+    await page.getByRole('tab', { name: /Interim Report Dashboard/i }).click();
+    await expect(page.getByTestId('ird-strip-all')).toBeVisible({ timeout: 60_000 });
+
+    // [ASSERT] the same selection, hence the same numbers
+    await expect(page.getByTestId('ird-filter-participant'), 'IRD-15: the name filter is kept')
+      .toHaveValue(modeActors.participant1);
+    await expect(page.getByTestId('ird-filter-journey'), 'IRD-15: the journey filter is kept')
+      .toContainText(modeContent.journeyB, { timeout: 30_000 });
+    await expect(page.getByTestId('ird-view-people'), 'IRD-15: the By participant view is kept').toHaveClass(/\bon\b/);
+    await expect(page.getByTestId('ird-strip-all').locator('.n'), 'IRD-15: the same count as before leaving')
+      .toHaveText('2', { timeout: 30_000 });
+
+    // [CONTROL] Clear drops the kept selection, and it stays dropped after another round trip
+    await page.getByTestId('ird-filter-clear').click();
+    await expect(page.getByTestId('ird-filter-participant')).toHaveValue('');
+    await expect(page.getByTestId('ird-filter-journey')).toContainText('All journeys');
+    await page.getByRole('tab').first().click();
+    await page.getByRole('tab', { name: /Interim Report Dashboard/i }).click();
+    await expect(page.getByTestId('ird-strip-all')).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('ird-filter-participant'), 'IRD-15: a cleared filter stays cleared').toHaveValue('');
+    await expect(page.getByTestId('ird-filter-journey')).toContainText('All journeys');
+  });
+
+  // ===========================================================================================
+  // IRD-16 — the drill-down list carries its OWN send bar (operator, 2026-09-18: "the communication bar
+  // is outside the dialog which is not reachable"). The list is a native modal <dialog>: everything
+  // behind it — including the page's send bar — is inert. And the composers are Material dialogs that
+  // a top-layer <dialog> would cover, so picking a channel must close the list first. Playwright's
+  // actionability check on the click below is the "reachable" assertion: a covered button fails it.
+  // ===========================================================================================
+  test('IRD-16 rows picked inside a drill-down list are sent from the list itself', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openDashboard(page);
+    await filterToParticipant(page, modeActors.participant0);
+
+    // p0 scored 9 in Business → the 8–10 cell's list holds exactly them
+    await page.getByTestId('ird-cross-business-b3').click();
+    await expect(page.getByTestId('ird-modal-close'), 'IRD-16: the drill-down list opened').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('ird-modal-sendbar'), 'IRD-16: nothing picked yet, so no bar in the list')
+      .toBeHidden();
+
+    // tick the row → the list's own bar appears, and the header box reads "everyone"
+    await page.getByTestId('ird-pick-row').first().click();
+    await expect(page.getByTestId('ird-modal-sendbar')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('ird-modal-pick-count')).toContainText('1 participant selected');
+    await page.getByTestId('ird-modal-pick-count').click();   // the count opens the read-only recipient list
+    await expect(page.getByTestId('ird-modal-pick-list'), 'IRD-16: the list bar names who is picked')
+      .toContainText(modeActors.participant0);
+    await expect(page.getByTestId('ird-pick-all'), 'IRD-16: every row picked ticks the header box').toBeChecked();
+    await expect(page.getByTestId('ird-modal-send-whatsapp')).toBeVisible();
+    await expect(page.getByTestId('ird-modal-send-notification')).toBeVisible();
+
+    // the list's Clear empties the selection without closing the list
+    await page.getByTestId('ird-modal-pick-clear').click();
+    await expect(page.getByTestId('ird-modal-sendbar'), 'IRD-16: Clear puts the list bar away').toBeHidden({ timeout: 30_000 });
+    await expect(page.getByTestId('ird-pick-row').first()).not.toBeChecked();
+    await expect(page.getByTestId('ird-modal-close'), 'IRD-16: Clear keeps the list open').toBeVisible();
+
+    // pick again and send from INSIDE the list: it closes, and the composer is on top and usable
+    await page.getByTestId('ird-pick-row').first().click();
+    await page.getByTestId('ird-modal-send-email').click();
+    await expect(page.getByTestId('ird-modal-close'), 'IRD-16: the list closes so the composer is not under it')
+      .toBeHidden({ timeout: 30_000 });
+    const composer = page.locator('mat-dialog-container').last();
+    await expect(composer, 'IRD-16: the email composer opens for the picked participant').toBeVisible({ timeout: 60_000 });
+
+    // dismiss — nothing is sent from a closed composer — then drop the selection
+    await page.keyboard.press('Escape');
+    const cancel = composer.getByRole('button', { name: /cancel|close/i }).first();
+    if (await cancel.isVisible().catch(() => false)) await cancel.click();
+    await page.getByTestId('ird-pick-clear').click();
+    await expect(page.getByTestId('ird-sendbar')).toBeHidden({ timeout: 30_000 });
+  });
+
+  // ===========================================================================================
+  // IRD-17 — who is picked (operator, 2026-09-18): the bar shows ONLY the count; clicking the count opens
+  // a READ-ONLY list of the recipients and clicking it again closes it. No names on the bar itself, and
+  // nothing in the list can change the selection.
+  // ===========================================================================================
+  test('IRD-17 the count opens a read-only list of who is picked', async ({ page }) => {
+    test.setTimeout(120_000);
+    await openDashboard(page);
+    await filterToParticipant(page, modeActors.participant0);
+
+    const cell = page.locator('td.xc').filter({ has: page.getByTestId('ird-cross-business-b3') });
+    await cell.getByTestId('ird-pick-cell').click();
+    const count = page.getByTestId('ird-pick-count');
+    await expect(count).toContainText('1 participant selected', { timeout: 30_000 });
+    await expect(page.getByTestId('ird-pick-list'), 'IRD-17: names stay off the bar until asked for').toBeHidden();
+    await expect(count).toHaveAttribute('aria-expanded', 'false');
+
+    // open → the recipients by name, and nothing in the list to click
+    await count.click();
+    const list = page.getByTestId('ird-pick-list');
+    await expect(list).toBeVisible();
+    await expect(count).toHaveAttribute('aria-expanded', 'true');
+    await expect(list.getByTestId('ird-pick-name'), 'IRD-17: one entry per picked participant').toHaveCount(1);
+    await expect(list.getByTestId('ird-pick-name').first()).toContainText(modeActors.participant0);
+    await expect(list.locator('button, input, a'), 'IRD-17: the list is read-only').toHaveCount(0);
+
+    // close again; the selection is untouched
+    await count.click();
+    await expect(list).toBeHidden();
+    await expect(count).toContainText('1 participant selected');
+    await page.getByTestId('ird-pick-clear').click();
+    await expect(page.getByTestId('ird-sendbar')).toBeHidden({ timeout: 30_000 });
+  });
+
+  // ===========================================================================================
   // IRD-ADDR2 — the dashboard controls the cases above do not drive, registered as literal
   // getByTestId so the readiness gate credits every ird-* hook on the screen (the scanner only sees
   // literal ids — scripts/readiness/lib.cjs TESTID_REF). Behavioral coverage of each grid cell,
@@ -571,6 +702,10 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     // picking participants from a list (the grid path is driven by IRD-14)
     expect(page.getByTestId('ird-pick-row')).toBeTruthy();
     expect(page.getByTestId('ird-pick-all')).toBeTruthy();
+    // Retry after a failed load — only drawn when a server read fails (the dashboard never draws cached,
+    // partial numbers); reproducing a dropped connection is not deterministic in the emulator lane
+    expect(page.getByTestId('ird-retry')).toBeTruthy();
+    expect(page.getByTestId('ird-retry-event')).toBeTruthy();
     // the parent tab's Export (Love Letter / Ask A&H tables)
     expect(page.getByTestId('irl-export-records')).toBeTruthy();
   });
