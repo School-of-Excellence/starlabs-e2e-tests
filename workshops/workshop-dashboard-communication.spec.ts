@@ -592,15 +592,14 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       await expect(row3.locator('.cpo-actions .cpo-chip'), 'WDC-13: no status buttons when expanded either').toHaveCount(0);
       await expect(row3.getByTestId('wd-open-zoom-dialog-32'), 'WDC-13: Zoom Call Action is parked').toHaveCount(0);
 
-      // Sub-challenge rows carry the same chip set. Expand row 2: its step 2.1 shows p0 as Ready to Start
-      // (Module One done) and p1 as Not Started (blocked) — split, not merged — and In Progress is shown
-      // even at zero, like the challenge row.
+      // Sub-challenge rows: expand row 2 — its step 2.1 shows p0 as Ready to Start (Module One done) and
+      // p1 as Not Started (blocked), split not merged. A step has no In Progress chip (done or not).
       await rows.nth(1).locator('.cpo-card-hd').click();
       const sub21 = rows.nth(1).locator('.cpo-subrow').first();
       const subChips = sub21.locator('.cpo-dots .cpo-chip');
       await expect(subChips.filter({ hasText: 'Ready to Start' }), 'WDC-13: 2.1 shows the ready person').toHaveText(/^\s*1 Ready to Start\s*$/, { timeout: 15_000 });
       await expect(subChips.filter({ hasText: /\bNot Started/ }), 'WDC-13: 2.1 Not Started excludes the ready one').toHaveText(/^\s*1 Not Started\s*$/);
-      await expect(subChips.filter({ hasText: 'In Progress' }), 'WDC-13: In Progress is always shown').toHaveText(/^\s*0 In Progress\s*$/);
+      await expect(subChips.filter({ hasText: 'In Progress' }), 'WDC-13: no In Progress chip on a step').toHaveCount(0);
       await expect(subChips.filter({ hasText: 'Completed' })).toHaveText(/^\s*0 Completed\s*$/);
       // Row 1, step 1.1 — the very first step of the workshop — never shows Ready to Start.
       await rows.nth(0).locator('.cpo-card-hd').click();
