@@ -21,7 +21,7 @@
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
   wsIds, wsAddIds, wsMetaNames, wsUids, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames,
-  resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed,
+  resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed, stampParticipantWorkshopP0TextAssignment, wsP0AssignmentAnswer,
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -515,6 +515,49 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
   });
 
   // ===========================================================================================
+  // WDC-12 — All Assignments: clicking a typed answer expands THAT card only, to the complete text
+  // ===========================================================================================
+  test('WDC-12 a text assignment card expands to the complete answer on click, and collapses again', async ({ page }) => {
+    await stampParticipantWorkshopP0TextAssignment();
+    try {
+      await openDashboard(page);
+      // The assignment group header (one per assignment) — open it.
+      const group = page.locator('.arc-card').filter({ hasText: `Reflection ${RUN}` });
+      await expect(group, 'WDC-12: the seeded assignment is listed under All Assignments').toBeVisible({ timeout: 60_000 });
+      await group.locator('.arc-card-hd').click();
+      const card = group.locator('.arc-pcard').filter({ hasText: wsMetaNames.p0 });
+      await expect(card, 'WDC-12: p0 has a submission card').toBeVisible({ timeout: 15_000 });
+
+      // [ASSERT] clamped first: the text element carries the clamp class and is visually cut.
+      const text = card.getByTestId('wdash-arc-text');
+      await expect(text).toHaveClass(/arc-text-clamp/);
+      const clampedHeight = await text.evaluate((el) => el.getBoundingClientRect().height);
+      const fullHeight = await text.evaluate((el) => el.scrollHeight);
+      expect(fullHeight, 'WDC-12: the answer is longer than the clamp').toBeGreaterThan(clampedHeight);
+      const toggle = card.getByTestId('wdash-arc-text-toggle');
+      await expect(toggle).toContainText('View complete answer');
+
+      // [REAL-UI] click the card → that card expands; the complete text (ending with the marker) is shown.
+      await card.click();
+      await expect(text, 'WDC-12: the clamp is removed').not.toHaveClass(/arc-text-clamp/);
+      await expect(card).toHaveClass(/arc-expanded/);
+      await expect(text).toContainText('END-OF-ANSWER');
+      const openHeight = await text.evaluate((el) => el.getBoundingClientRect().height);
+      expect(openHeight, 'WDC-12: the card grew to fit the whole answer').toBeGreaterThan(clampedHeight);
+      await expect(toggle).toContainText('Show less');
+      // Only this card: the assignment group and other cards are unaffected.
+      await expect(page.locator('.arc-pcard.arc-expanded')).toHaveCount(1);
+
+      // Collapse through the explicit toggle.
+      await toggle.click();
+      await expect(text).toHaveClass(/arc-text-clamp/);
+      await expect(card).not.toHaveClass(/arc-expanded/);
+    } finally {
+      await resetParticipantWorkshopP0();
+    }
+  });
+
+  // ===========================================================================================
   // Addressable — every hook this feature added, as a literal reference (console readiness gate).
   // ===========================================================================================
   test('workshop-dashboard + communication-dialog — controls addressable', async ({ page }) => {
@@ -525,6 +568,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       'wdash-exist-clear-filters-btn', 'wdash-comm-open-btn', 'wdash-sub-platform', 'wdash-pd-platform',
       'wdash-platform-section', 'wdash-platform-enroll-card', 'wdash-platform-enroll-row', 'wdash-platform-steps-card', 'wdash-platform-step-row',
       'wdash-chat-card', 'wdash-chat-count', 'wdash-chat-add-all-btn', 'wdash-chat-add-btn', 'wdash-chat-no-uid',
+      'wdash-arc-text', 'wdash-arc-text-toggle',
     ]) expect(page.getByTestId(id)).toBeTruthy();
     expect(page.getByTestId('wdash-comm-close-btn')).toBeTruthy();
     expect(page.getByTestId('wdash-comm-audience-all')).toBeTruthy();

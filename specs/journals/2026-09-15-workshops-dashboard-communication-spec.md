@@ -75,3 +75,9 @@ on p1 for 11b). The seeded uids are `${RUN}_u_p0/p1` (roster). WDC-11: card "2" 
 shows "No login yet" → add p0 → Firestore `members` == [p0 uid] (the app's write) → panel/card follow → Add
 all disabled. WDC-11b: both addable → Add all → members has both → the card hides at zero. Everything is
 removed in `finally`, so WS-07/11/12 and the rest of the suite never see a group.
+
+## WDC-12 — All Assignments: typed answer expands its own card (2026-09-21)
+
+`stampParticipantWorkshopP0TextAssignment()` adds a completed question/text assignment (long answer,
+`END-OF-ANSWER` marker) to p0's progress document; the spec asserts the app's clamp → expand (one card
+only) → collapse. `resetParticipantWorkshopP0` in `finally` restores the two-video seed.

@@ -382,6 +382,36 @@ export async function chatGroupMembers(): Promise<string[]> {
   return Array.isArray(m) ? m.map(String) : [];
 }
 
+/** The typed answer WDC-12 puts on p0's assignment — long enough to be clamped at three lines. */
+export const wsP0AssignmentAnswer =
+  `Answer line one for ${RUN}. ` + 'This sentence is repeated to push the answer well past the three-line clamp. '.repeat(6) + 'END-OF-ANSWER';
+
+/**
+ * PRECONDITION for All Assignments: give p0 a COMPLETED question/text assignment as a second
+ * sub-challenge of Module One (the seed's two videos stay), so the dashboard's All Assignments section
+ * lists one assignment with one text submission. The spec asserts the APP's expand/collapse; restored
+ * by resetParticipantWorkshopP0 afterwards.
+ */
+export async function stampParticipantWorkshopP0TextAssignment(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('participant workshop').doc(wsIds.PW_A).set({
+    challenges: [
+      {
+        type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations',
+        challenges: [
+          { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: 'completed' },
+          { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: '' },
+          { type: 'assignment', assignmenttype: 'question', submissionformat: 'text',
+            challengeid: `${RUN}_ch0_s2`, name: `Reflection ${RUN}`, heading: `Reflection ${RUN}`,
+            status: 'completed', completed: T.fromDate(wsP0CompletedAt), result: wsP0AssignmentAnswer },
+        ],
+      },
+    ],
+  }, { merge: true });
+}
+
 /**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the
