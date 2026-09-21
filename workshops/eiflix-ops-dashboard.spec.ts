@@ -17,7 +17,7 @@
 // SIDE EFFECT (recon Risk #14): rendering this screen WRITES an `eiflixdailywatchers` rollup keyed by a
 // shared day id (ts:1227/1247). Nothing here asserts on it; teardown removes what the run created.
 import { test, expect } from '@playwright/test';
-import { installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, alignWorkshopMetadataNames } from './support/wshop';
+import { installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds, alignWorkshopMetadataNames } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { countWhere } from '../queue/support/firestore-admin';
 
@@ -102,9 +102,12 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs
     await expect(rowFor(wsMetaNames.p1), 'WS-31: p1 today').toHaveCount(1);
     await expect(rows.filter({ hasText: '9.9.9' }), 'WS-31: the SolarVoice row never appears').toHaveCount(0);
     await expect(rowFor(wsMetaNames.p2), 'WS-31: the 20-day-old row is outside Today').toHaveCount(0);
-    // Name is mapped from participant metadata; the id is shown beneath it.
+    // Name is mapped from participant metadata; the raw profileid is NOT shown.
     await expect(rowFor(wsMetaNames.p0).first()).toContainText('android');
     await expect(rowFor(wsMetaNames.p0).first()).toContainText('2.3.1');
+    await expect(rows.filter({ hasText: wsProfileIds.p0 }), 'WS-31: no profileid in the table').toHaveCount(0);
+    // Two rows today, two different people.
+    await expect(section.getByTestId('eif-logs-unique'), 'WS-31: unique people today').toContainText('2 of 2 unique people');
 
     // 7D adds the 3-day-old p0 row; 30D adds p2's; the 40-day-old one is never in range.
     await section.getByTestId('eif-logs-range-7d').click();
@@ -119,12 +122,23 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs
     await expect(rows.first()).not.toContainText('2.2.9');
     await expect(rows.last(), 'WS-31: oldest row last').toContainText(wsMetaNames.p2);
 
-    // Name filter: options are exactly the people in the loaded rows (p0, p1, p2 — three).
+    // 30D: four rows from three people.
+    await expect(section.getByTestId('eif-logs-unique'), 'WS-31: unique people in 30D').toContainText('3 of 3 unique people');
+
+    // Name filter: options are exactly the people in the loaded rows (p0, p1, p2 — three), and the
+    // search row inside the select narrows the OPTIONS without touching the table.
     await section.getByTestId('eif-logs-name-filter').click();
     await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: one option per person in range').toHaveCount(3);
+    await page.getByTestId('eif-logs-name-search').locator('input').fill('participant2');
+    await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: the search narrows the options').toHaveCount(1);
+    await expect(page.getByTestId('eif-logs-name-option').first()).toContainText(wsMetaNames.p2);
+    await expect(rows, 'WS-31: typing in the option search does not filter the table').toHaveCount(4);
+    await page.getByTestId('eif-logs-name-search').locator('input').fill('');
+    await expect(page.getByTestId('eif-logs-name-option')).toHaveCount(3);
     await page.getByTestId('eif-logs-name-option').filter({ hasText: wsMetaNames.p0 }).click();
     await expect(rows, 'WS-31: p0 has two EiFlix rows in 30D').toHaveCount(2, { timeout: 15_000 });
     for (const r of await rows.all()) await expect(r).toContainText(wsMetaNames.p0);
+    await expect(section.getByTestId('eif-logs-unique'), 'WS-31: filtered to one person').toContainText('1 of 3 unique people');
 
     // OS filter on top of the name filter: p0 on ios → nobody.
     await section.getByTestId('eif-logs-os-filter').click();
