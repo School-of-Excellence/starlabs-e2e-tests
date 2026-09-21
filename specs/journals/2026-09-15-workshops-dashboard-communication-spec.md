@@ -91,3 +91,5 @@ no chips (the Zoom Call Action button is parked). `setupOverviewShape()` gives W
 Ready chip and "1 Not Started", row 2 reads "1 Ready to Start · 1 Not Started", row 3 has neither chips
 nor the action button, and the "Not Started" panel on row 2 lists only the blocked person.
 `teardownOverviewShape()` restores the seed.
+WDC-13 also covers the sub-challenge rows (same day): 2.1 reads "1 Ready to Start · 1 Not Started · 0 In
+Progress · 0 Completed"; 1.1 (the first step) shows no Ready chip.

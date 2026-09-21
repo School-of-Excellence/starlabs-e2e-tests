@@ -592,8 +592,24 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       await expect(row3.locator('.cpo-actions .cpo-chip'), 'WDC-13: no status buttons when expanded either').toHaveCount(0);
       await expect(row3.getByTestId('wd-open-zoom-dialog-32'), 'WDC-13: Zoom Call Action is parked').toHaveCount(0);
 
-      // The panel behind "Not Started" on row 2 lists only the blocked person — the same set the chip counted.
+      // Sub-challenge rows carry the same chip set. Expand row 2: its step 2.1 shows p0 as Ready to Start
+      // (Module One done) and p1 as Not Started (blocked) — split, not merged — and In Progress is shown
+      // even at zero, like the challenge row.
       await rows.nth(1).locator('.cpo-card-hd').click();
+      const sub21 = rows.nth(1).locator('.cpo-subrow').first();
+      const subChips = sub21.locator('.cpo-dots .cpo-chip');
+      await expect(subChips.filter({ hasText: 'Ready to Start' }), 'WDC-13: 2.1 shows the ready person').toHaveText(/^\s*1 Ready to Start\s*$/, { timeout: 15_000 });
+      await expect(subChips.filter({ hasText: /\bNot Started/ }), 'WDC-13: 2.1 Not Started excludes the ready one').toHaveText(/^\s*1 Not Started\s*$/);
+      await expect(subChips.filter({ hasText: 'In Progress' }), 'WDC-13: In Progress is always shown').toHaveText(/^\s*0 In Progress\s*$/);
+      await expect(subChips.filter({ hasText: 'Completed' })).toHaveText(/^\s*0 Completed\s*$/);
+      // Row 1, step 1.1 — the very first step of the workshop — never shows Ready to Start.
+      await rows.nth(0).locator('.cpo-card-hd').click();
+      const sub11 = rows.nth(0).locator('.cpo-subrow').first();
+      await expect(sub11.locator('.cpo-dots .cpo-chip').filter({ hasText: 'Ready to Start' }), 'WDC-13: no Ready on the first step').toHaveCount(0);
+      await expect(sub11.locator('.cpo-dots .cpo-chip').filter({ hasText: /\bNot Started/ })).toHaveText(/^\s*1 Not Started\s*$/);
+      await rows.nth(0).locator('.cpo-card-hd').click();   // collapse row 1 again
+
+      // The panel behind "Not Started" on row 2 lists only the blocked person — the same set the chip counted.
       await rows.nth(1).getByTestId('wd-on-challenge-main-status-click-31').click();
       const panel = page.locator('.participant-panel.panel-visible');
       await expect(panel.locator('mat-card.participant-card'), 'WDC-13: one blocked participant').toHaveCount(1, { timeout: 30_000 });
