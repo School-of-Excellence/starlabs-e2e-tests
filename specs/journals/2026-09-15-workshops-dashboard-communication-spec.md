@@ -81,3 +81,13 @@ removed in `finally`, so WS-07/11/12 and the rest of the suite never see a group
 `stampParticipantWorkshopP0TextAssignment()` adds a completed question/text assignment (long answer,
 `END-OF-ANSWER` marker) to p0's progress document; the spec asserts the app's clamp → expand (one card
 only) → collapse. `resetParticipantWorkshopP0` in `finally` restores the two-video seed.
+
+## WDC-13 — Challenge Progress Overview rules (2026-09-21)
+
+The app's engine rule changed: the four challenge-level buckets are now EXCLUSIVE ("Ready to Start" no
+longer counted inside "Not Started"), the first real challenge has no Ready bucket, and zoom-call rows show
+no chips (the Zoom Call Action button is parked). `setupOverviewShape()` gives W_DASH three challenges
+(Module One, Module Two, a zoom call) with p0 done on One and p1 untouched; the spec asserts row 1 has no
+Ready chip and "1 Not Started", row 2 reads "1 Ready to Start · 1 Not Started", row 3 has neither chips
+nor the action button, and the "Not Started" panel on row 2 lists only the blocked person.
+`teardownOverviewShape()` restores the seed.

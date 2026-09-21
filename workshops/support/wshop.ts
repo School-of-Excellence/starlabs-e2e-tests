@@ -413,6 +413,52 @@ export async function stampParticipantWorkshopP0TextAssignment(): Promise<void> 
 }
 
 /**
+ * PRECONDITION for the Challenge Progress Overview rules (WDC-13): W_DASH gets THREE challenges —
+ * Module One, Module Two, and a zoom call — and the two enrollees get matching progress rows:
+ *   p0: Module One COMPLETED, Module Two untouched → on Module Two p0 is "Ready to Start"
+ *   p1: Module One UNTOUCHED, Module Two untouched → on Module One p1 is simply "Not Started" (the old
+ *       rule also showed them as "Ready to Start"); on Module Two p1 is "Not Started" (blocked)
+ * so the expected chips are: row 1 → 1 Completed · 0 In Progress · 1 Not Started (no Ready chip);
+ * row 2 → 1 Ready to Start · 1 Not Started (not 2); row 3 (zoom) → no chips, no action button.
+ * The spec asserts what the APP counted; this only sets the inputs. Undone by teardownOverviewShape().
+ */
+export async function setupOverviewShape(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const one = (statuses: string[], status?: string) => ({
+    type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations', ...(status ? { status } : {}),
+    challenges: [
+      { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: statuses[0] },
+      { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: statuses[1] },
+    ],
+  });
+  const two = () => ({
+    type: 'challenge', challengeid: `${RUN}_ch1`, heading: 'Module Two', subheading: 'Momentum',
+    challenges: [{ type: 'video', challengeid: `${RUN}_ch1_s0`, heading: 'Next Video', status: '' }],
+  });
+  const zoom = () => ({ type: 'zoomcall', challengeid: `${RUN}_zoom`, heading: 'Live Call', subheading: 'with EIS', status: 'pending' });
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_A).set({ challenges: [one(['completed', 'completed'], 'completed'), two(), zoom()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
+}
+
+/** Back to the seed: one challenge on W_DASH, p0 1-of-2 complete, p1 untouched. */
+export async function teardownOverviewShape(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const base = () => ({
+    type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations',
+    challenges: [
+      { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: '' },
+      { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: '' },
+    ],
+  });
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [base()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [base()] }, { merge: true });
+  await resetParticipantWorkshopP0();
+}
+
+/**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the
  * settings-toggle test WS-10 starts from false. PRECONDITION write only.
