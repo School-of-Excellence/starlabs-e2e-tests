@@ -93,3 +93,10 @@ nor the action button, and the "Not Started" panel on row 2 lists only the block
 `teardownOverviewShape()` restores the seed.
 WDC-13 also covers the sub-challenge rows (same day): 2.1 reads "1 Ready to Start · 1 Not Started · 0
 Completed" (no In Progress chip on a step); 1.1 (the first step) shows no Ready chip.
+
+## WS-31 — EiFlix Mobile App Logs on /eiflixoperationsdashboard (2026-09-21)
+
+`seedLoginLogs()` writes six `loginlog` documents (today ×2 EiFlix + one other app; 3 days; 20 days;
+40 days) with `date` as a Timestamp; `clearLoginLogs()` removes them. WS-31 asserts Today/7D/30D
+membership, that the other-app row never shows, CF-owned names mapped from profileid, the name and OS
+filters (options = people/OS in range), search, version sort both ways, and the pager label/buttons.

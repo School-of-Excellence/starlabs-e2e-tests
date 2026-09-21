@@ -458,6 +458,43 @@ export async function teardownOverviewShape(): Promise<void> {
   await resetParticipantWorkshopP0();
 }
 
+/** The `loginlog` rows WS-31 seeds (ids run-scoped; removed by clearLoginLogs()). */
+export const wsLoginLogIds = {
+  todayP0: `${RUN}_ll_today_p0`, todayP1: `${RUN}_ll_today_p1`, weekP0: `${RUN}_ll_week_p0`,
+  monthP2: `${RUN}_ll_month_p2`, oldP0: `${RUN}_ll_old_p0`, otherApp: `${RUN}_ll_other`,
+};
+
+/**
+ * PRECONDITION for the EiFlix Mobile App Logs table: six `loginlog` documents —
+ *   today  : p0 (android 2.3.1), p1 (ios 2.3.0), and one for a DIFFERENT app (negative control)
+ *   3 days : p0 (android 2.2.9)           → in 7D and 30D, not Today
+ *   20 days: p2 (ios 2.3.1)               → in 30D only
+ *   40 days: p0 (android 2.0.0)           → never (outside 30D)
+ * `date` is a Timestamp — the field the dashboard's range query bounds. The spec asserts the APP's
+ * range/app filtering, name mapping, sorting and paging over these known inputs.
+ */
+export async function seedLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const ago = (days: number, h = 10) => { const d = new Date(); d.setDate(d.getDate() - days); if (days) d.setHours(h, 0, 0, 0); return T.fromDate(d); };
+  const put = (id: string, data: any) => db.collection('loginlog').doc(id).set({ docid: id, ...data, testrunid: RUN, _testdata: true });
+  await Promise.all([
+    put(wsLoginLogIds.todayP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(0), device_os: 'android', current_version: '2.3.1' }),
+    put(wsLoginLogIds.todayP1, { app: 'EiFlix', profileid: wsProfileIds.p1, date: ago(0), device_os: 'ios', current_version: '2.3.0' }),
+    put(wsLoginLogIds.otherApp, { app: 'SolarVoice', profileid: wsProfileIds.p0, date: ago(0), device_os: 'android', current_version: '9.9.9' }),
+    put(wsLoginLogIds.weekP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(3), device_os: 'android', current_version: '2.2.9' }),
+    put(wsLoginLogIds.monthP2, { app: 'EiFlix', profileid: wsProfileIds.p2, date: ago(20), device_os: 'ios', current_version: '2.3.1' }),
+    put(wsLoginLogIds.oldP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(40), device_os: 'android', current_version: '2.0.0' }),
+  ]);
+}
+
+export async function clearLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsLoginLogIds).map(id => db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}
+
 /**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the
