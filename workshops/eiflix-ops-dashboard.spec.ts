@@ -129,11 +129,13 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs
     // search row inside the select narrows the OPTIONS without touching the table.
     await section.getByTestId('eif-logs-name-filter').click();
     await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: one option per person in range').toHaveCount(3);
-    await page.getByTestId('eif-logs-name-search').locator('input').fill('participant2');
+    // ngx-mat-select-search renders a hidden helper <input> beside the visible one (branch-suites run
+    // 35584288173: `locator('input')` hit both) — address the visible one by its placeholder.
+    await page.getByTestId('eif-logs-name-search').getByPlaceholder('Search names').fill('participant2');
     await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: the search narrows the options').toHaveCount(1);
     await expect(page.getByTestId('eif-logs-name-option').first()).toContainText(wsMetaNames.p2);
     await expect(rows, 'WS-31: typing in the option search does not filter the table').toHaveCount(4);
-    await page.getByTestId('eif-logs-name-search').locator('input').fill('');
+    await page.getByTestId('eif-logs-name-search').getByPlaceholder('Search names').fill('');
     await expect(page.getByTestId('eif-logs-name-option')).toHaveCount(3);
     await page.getByTestId('eif-logs-name-option').filter({ hasText: wsMetaNames.p0 }).click();
     await expect(rows, 'WS-31: p0 has two EiFlix rows in 30D').toHaveCount(2, { timeout: 15_000 });

@@ -100,3 +100,13 @@ Completed" (no In Progress chip on a step); 1.1 (the first step) shows no Ready 
 40 days) with `date` as a Timestamp; `clearLoginLogs()` removes them. WS-31 asserts Today/7D/30D
 membership, that the other-app row never shows, CF-owned names mapped from profileid, the name and OS
 filters (options = people/OS in range), search, version sort both ways, and the pager label/buttons.
+
+## First CI run of WDC-13 / WS-31 (branch suites 35584288173) — two spec-side fixes
+
+- WDC-13 read "0 Not Started" on row 1: the overview counts only enrollees with status `enrolled`
+  (`rebuildProgressFromMap`), and the seed's p1 is `enrollednotstarted`. `setupOverviewShape()` now
+  promotes p1 to `enrolled` for the shape and the teardown restores it (WS-07's Total-Enrolled-only case
+  still holds afterwards).
+- WS-31 hit a strict-mode violation on the name search: `ngx-mat-select-search` renders a hidden helper
+  `<input>` next to the visible one, so `locator('input')` matched two. The spec addresses the visible
+  input by its placeholder.

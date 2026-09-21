@@ -440,6 +440,10 @@ export async function setupOverviewShape(): Promise<void> {
   await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
   await db.collection('participant workshop').doc(wsIds.PW_A).set({ challenges: [one(['completed', 'completed'], 'completed'), two(), zoom()] }, { merge: true });
   await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
+  // The overview counts only enrollees whose enrolment status is 'enrolled' (rebuildProgressFromMap);
+  // the seed leaves p1 as 'enrollednotstarted' (a Total Enrolled-only case for WS-07). Promote p1 for
+  // this shape so both people are in the statistics — restored by teardownOverviewShape().
+  await db.collection('workshop participant enrolled').doc(wsIds.ENR_B).set({ status: 'enrolled' }, { merge: true });
 }
 
 /** Back to the seed: one challenge on W_DASH, p0 1-of-2 complete, p1 untouched. */
@@ -455,6 +459,7 @@ export async function teardownOverviewShape(): Promise<void> {
   });
   await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [base()] }, { merge: true });
   await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [base()] }, { merge: true });
+  await db.collection('workshop participant enrolled').doc(wsIds.ENR_B).set({ status: 'enrollednotstarted' }, { merge: true });
   await resetParticipantWorkshopP0();
 }
 
