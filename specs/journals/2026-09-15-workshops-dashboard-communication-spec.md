@@ -110,3 +110,8 @@ filters (options = people/OS in range), search, version sort both ways, and the 
 - WS-31 hit a strict-mode violation on the name search: `ngx-mat-select-search` renders a hidden helper
   `<input>` next to the visible one, so `locator('input')` matched two. The spec addresses the visible
   input by its placeholder.
+- Second run (35586941612): WS-31 waited the full timeout on `fill` — "element is not enabled".
+  `ngx-mat-select-search` marks its host `<mat-option>` disabled (`aria-disabled=true`, so it can never be
+  selected) while keeping it usable with `pointer-events:all`; Playwright's actionability check refuses to
+  fill under an aria-disabled ancestor. The spec now clicks the input with `force: true` and types via
+  the keyboard, which drives the component's real keyup handler.

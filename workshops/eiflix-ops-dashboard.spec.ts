@@ -130,12 +130,21 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs
     await section.getByTestId('eif-logs-name-filter').click();
     await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: one option per person in range').toHaveCount(3);
     // ngx-mat-select-search renders a hidden helper <input> beside the visible one (branch-suites run
-    // 35584288173: `locator('input')` hit both) — address the visible one by its placeholder.
-    await page.getByTestId('eif-logs-name-search').getByPlaceholder('Search names').fill('participant2');
+    // 35584288173: `locator('input')` hit both) — address the visible one by its placeholder. The library
+    // also marks its host <mat-option> disabled (aria-disabled=true) so it can never be *selected*, while
+    // keeping it interactive via `pointer-events:all` — a real user types there fine, but Playwright's
+    // actionability check refuses to fill inside an aria-disabled ancestor (run 35586941612 waited the
+    // full timeout on "element is not enabled"). So: click the input directly with the check bypassed
+    // and type, which drives the component's real keyup handler.
+    const nameSearch = page.getByTestId('eif-logs-name-search').getByPlaceholder('Search names');
+    await nameSearch.click({ force: true });
+    await page.keyboard.type('participant2');
     await expect(page.getByTestId('eif-logs-name-option'), 'WS-31: the search narrows the options').toHaveCount(1);
     await expect(page.getByTestId('eif-logs-name-option').first()).toContainText(wsMetaNames.p2);
     await expect(rows, 'WS-31: typing in the option search does not filter the table').toHaveCount(4);
-    await page.getByTestId('eif-logs-name-search').getByPlaceholder('Search names').fill('');
+    await nameSearch.click({ force: true });
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
     await expect(page.getByTestId('eif-logs-name-option')).toHaveCount(3);
     await page.getByTestId('eif-logs-name-option').filter({ hasText: wsMetaNames.p0 }).click();
     await expect(rows, 'WS-31: p0 has two EiFlix rows in 30D').toHaveCount(2, { timeout: 15_000 });
