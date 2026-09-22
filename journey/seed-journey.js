@@ -422,6 +422,9 @@ async function seedJourney() {
   await ll('LL_E_OLD', HC.E.pf, { critical: true, created: days(-200), loveletter: `JCH stale letter ${TESTRUNID}` });
   await ll('LL_E_HAPPY', HC.E.pf, { liked: true, created: days(-5), loveletter: `JCH happy letter ${TESTRUNID}` });
   await ll('LL_X', HC.X.pf, { critical: true, loveletter: `JCH offbase letter ${TESTRUNID}` });
+  //    No flags at all — the Unflagged tile on the A&H analytics card would otherwise read 0 whether or
+  //    not the app's `!liked && !tagged && !opportunity && !critical` rule ran.
+  await ll('LL_F_PLAIN', HC.F.pf, { loveletter: `JCH plain letter ${TESTRUNID}` });
   await db.collection('ask AH').doc(`${TESTRUNID}_AH_B`).set({
     docid: `${TESTRUNID}_AH_B`, profileid: HC.B.pf, source: 'ask AH', tagged: true, resolved: false,
     created: days(-3), message: `JCH ask question ${TESTRUNID}`, ...tag,

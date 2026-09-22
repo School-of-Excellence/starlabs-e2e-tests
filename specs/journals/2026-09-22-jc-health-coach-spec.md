@@ -35,3 +35,24 @@ dropped silently) can't be reproduced in this lane.
 ## Execution status
 `--list` registers all 8 cases; hook-diff aligned (113 hooks, 0/0). **Not executed locally** — the emulator
 lane needs the CI-synthesized `environment.emulator.ts`. The gate is the first real run.
+
+## Second pass — Joshua's follow-ups (JCH-08..10), same day
+App side pulled 16 more JC-health commits (the A&H analytics card + drill-down dialog, NA reason chips,
+Schedule filter buttons, Going-quiet exclusion). 23 new controls had no hooks; all now carry one.
+
+- **New prefix `afl`** for `AhFlagListDialogComponent` (its own component → its own prefix).
+- **Seed:** one extra love letter with NO flags (`LL_F_PLAIN`, on F). Without it the Unflagged tile reads 0
+  whether or not the app's `!liked && !tagged && !opportunity && !critical` rule ran. E's 200-day-old
+  critical letter is the window control: it must NOT appear in any A&H analytics count.
+- **JCH-08** counts by flag × source against an independent read of the same docs.
+- **JCH-09** drills: the dialog lists ONE ROW PER SOURCE DOCUMENT, so its length reconciles the clicked
+  cell (C's resolved letter and X's letter both appear); a row opens that participant's slide-over; a 0
+  cell opens nothing.
+  NOTE, recorded deliberately: the card is **base-wide, not coach-scoped** (`loadAHSummary` reads both
+  collections org-wide, once). X is on the ADMIN's base and still shows in a coach's drill-down. JCH-09
+  asserts 3 rows, which is today's behaviour — if the card is later scoped to the viewing coach, this
+  case goes red and should be re-expected at 2, not deleted.
+- **JCH-10** asserts the reason chips per row, and that a late-only participant (F) carries none.
+- JCH-07 stays `test.fail()`: the coach-scope Schedule load is still unfixed, so the Schedule bucket
+  filter buttons cannot be driven either; their hooks ride along in JCH-07's oracle.
+Not executed locally (no `environment.emulator.ts`): the gate/emulator run is the first real run.

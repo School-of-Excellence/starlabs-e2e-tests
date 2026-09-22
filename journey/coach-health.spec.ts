@@ -4,6 +4,7 @@
 // Hook prefixes (one per component):
 //   jchd — JourneyCoachHealthDashboardComponent (journey-coach-health-dashboard.component.html)
 //   jcso — ParticipantSlideoverComponent        (participant-slideover.component.ts, inline template)
+//   afl  — AhFlagListDialogComponent            (ah-flag-list-dialog.component.ts, inline template)
 //
 // Reference: starlabs-angular specs/journals/2026-09-22-jc-health-pull-joshua-sep22.md — the merge that
 // brought Joshua's JC-health features (A&H tags, single Needs-attention rule, Defaulted/Missed tiles,
@@ -76,6 +77,18 @@ async function ahFlagged(): Promise<{ critical: Set<string>; attention: Set<stri
     }
   }
   return { critical, attention };
+}
+
+/** Every seeded A&H source doc inside the card's 180-day window, tagged with its collection. */
+async function ahDocsInWindow(): Promise<any[]> {
+  const since = Date.now() - 180 * 86400e3;
+  const out: any[] = [];
+  for (const coll of ['ask AH', 'love letter']) {
+    for (const d of (await queryWhere(coll, [['testrunid', '==', RUN]])) as any[]) {
+      if ((d.created?.toMillis?.() ?? 0) >= since) out.push({ ...d, _coll: coll });
+    }
+  }
+  return out;
 }
 
 async function openDashboard(page: Page) {
@@ -195,10 +208,91 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(page.getByTestId('jchd-sched-ob-row'), 'JCH-07: one Onboarding row').toHaveCount(1);
   });
 
+  // ===== Joshua's 2026-09-22 follow-ups: A&H analytics card + its drill-down, NA reason chips =====
+
+  test('JCH-08 the A&H analytics card counts source documents in the 180-day window, by flag and source', async ({ page }) => {
+    const docs = await ahDocsInWindow();
+    const n = (coll: 'ask AH' | 'love letter' | 'both', pred: (d: any) => boolean) =>
+      docs.filter((d) => (coll === 'both' || d._coll === coll) && pred(d)).length;
+    const expected = {
+      loveCritical: n('love letter', (d) => d.critical === true),          // A + C(resolved) + X
+      askTagged: n('ask AH', (d) => d.tagged === true),                    // B
+      combinedOpportunity: n('both', (d) => d.opportunity === true),       // none seeded
+      resolvedCritical: n('both', (d) => d.critical === true && d.resolved === true),   // C
+      unflagged: n('both', (d) => !d.liked && !d.tagged && !d.opportunity && !d.critical),
+    };
+    expect(expected, 'oracle sanity: the seeded A&H world (E\'s 200-day-old critical letter is OUTSIDE the window)')
+      .toEqual({ loveCritical: 3, askTagged: 1, combinedOpportunity: 0, resolvedCritical: 1, unflagged: 1 });
+
+    await openDashboard(page);
+    await expect(page.getByTestId('jchd-ahcell-critical-love'),
+      'JCH-08: Love Letter · Critical counts unresolved AND resolved critical letters, but not the 200-day-old one')
+      .toHaveText(String(expected.loveCritical), { timeout: 45_000 });
+    await expect(page.getByTestId('jchd-ahcell-tagged-ask'), 'JCH-08: Ask AH · Needs Attention').toHaveText(String(expected.askTagged));
+    await expect(page.getByTestId('jchd-ahcell-opportunity-both'), 'JCH-08: nothing seeded carries the opportunity flag').toHaveText('0');
+    await expect(page.getByTestId('jchd-ahcell-critical-res'), 'JCH-08: the Resolved column counts only resolved docs').toHaveText(String(expected.resolvedCritical));
+    await expect(page.getByTestId('jchd-ahmini-unflagged').locator('.ah-mini-n'), 'JCH-08: the plain letter is the only unflagged doc').toHaveText(String(expected.unflagged));
+  });
+
+  test('JCH-09 clicking an A&H count lists one row per source document and opens the participant', async ({ page }) => {
+    await openDashboard(page);
+    const critical = page.getByTestId('jchd-ahcell-critical-love');
+    await expect(critical).toHaveText('3', { timeout: 45_000 });
+    await critical.click();
+
+    const dialog = page.locator('app-ah-flag-list-dialog');
+    await expect(dialog, 'JCH-09: the drill-down dialog opens').toBeVisible({ timeout: 30_000 });
+    await expect(dialog.getByTestId('afl-count'), 'JCH-09: the dialog header repeats the clicked count').toHaveText('3');
+    await expect(dialog.getByTestId('afl-row'),
+      'JCH-09: ONE row per source document (C has a resolved letter, X is on another base) — the list reconciles the cell')
+      .toHaveCount(3);
+
+    await dialog.getByTestId('afl-row').filter({ hasText: P.A.name }).click();
+    await expect(dialog, 'JCH-09: picking a row closes the dialog').toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator('app-participant-slideover').getByText(P.A.name).first(),
+      'JCH-09: …and opens that participant\'s slide-over').toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press('Escape');
+    await expect(page.locator('app-participant-slideover')).toHaveCount(0, { timeout: 10_000 });
+
+    // a zero cell has nothing to show — the dashboard must not open an empty dialog
+    await page.getByTestId('jchd-ahcell-opportunity-both').click();
+    await expect(page.locator('app-ah-flag-list-dialog'), 'JCH-09: a 0 count opens nothing').toHaveCount(0);
+  });
+
+  test('JCH-10 Needs-attention rows carry a chip per live condition, and clean rows carry none', async ({ page }) => {
+    await openDashboard(page);
+    await openParticipants(page);
+    const chipsOf = (name: string) => row(page, name).getByTestId('jchd-na-reason');
+    await expect(chipsOf(P.A.name), 'JCH-10: A is defaulted AND A&H critical — one chip each')
+      .toHaveText(['Payments defaulted', 'Critical'], { timeout: 30_000 });
+    await expect(chipsOf(P.B.name), 'JCH-10: B reaches Needs attention through its Ask A&H tag alone (late is not a condition)')
+      .toHaveText(['Needs Attention']);
+    await expect(chipsOf(P.C.name), 'JCH-10: C is locked').toHaveText(['Payments locked']);
+    await expect(chipsOf(P.F.name), 'JCH-10: F is only late — not a needs-attention condition, so no chips').toHaveCount(0);
+    await expect(chipsOf(P.E.name), 'JCH-10: E has nothing live').toHaveCount(0);
+  });
+
   // ---- hooks no case drives yet ----
-  test.fixme('JCH-ADDR1 A&H opportunity chip + slide-over show-all / Ask A&H toggle addressable (deferred behavioral)', async ({ page }) => {
+  test.fixme('JCH-ADDR1 A&H opportunity chip, drill-down Close, source pills, slide-over show-all / Ask A&H toggle addressable (deferred behavioral)', async ({ page }) => {
     await page.goto('/journey-coach-health', { waitUntil: 'domcontentloaded' });
     expect(page.getByTestId('jchd-ah-opportunity')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahsrc-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahsrc-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-liked-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-liked-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-liked-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-liked-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-tagged-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-tagged-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-tagged-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-opportunity-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-opportunity-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-opportunity-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-critical-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahcell-critical-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahmini-positive')).toBeTruthy();
+    expect(page.getByTestId('jchd-ahmini-critattn')).toBeTruthy();
+    expect(page.getByTestId('afl-close')).toBeTruthy();
     expect(page.getByTestId('jcso-ll-showall')).toBeTruthy();
     expect(page.getByTestId('jcso-ah-toggle')).toBeTruthy();
     expect(page.getByTestId('jcso-ah-showall')).toBeTruthy();
