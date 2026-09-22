@@ -430,9 +430,14 @@ async function seedJourney() {
   //    Journey-coach appointments for the Schedule split (JCH-07). Tomorrow noon lands in "Next 7 days",
   //    yesterday noon in "Overdue". The cancelled one and the attended one must NOT reach the schedule.
   const noon = (dayOffset) => { const d = new Date(); d.setDate(d.getDate() + dayOffset); d.setHours(12, 0, 0, 0); return T.fromDate(d); };
+  //    `endtime` is REQUIRED, not decoration: /JourneycoachDashboard-new streams EVERY journeycoach
+  //    appointment and sorts on b.endtime.toDate() unguarded (journeycoach-dashboard.component.ts:688) —
+  //    without it that screen throws "reading 'toDate'" and fails onboarding-controls/dashboards.spec.ts jcd.
+  //    Real appointments always carry it; one hour after starttime.
   const appt = (id, pf, extra) => db.collection('appointments').doc(`${TESTRUNID}_${id}`).set({
     docid: `${TESTRUNID}_${id}`, journeycoach: true, profileid: pf, bookedby: coachRef(pf),
-    hosts: [coachRef(PF.journeycoach)], attended: false, cancelled: false, onboarding: false, ...extra, ...tag,
+    hosts: [coachRef(PF.journeycoach)], attended: false, cancelled: false, onboarding: false, ...extra,
+    endtime: T.fromMillis(extra.starttime.toMillis() + 3600e3), ...tag,
   });
   await appt('APT_JC_TMR', HC.A.pf, { starttime: noon(1) });
   await appt('APT_OB_TMR', HC.B.pf, { starttime: noon(1), onboarding: true });
