@@ -381,6 +381,65 @@ async function seedJourney() {
     attachments: [], servername: null, postmarktemplateid: null, templateid: `test_onboarding_${TESTRUNID}`, ...tag,
   });
 
+  // 6) JC HEALTH world (journey/coach-health.spec.ts, JCH-*) =====================================
+  //    Six participants on the seeded journeycoach's base + one off-base control. The journeycoach logs in,
+  //    so the dashboard opens scoped to THIS coach (full mode, never the shared All view) and every number
+  //    it shows comes from these docs alone. Each rule gets something it must EXCLUDE:
+  //      A active  · 'Defaulted' (capital D — the finance filter must ignore case) · unresolved critical LL
+  //      B active  · 'late' (Missed)            · unresolved tagged Ask A&H  → Needs attention via A&H ONLY
+  //      C active  · 'locked'                   · critical LL but RESOLVED   → no A&H chip; NA via locked
+  //      D DISCONTINUED · 'defaulted'           → excluded from the Defaulted tile by the Active lifecycle default
+  //      E active  · regular · critical LL 200 days old (outside 180d) + a 'liked' LL → no chip, not NA
+  //      F active  · 'late', nothing else       → Missed, but late alone is NOT needs-attention
+  //      X OFF-BASE (coached by admin) · 'defaulted' + critical LL → must never reach this coach's numbers
+  //    Subscriptions end +200d: not lapsed, not in the 90-day renewal window, so neither drives any count.
+  const coachRef = (pf) => db.collection('profile_data').doc(pf);
+  const days = (n) => T.fromMillis(Date.now() + n * 86400e3);
+  const HC = {
+    A: { pf: `${TESTRUNID}_pf_hc_a`, name: `JCH Alpha ${TESTRUNID}`, status: 'active', fin: 'Defaulted', coach: PF.journeycoach },
+    B: { pf: `${TESTRUNID}_pf_hc_b`, name: `JCH Bravo ${TESTRUNID}`, status: 'active', fin: 'late', coach: PF.journeycoach },
+    C: { pf: `${TESTRUNID}_pf_hc_c`, name: `JCH Charlie ${TESTRUNID}`, status: 'active', fin: 'locked', coach: PF.journeycoach },
+    D: { pf: `${TESTRUNID}_pf_hc_d`, name: `JCH Delta ${TESTRUNID}`, status: 'discontinued', fin: 'defaulted', coach: PF.journeycoach },
+    E: { pf: `${TESTRUNID}_pf_hc_e`, name: `JCH Echo ${TESTRUNID}`, status: 'active', fin: 'regular', coach: PF.journeycoach },
+    F: { pf: `${TESTRUNID}_pf_hc_f`, name: `JCH Foxtrot ${TESTRUNID}`, status: 'active', fin: 'late', coach: PF.journeycoach },
+    X: { pf: `${TESTRUNID}_pf_hc_x`, name: `JCH Xray ${TESTRUNID}`, status: 'active', fin: 'defaulted', coach: PF.admin },
+  };
+  for (const p of Object.values(HC)) {
+    await db.collection('participant metadata').doc(p.pf).set({
+      docid: p.pf, profileid: p.pf, name: p.name, email: `${p.pf}@example.com`,
+      coachedby: [coachRef(p.coach)], customerstatus: p.status, financialstatus: p.fin,
+      subscriptionend: days(200), customersupporttickets: 0, activejourney: ID.J1,
+      pp_totalpaid: '0', pp_totalpurchasevalue: '0', ...tag,
+    });
+  }
+
+  //    A&H feedback. `loveletter` is the text field Dynamic Studio renders; `created` is a Timestamp.
+  const ll = (id, pf, extra) => db.collection('love letter').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, profileid: pf, created: days(-10), resolved: false, ...extra, ...tag,
+  });
+  await ll('LL_A', HC.A.pf, { critical: true, loveletter: `JCH critical letter ${TESTRUNID}` });
+  await ll('LL_C', HC.C.pf, { critical: true, resolved: true, loveletter: `JCH resolved letter ${TESTRUNID}` });
+  await ll('LL_E_OLD', HC.E.pf, { critical: true, created: days(-200), loveletter: `JCH stale letter ${TESTRUNID}` });
+  await ll('LL_E_HAPPY', HC.E.pf, { liked: true, created: days(-5), loveletter: `JCH happy letter ${TESTRUNID}` });
+  await ll('LL_X', HC.X.pf, { critical: true, loveletter: `JCH offbase letter ${TESTRUNID}` });
+  await db.collection('ask AH').doc(`${TESTRUNID}_AH_B`).set({
+    docid: `${TESTRUNID}_AH_B`, profileid: HC.B.pf, source: 'ask AH', tagged: true, resolved: false,
+    created: days(-3), message: `JCH ask question ${TESTRUNID}`, ...tag,
+  });
+
+  //    Journey-coach appointments for the Schedule split (JCH-07). Tomorrow noon lands in "Next 7 days",
+  //    yesterday noon in "Overdue". The cancelled one and the attended one must NOT reach the schedule.
+  const noon = (dayOffset) => { const d = new Date(); d.setDate(d.getDate() + dayOffset); d.setHours(12, 0, 0, 0); return T.fromDate(d); };
+  const appt = (id, pf, extra) => db.collection('appointments').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, journeycoach: true, profileid: pf, bookedby: coachRef(pf),
+    hosts: [coachRef(PF.journeycoach)], attended: false, cancelled: false, onboarding: false, ...extra, ...tag,
+  });
+  await appt('APT_JC_TMR', HC.A.pf, { starttime: noon(1) });
+  await appt('APT_OB_TMR', HC.B.pf, { starttime: noon(1), onboarding: true });
+  await appt('APT_JC_OVD', HC.C.pf, { starttime: noon(-1) });
+  await appt('APT_CANC', HC.A.pf, { starttime: noon(1), cancelled: true });
+  await appt('APT_DONE', HC.B.pf, { starttime: noon(-1), attended: true });
+
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
     names: {
@@ -407,6 +466,8 @@ const SEEDED = [
   'participant metadata', 'participantjourneyproduct', 'participantsproduct', 'participantdeliverysequence',
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',
+  // JC Health world (JCH-*): A&H feedback + journey-coach appointments
+  'love letter', 'ask AH', 'appointments',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];

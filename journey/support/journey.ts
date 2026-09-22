@@ -123,6 +123,26 @@ export async function loginAsJourneyAdmin(page: Page): Promise<void> {
   await loginAs(page, journeyActors.admin, PASSWORD);
 }
 
+/** Log in as the seeded journeycoach — /journey-coach-health then opens scoped to THIS coach's base. */
+export async function loginAsJourneyCoach(page: Page): Promise<void> {
+  await loginAs(page, journeyActors.journeycoach, PASSWORD);
+}
+
+/** JC Health world (seed-journey.js step 6). A–F are on the journeycoach's base; X is off-base. */
+export const jchParticipants = {
+  A: { pf: `${RUN}_pf_hc_a`, name: `JCH Alpha ${RUN}` },
+  B: { pf: `${RUN}_pf_hc_b`, name: `JCH Bravo ${RUN}` },
+  C: { pf: `${RUN}_pf_hc_c`, name: `JCH Charlie ${RUN}` },
+  D: { pf: `${RUN}_pf_hc_d`, name: `JCH Delta ${RUN}` },
+  E: { pf: `${RUN}_pf_hc_e`, name: `JCH Echo ${RUN}` },
+  F: { pf: `${RUN}_pf_hc_f`, name: `JCH Foxtrot ${RUN}` },
+  X: { pf: `${RUN}_pf_hc_x`, name: `JCH Xray ${RUN}` },
+};
+export const jchTexts = {
+  criticalLetter: `JCH critical letter ${RUN}`,
+  askQuestion: `JCH ask question ${RUN}`,
+};
+
 // CommonJS — reuse the allowlist-guarded admin init (only ever the test project).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const seed = require('../../fixtures/seed-test-project');
