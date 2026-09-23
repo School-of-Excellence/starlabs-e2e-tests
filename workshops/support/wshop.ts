@@ -25,6 +25,7 @@ export const wsProductNames = [
 export const wsActors = {
   admin: `admin+${RUN}@example.com`,        // roles {admin, ah} — super-role (list/config/dashboard)
   mover: `mover+${RUN}@example.com`,        // profileid is the hardcoded move-next id (WS-12)
+  limited: `limited+${RUN}@example.com`,    // same roles/routes as admin — only Dashboard Access differs
   participant0: `participant0+${RUN}@example.com`,
   participant1: `participant1+${RUN}@example.com`,
   participant2: `participant2+${RUN}@example.com`,
@@ -46,6 +47,12 @@ export const wsMetaNames = {
   p0: wsActors.participant0,
   p1: wsActors.participant1,
   p2: wsActors.participant2,
+  // The staff actors have profile_data too, so the same CF rewrites THEIR metadata name to their email.
+  // The Dashboard Access pickers list people from `participant metadata`, so these are the labels those
+  // pickers actually render — never the seed's "WS Admin <run>".
+  admin: wsActors.admin,
+  mover: wsActors.mover,
+  limited: wsActors.limited,
 };
 
 /**
@@ -58,6 +65,8 @@ export async function alignWorkshopMetadataNames(): Promise<void> {
   const db = admin.firestore();
   const pairs: [string, string][] = [
     [wsProfileIds.p0, wsMetaNames.p0], [wsProfileIds.p1, wsMetaNames.p1], [wsProfileIds.p2, wsMetaNames.p2],
+    [wsProfileIds.admin, wsMetaNames.admin], [wsProfileIds.mover, wsMetaNames.mover],
+    [wsProfileIds.limited, wsMetaNames.limited],
   ];
   for (const [pf, email] of pairs) {
     await db.collection('participant metadata').doc(pf).set({ name: email, email: email.toLowerCase() }, { merge: true });
@@ -67,7 +76,8 @@ export async function alignWorkshopMetadataNames(): Promise<void> {
 /** Seeded profileids (for asserting app-written refs / progress rows). */
 export const wsProfileIds = {
   admin: `${RUN}_pf_admin`,
-  mover: '3LVxKXuyxldYoRDEpx5s', // == seed-workshops MOVER_PID (hardcoded dashboard allow-list id)
+  mover: '3LVxKXuyxldYoRDEpx5s', // == seed-workshops MOVER_PID (a plain opaque id since 2026-09-23)
+  limited: `${RUN}_pf_limited`,
   p0: `${RUN}_pf_p0`,
   p1: `${RUN}_pf_p1`,
   p2: `${RUN}_pf_p2`,
@@ -258,6 +268,15 @@ export async function loginAsWshopAdmin(page: Page): Promise<void> {
 /** Log in as the seeded "mover" admin (profileid in the hardcoded move-next allow-list). */
 export async function loginAsWshopMover(page: Page): Promise<void> {
   await loginAs(page, wsActors.mover, PASSWORD);
+}
+
+/**
+ * Log in as the seeded LIMITED admin — identical roles and route grants to `admin`, but named in no
+ * global access list and granted exactly two dashboard actions on W_DASH. Anything this actor cannot
+ * reach is the Dashboard Access gate, never the route guard.
+ */
+export async function loginAsWshopLimited(page: Page): Promise<void> {
+  await loginAs(page, wsActors.limited, PASSWORD);
 }
 
 /**
@@ -557,4 +576,73 @@ export async function cleanDuplicateWorkshops(title: string): Promise<void> {
     const isDup = !!data.detailpage && data.detailpage.title === title && !seededIds.has(d.id);
     if (isDup) await d.ref.delete();
   }
+}
+
+// =================================================================================================
+// 2026-09-23 — Dashboard Access. The workshop screens deny by default: a profileid can do nothing
+// unless "static meta data"/"Workshop Admin" or workshopsettings/{workshop id} names it. Helpers
+// below read those two documents with the admin SDK, so a spec can assert what the APP wrote rather
+// than what the test set up, and restore the seeded shape afterwards.
+// =================================================================================================
+
+/** The eleven per-workshop actions, in the order the editor lists them. */
+export const wsAccessKeys = [
+  'sendcommunication', 'qanda', 'diagnose', 'clear', 'enroll', 'export',
+  'extend', 'participantprogress', 'allassignments', 'allforms', 'allvideoask',
+] as const;
+
+/** What the seed grants `limited` on W_DASH — and nothing else, anywhere. */
+export const wsLimitedGrants = ['qanda', 'export'];
+
+/** The three shared lists, as the app stores them. */
+export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[] }> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('static meta data').doc('Workshop Admin').get();
+  const d: any = snap.exists ? (snap.data() || {}) : {};
+  const list = (v: any) => (Array.isArray(v) ? v.map(String) : []);
+  return {
+    dashboardAdmins: list(d.workshopdashboardadmin),
+    editAccess: list(d.workshopeditaccess),
+    newUsersAccess: list(d.workshopnewusersaccess),
+  };
+}
+
+/** One workshop's grants: profileid -> the actions ticked for them. */
+export async function workshopDashboardAccess(workshopId: string): Promise<Record<string, string[]>> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshopsettings').doc(workshopId).get();
+  const raw: any = snap.exists ? (snap.data() || {})['dashboardaccess'] : null;
+  const out: Record<string, string[]> = {};
+  if (raw && typeof raw === 'object') {
+    for (const k of Object.keys(raw)) out[k] = Array.isArray(raw[k]) ? raw[k].map(String) : [];
+  }
+  return out;
+}
+
+/**
+ * Put W_DASH's grants back to the seeded shape. The access spec SAVES through the app (that write is
+ * the oracle), so without this a second run would start from the first run's leftovers. PRECONDITION
+ * write only — no assertion ever reads this value back.
+ */
+export async function resetDashboardAccess(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopsettings').doc(wsIds.W_DASH).set({
+    workshopid: wsIds.W_DASH,
+    dashboardaccess: { [wsProfileIds.limited]: [...wsLimitedGrants] },
+    testrunid: RUN,
+    _testdata: true,
+  });
+}
+
+/** Put the three shared lists back to the seeded shape (same reason as resetDashboardAccess). */
+export async function resetWorkshopAdminLists(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('static meta data').doc('Workshop Admin').set({
+    docid: 'Workshop Admin',
+    workshopdashboardadmin: [wsProfileIds.admin, wsProfileIds.mover],
+    workshopeditaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    workshopnewusersaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    testrunid: RUN,
+    _testdata: true,
+  });
 }

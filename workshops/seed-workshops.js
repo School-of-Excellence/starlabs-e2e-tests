@@ -14,7 +14,15 @@
  * production profileids (workshop-dashboard.component.ts:1688), so the move-next actor must carry one):
  *   admin+wshop@example.com   roles {admin, ah}                 — list/config/dashboard render (super-role)
  *   mover+wshop@example.com   roles {admin, ah}, pid 3LVxK…     — drives the manual move-next write (WS-12)
+ *   limited+wshop@example.com roles {admin, ah}                 — NEGATIVE CONTROL for Dashboard Access
  *   participant0..2+wshop@example.com roles {participant}        — enrolled into the dashboard workshop
+ *
+ * DASHBOARD ACCESS (2026-09-23). The workshop screens now deny by default: a profileid gets nothing
+ * unless it is named in `static meta data/Workshop Admin` or in `workshopsettings/{workshop id}`. There
+ * is NO hard-coded bypass any more — so without the two access documents below EVERY workshop spec in
+ * this suite would be blocked. `admin` and `mover` are seeded as full dashboard admins with editing and
+ * new-users rights; `limited` is seeded with exactly two per-workshop actions on W_DASH and nothing
+ * else, which is the pivot the access spec asserts against.
  *
  * Usage:  node e2e/workshops/seed-workshops.js --seed | --teardown
  */
@@ -88,6 +96,7 @@ const CAL_STACK_IDS = [1, 2, 3, 4, 5].map((n) => `${TESTRUNID}_cal_stack${n}`);
 const PF = {
   admin: `${TESTRUNID}_pf_admin`,
   mover: MOVER_PID,
+  limited: `${TESTRUNID}_pf_limited`,
   p0: `${TESTRUNID}_pf_p0`,
   p1: `${TESTRUNID}_pf_p1`,
   p2: `${TESTRUNID}_pf_p2`,
@@ -95,6 +104,7 @@ const PF = {
 const EMAIL = {
   admin: `admin+${TESTRUNID}@example.com`,
   mover: `mover+${TESTRUNID}@example.com`,
+  limited: `limited+${TESTRUNID}@example.com`,
   p0: `participant0+${TESTRUNID}@example.com`,
   p1: `participant1+${TESTRUNID}@example.com`,
   p2: `participant2+${TESTRUNID}@example.com`,
@@ -105,6 +115,9 @@ function roster() {
   const staff = [
     mk('admin', ['admin', 'ah'], 'admin'),
     mk('mover', ['admin', 'ah'], 'admin'),
+    // Same roles and the same route grants as `admin` — so anything this actor cannot do is the
+    // Dashboard Access gate talking, never the route guard. That is what makes it a clean control.
+    mk('limited', ['admin', 'ah'], 'admin'),
   ];
   const participants = [
     mk('p0', ['participant'], 'participant'),
@@ -385,6 +398,11 @@ async function seedWorkshops() {
   await meta(PF.p0, `WS Alpha ${TESTRUNID}`);
   await meta(PF.p1, `WS Bravo ${TESTRUNID}`);
   await meta(PF.p2, `WS Charlie ${TESTRUNID}`);
+  // The Dashboard Access pickers offer people from `participant metadata` ONLY (never new_user_data),
+  // so the staff actors need a row there to be pickable at all — and the access spec picks one by name.
+  await meta(PF.admin, `WS Admin ${TESTRUNID}`);
+  await meta(PF.mover, `WS Mover ${TESTRUNID}`);
+  await meta(PF.limited, `WS Limited ${TESTRUNID}`);
 
   // 4) WORKSHOP CONFIG DOCS. Every app doc stores its own id as `docid` (app-wide convention) — the
   //    workshops list toggles/duplicates key off workshop.docid (workshops.component.ts:198,241), NOT
@@ -513,12 +531,37 @@ async function seedWorkshops() {
     ...tag,
   });
 
+  // 6c) DASHBOARD ACCESS — the two documents the workshop screens now read before rendering anything.
+  //
+  //  `static meta data/Workshop Admin` is a SINGLE fixed-id document shared by every workshop (the app
+  //  says so on screen). It does not exist on the test project, and no other suite writes it, so we own
+  //  it: seed it run-tagged and delete it in teardown under the same tag guard as `Product Page`.
+  //  Without it, deny-by-default blocks every other workshop spec — admin and mover would not even be
+  //  able to open /workshops, /workshopconfig or a dashboard.
+  await db.collection('static meta data').doc('Workshop Admin').set({
+    docid: 'Workshop Admin',
+    workshopdashboardadmin: [PF.admin, PF.mover],
+    workshopeditaccess: [PF.admin, PF.mover],
+    workshopnewusersaccess: [PF.admin, PF.mover],
+    ...tag,
+  });
+  //  `workshopsettings/{workshop id}` — one document per workshop, carrying the workshop's own id.
+  //  `limited` gets EXACTLY two of the eleven actions on the dashboard workshop and nothing anywhere
+  //  else, so the access spec can prove both halves: what a grant switches on, and what its absence
+  //  switches off. W_ACTIVE deliberately gets NO access document at all — that is the "blocked from the
+  //  whole dashboard" pivot.
+  await db.collection('workshopsettings').doc(ID.W_DASH).set({
+    workshopid: ID.W_DASH,
+    dashboardaccess: { [PF.limited]: ['qanda', 'export'] },
+    ...tag,
+  });
+
   // 7) 2026-09-04 addendum — the nine previously-uncovered routes (WS-16..WS-33).
   const addendum = await seedAddendum(db, T, tag, at);
 
   return {
     TESTRUNID, ID, PF, EMAIL,
-    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 3, products: 2, emailTemplates: 1, ...addendum },
+    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 6, products: 2, emailTemplates: 1, accessDocs: 2, ...addendum },
   };
 }
 
@@ -527,6 +570,8 @@ async function seedWorkshops() {
 const SEEDED = [
   'workshopconfiguration', 'workshop participant enrolled', 'participant workshop', 'participant metadata',
   'static meta data',
+  // Dashboard Access (2026-09-23). Run-tagged; one doc per workshop, keyed by the workshop's own id.
+  'workshopsettings',
   // WS-09/WS-14 composer precondition. Run-tagged, so the sweep leaves any other run's templates alone.
   'email templates',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
@@ -547,6 +592,16 @@ async function teardownWorkshops() {
   const pp = await db.collection('static meta data').doc('Product Page').get();
   if (pp.exists && (pp.data() || {}).testrunid === TESTRUNID) {
     await db.collection('static meta data').doc('Product Page').delete().catch(() => {});
+  }
+  // Same guard for the Dashboard Access document — another fixed-id doc we own on the test project.
+  // The access spec SAVES this document through the app, and the app's write carries no testrunid, so
+  // check for our marker field instead of relying on the tag surviving an app save.
+  const wa = await db.collection('static meta data').doc('Workshop Admin').get();
+  if (wa.exists) {
+    const d = wa.data() || {};
+    const ours = d.testrunid === TESTRUNID
+      || (Array.isArray(d.workshopdashboardadmin) && d.workshopdashboardadmin.includes(PF.admin));
+    if (ours) await db.collection('static meta data').doc('Workshop Admin').delete().catch(() => {});
   }
   // Clean any enrollment docs the WS-08 enroll test created (app-written → NO testrunid; key by the
   // dashboard workshopref + the p2 profile that only the enroll test ever enrolls).
