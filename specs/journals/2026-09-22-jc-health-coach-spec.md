@@ -56,3 +56,24 @@ Schedule filter buttons, Going-quiet exclusion). 23 new controls had no hooks; a
 - JCH-07 stays `test.fail()`: the coach-scope Schedule load is still unfixed, so the Schedule bucket
   filter buttons cannot be driven either; their hooks ride along in JCH-07's oracle.
 Not executed locally (no `environment.emulator.ts`): the gate/emulator run is the first real run.
+
+## Third pass — Joshua's 3 fixes + the JC-pipeline fix (JCH-11, JCH-12), 2026-09-23
+App pulled joshua-development 7023d94f + bbe2e3bd (coach-dropdown re-scope, authoritative onboarding
+discriminator, A&H drill as a NATIVE in-component overlay — AhFlagListDialogComponent DELETED), and the
+JC-pipeline fix ("JC done" now excludes attended onboarding calls) was made on our side.
+
+- **`afl` prefix retired.** The drill-down is no longer its own component, so JCH-09 now drives
+  `jchd-ahd-overlay` / `-row` / `-count` / `-close`. Joshua's own ids (`viewing-coach-select`,
+  `ahd-overlay`, `sched-jc-col`, …) were mapped onto the `jchd` prefix the gate enforces, and his
+  `qa/checks/jc-health-contract.mjs` greps the merged names.
+- **JCH-11** (Fix 1): switching the Viewing scope must REBUILD the table. Two-way `[(ngModel)]` pre-wrote
+  `selectedCoachId`, so `onCoachChange`'s same-coach guard no-op'd and the table never re-scoped. The
+  case asserts the off-base participant (X) is absent in the coach's scope and present in All, and that
+  All is a strict superset — a count assertion alone would pass on a table that never rebuilt.
+- **JCH-12** (JC pipeline): seeded a SECOND attended appointment, `APT_OB_DONE`, an ONBOARDING call.
+  Without it "JC done" reads the same whether or not the exclusion ran. Runs as ADMIN, not the coach:
+  the pipeline card only fills in the All view (the coach-scope appointments read is still missing —
+  JCH-07's defect), so this is the only scope where the count exists.
+- JCH-07 unchanged and still `test.fail()`; its row assertions are now scoped to the two Schedule
+  columns, which also puts the new column hooks to work.
+Not executed locally (no `environment.emulator.ts`): the gate/emulator run is the first real run.

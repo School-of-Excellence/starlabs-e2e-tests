@@ -4,7 +4,8 @@
 // Hook prefixes (one per component):
 //   jchd — JourneyCoachHealthDashboardComponent (journey-coach-health-dashboard.component.html)
 //   jcso — ParticipantSlideoverComponent        (participant-slideover.component.ts, inline template)
-//   afl  — AhFlagListDialogComponent            (ah-flag-list-dialog.component.ts, inline template)
+//   (the A&H drill-down was a MatDialog with its own `afl` prefix until 2026-09-23; Joshua replaced it
+//    with a native in-component overlay, so those hooks moved under `jchd` — see jchd-ahd-* below.)
 //
 // Reference: starlabs-angular specs/journals/2026-09-22-jc-health-pull-joshua-sep22.md — the merge that
 // brought Joshua's JC-health features (A&H tags, single Needs-attention rule, Defaulted/Missed tiles,
@@ -39,7 +40,7 @@
 // coach who is DENIED `love letter` / `ask AH` (the dashboard then drops A&H signals silently) cannot be
 // reproduced in this lane.
 import { test, expect, Page } from '@playwright/test';
-import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, journeyProfileIds, jchParticipants as P, jchTexts } from './support/journey';
+import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, loginAsJourneyAdmin, journeyProfileIds, jchParticipants as P, jchTexts } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
@@ -204,8 +205,10 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(page.getByTestId('jchd-sched-ob-today').locator('.jcp-num')).toHaveText('0');
     await expect(page.getByTestId('jchd-sched-ob-week').locator('.jcp-num'), 'JCH-07: onboarding tomorrow (B) goes to the Onboarding column').toHaveText('1');
     await expect(page.getByTestId('jchd-sched-ob-overdue').locator('.jcp-num')).toHaveText('0');
-    await expect(page.getByTestId('jchd-sched-jc-row'), 'JCH-07: two JC rows (tomorrow + overdue)').toHaveCount(2);
-    await expect(page.getByTestId('jchd-sched-ob-row'), 'JCH-07: one Onboarding row').toHaveCount(1);
+    await expect(page.getByTestId('jchd-sched-jc-col').getByTestId('jchd-sched-jc-row'),
+      'JCH-07: two rows in the Journey Coaching column (tomorrow + overdue)').toHaveCount(2);
+    await expect(page.getByTestId('jchd-sched-ob-col').getByTestId('jchd-sched-ob-row'),
+      'JCH-07: one row in the Onboarding column').toHaveCount(1);
   });
 
   // ===== Joshua's 2026-09-22 follow-ups: A&H analytics card + its drill-down, NA reason chips =====
@@ -240,23 +243,29 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(critical).toHaveText('3', { timeout: 45_000 });
     await critical.click();
 
-    const dialog = page.locator('app-ah-flag-list-dialog');
-    await expect(dialog, 'JCH-09: the drill-down dialog opens').toBeVisible({ timeout: 30_000 });
-    await expect(dialog.getByTestId('afl-count'), 'JCH-09: the dialog header repeats the clicked count').toHaveText('3');
-    await expect(dialog.getByTestId('afl-row'),
+    const overlay = page.getByTestId('jchd-ahd-overlay');
+    await expect(overlay, 'JCH-09: the native drill overlay opens (was a MatDialog before 2026-09-23)').toBeVisible({ timeout: 30_000 });
+    await expect(overlay.getByTestId('jchd-ahd-count'), 'JCH-09: the overlay header repeats the clicked count').toHaveText('3');
+    await expect(overlay.getByTestId('jchd-ahd-row'),
       'JCH-09: ONE row per source document (C has a resolved letter, X is on another base) — the list reconciles the cell')
       .toHaveCount(3);
 
-    await dialog.getByTestId('afl-row').filter({ hasText: P.A.name }).click();
-    await expect(dialog, 'JCH-09: picking a row closes the dialog').toHaveCount(0, { timeout: 15_000 });
+    await overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.A.name }).click();
+    await expect(overlay, 'JCH-09: picking a row closes the overlay').toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator('app-participant-slideover').getByText(P.A.name).first(),
       'JCH-09: …and opens that participant\'s slide-over').toBeVisible({ timeout: 30_000 });
     await page.keyboard.press('Escape');
     await expect(page.locator('app-participant-slideover')).toHaveCount(0, { timeout: 10_000 });
 
-    // a zero cell has nothing to show — the dashboard must not open an empty dialog
+    // a zero cell has nothing to show — the dashboard must not open an empty overlay
     await page.getByTestId('jchd-ahcell-opportunity-both').click();
-    await expect(page.locator('app-ah-flag-list-dialog'), 'JCH-09: a 0 count opens nothing').toHaveCount(0);
+    await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: a 0 count opens nothing').toHaveCount(0);
+
+    // and the Close button dismisses an open one
+    await page.getByTestId('jchd-ahcell-critical-love').click();
+    await expect(page.getByTestId('jchd-ahd-overlay')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('jchd-ahd-close').click();
+    await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: Close dismisses the overlay').toHaveCount(0);
   });
 
   test('JCH-10 Needs-attention rows carry a chip per live condition, and clean rows carry none', async ({ page }) => {
@@ -270,6 +279,43 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(chipsOf(P.C.name), 'JCH-10: C is locked').toHaveText(['Payments locked']);
     await expect(chipsOf(P.F.name), 'JCH-10: F is only late — not a needs-attention condition, so no chips').toHaveCount(0);
     await expect(chipsOf(P.E.name), 'JCH-10: E has nothing live').toHaveCount(0);
+  });
+
+  // ===== 2026-09-23 fixes: coach-dropdown re-scope, and "JC done" excluding onboarding =====
+
+  test('JCH-11 changing the Viewing scope re-scopes the Participants table', async ({ page }) => {
+    await openDashboard(page);
+    await openParticipants(page);
+    const table = page.getByTestId('jchd-participants-table');
+    await expect(table.getByTestId('jchd-tr-070').filter({ hasText: P.X.name }),
+      'JCH-11: X is on the admin\'s base — invisible in the coach\'s own scope').toHaveCount(0);
+    const scoped = await table.getByTestId('jchd-tr-070').count();
+
+    // Fix 2026-09-23: two-way [(ngModel)] pre-wrote selectedCoachId, so onCoachChange's same-coach
+    // guard no-op'd and the table never rebuilt. Switching scope must now rebuild it.
+    await page.getByTestId('jchd-sel-002').selectOption({ label: 'All participants' });
+    await expect(table.getByTestId('jchd-tr-070').filter({ hasText: P.X.name }),
+      'JCH-11: the All scope must rebuild the table and bring in off-base participants').toHaveCount(1, { timeout: 45_000 });
+    expect(await table.getByTestId('jchd-tr-070').count(),
+      'JCH-11: All is a superset of the coach\'s own base').toBeGreaterThan(scoped);
+  });
+
+  test('JCH-12 "JC done" counts coaching sessions only — an attended onboarding call is excluded', async ({ page }) => {
+    // Seeded attended journey-coach appointments in the last 7 days: APT_DONE (coaching, B) and
+    // APT_OB_DONE (ONBOARDING, A). The JC pipeline must count the first and drop the second.
+    const attended = (await queryWhere('appointments', [['testrunid', '==', RUN], ['attended', '==', true]])) as any[];
+    const coaching = attended.filter((a) => a.onboarding !== true && a.cancelled !== true).length;
+    expect([coaching, attended.length],
+      'oracle sanity: 2 attended appointments seeded, exactly 1 of them a coaching session').toEqual([1, 2]);
+
+    // The pipeline card only fills in the ALL view (the coach's own scope never runs the appointments
+    // read — see JCH-07), so this case runs as the admin.
+    await loginAsJourneyAdmin(page);
+    await page.goto('/journey-coach-health', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journey-coach-health-dashboard')).toBeAttached({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-btn-025').locator('.jcp-num'),
+      `JCH-12: JC done last week = attended COACHING sessions only (${coaching}) — the onboarding call is not one`)
+      .toHaveText(String(coaching), { timeout: 60_000 });
   });
 
   // ---- hooks no case drives yet ----
@@ -292,7 +338,6 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     expect(page.getByTestId('jchd-ahcell-critical-both')).toBeTruthy();
     expect(page.getByTestId('jchd-ahmini-positive')).toBeTruthy();
     expect(page.getByTestId('jchd-ahmini-critattn')).toBeTruthy();
-    expect(page.getByTestId('afl-close')).toBeTruthy();
     expect(page.getByTestId('jcso-ll-showall')).toBeTruthy();
     expect(page.getByTestId('jcso-ah-toggle')).toBeTruthy();
     expect(page.getByTestId('jcso-ah-showall')).toBeTruthy();

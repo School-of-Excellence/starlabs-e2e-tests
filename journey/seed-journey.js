@@ -447,6 +447,9 @@ async function seedJourney() {
   await appt('APT_JC_OVD', HC.C.pf, { starttime: noon(-1) });
   await appt('APT_CANC', HC.A.pf, { starttime: noon(1), cancelled: true });
   await appt('APT_DONE', HC.B.pf, { starttime: noon(-1), attended: true });
+  //    An ATTENDED ONBOARDING call. Without it "JC done" reads the same whether or not the pipeline
+  //    excludes onboarding (fix 2026-09-23) — this is the doc that must be left OUT of the count.
+  await appt('APT_OB_DONE', HC.A.pf, { starttime: noon(-1), attended: true, onboarding: true });
 
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
