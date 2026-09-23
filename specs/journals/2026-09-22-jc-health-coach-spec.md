@@ -87,3 +87,17 @@ Not executed locally (no `environment.emulator.ts`): the gate/emulator run is th
   which is the privacy leak the fix closes. The oracle filters the same docs by the coach's roster, so it
   still derives the number rather than restating it.
 - **JCH-12 moved from admin to the coach's own scope** — the pipeline card exists there now.
+
+## Sibling screen — journeycoach-dashboard redesign (JCD-01, 2026-09-23)
+App `c67aae29` (pulled into dynamic-studio-update) redesigned `/JourneycoachDashboard-new`. 33 of the
+216 `jcd-*` ids retired with the controls they were on; the `jcd` addressable list in
+`onboarding-controls/dashboards.spec.ts` was REGENERATED from the template (214 ids) rather than edited
+by hand, so it can never drift from the markup again.
+
+**JCD-01** (in `coach-dashboards.spec.ts`, where the behavioural cases live — not in the addressable
+file) drives the redesign's new Participant Health board: the Tickets tile counts PEOPLE with an open
+ticket, derived independently from the same `participant metadata` docs. Negative control: exactly ONE
+seeded participant (JCH Xray) carries `customersupporttickets: 2` and every other sits at 0, so a green
+assertion cannot come from "nobody has tickets". Xray is on the ADMIN's base, so this cannot move any
+coach-scoped JC-Health number (JCH-01..12) — that was the constraint that decided which participant got
+the tickets.

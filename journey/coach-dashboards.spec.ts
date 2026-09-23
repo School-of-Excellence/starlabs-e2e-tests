@@ -17,6 +17,8 @@ import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin } from './
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
+const RUN = process.env.JNY_RUNID || 'jny';
+
 let guard: ConsoleGuard;
 
 test.beforeEach(async ({ page }) => {
@@ -118,5 +120,38 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
       host.getByText(/Loading Dashboard/i),
       'JP-21: the loading panel must clear once the app\'s own reads resolve',
     ).toHaveCount(0, { timeout: 60_000 });
+  });
+
+  // ===========================================================================================
+  // JCD-01 — the redesigned Participant Health board (app c67aae29, Joshua's iOS redesign)
+  // ===========================================================================================
+  //
+  // The redesign replaced the old month/queue filter blocks with a Participant Health board whose tiles
+  // the component derives in loadParticipantHealth(): it reads EVERY `participant metadata` doc, then
+  // pulls clientissue / healthtracker / appointments scoped to those ids. The Tickets tile counts
+  // PEOPLE with at least one open ticket — openTix[pid] from clientissue, falling back to the doc's own
+  // `customersupporttickets`.
+  //
+  // ANTI-CIRCULARITY: the seed writes only raw metadata; the count is the app's. The oracle re-derives
+  // it here from the same docs. NEGATIVE CONTROL: exactly one seeded participant (JCH Xray) carries
+  // tickets — every other participant sits at 0, so a passing assertion cannot come from "nobody has
+  // tickets". Xray is on the ADMIN's base, so this moves no coach-scoped JC-Health number.
+  test('JCD-01 the Participant Health board counts PEOPLE with open tickets', async ({ page }) => {
+    const metas = (await queryWhere('participant metadata', [['testrunid', '==', RUN]])) as any[];
+    const withTickets = metas.filter((m) => Number(m.customersupporttickets ?? 0) > 0);
+    expect(withTickets.length, 'oracle sanity: exactly one seeded participant carries open tickets').toBe(1);
+    expect(metas.length, 'oracle sanity: the rest of the seeded base sits at 0 tickets').toBeGreaterThan(1);
+
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard'), 'JCD-01: the dashboard must mount').toBeAttached({ timeout: 30_000 });
+
+    await expect(
+      page.getByTestId('jcd-ph-tickets').locator('.v'),
+      `JCD-01: the Tickets tile counts people with an open ticket (${withTickets.length}), not tickets or participants`,
+    ).toHaveText(String(withTickets.length), { timeout: 60_000 });
+
+    // the board's own link into the JC-Health screen — the redesign's entry point to the detail view
+    await expect(page.getByTestId('jcd-ph-healthboard'), 'JCD-01: the Health board link renders').toBeVisible();
   });
 });

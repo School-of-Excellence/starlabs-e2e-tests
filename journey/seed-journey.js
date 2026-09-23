@@ -408,7 +408,12 @@ async function seedJourney() {
     await db.collection('participant metadata').doc(p.pf).set({
       docid: p.pf, profileid: p.pf, name: p.name, email: `${p.pf}@example.com`,
       coachedby: [coachRef(p.coach)], customerstatus: p.status, financialstatus: p.fin,
-      subscriptionend: days(200), customersupporttickets: 0, activejourney: ID.J1,
+      subscriptionend: days(200),
+      // X is the ONLY participant with open tickets (JCD-01, the journeycoach-dashboard health board);
+      // everyone else sits at 0 so a green tickets tile cannot come from "nobody has tickets". X is on
+      // the ADMIN's base, so this cannot move any coach-scoped JC-Health number (JCH-01..12).
+      customersupporttickets: p.pf === `${TESTRUNID}_pf_hc_x` ? 2 : 0,
+      activejourney: ID.J1,
       pp_totalpaid: '0', pp_totalpurchasevalue: '0', ...tag,
     });
   }
