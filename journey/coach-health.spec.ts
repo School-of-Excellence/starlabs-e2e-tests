@@ -40,7 +40,7 @@
 // coach who is DENIED `love letter` / `ask AH` (the dashboard then drops A&H signals silently) cannot be
 // reproduced in this lane.
 import { test, expect, Page } from '@playwright/test';
-import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, loginAsJourneyAdmin, journeyProfileIds, jchParticipants as P, jchTexts } from './support/journey';
+import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, journeyProfileIds, jchParticipants as P, jchTexts } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
@@ -188,17 +188,14 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(wrap).toHaveAttribute('data-theme', 'light');
   });
 
-  // KNOWN DEFECT — expected to fail until fixed (convention: JP-20 / CN-20).
-  // In a coach's own scope (full mode) the dashboard never runs loadContactEvents(): it is only called
-  // from the All/Unassigned background load and from the Coaches tab. jcPendingEvents stays empty and
-  // contactDataLoaded never flips, so the Schedule card sits on "loading…" with zeros (the JC pipeline
-  // card has the same gap). When the load is fixed this starts passing and test.fail() must come off.
+  // Was test.fail() until 2026-09-23: a coach's own scope never ran loadContactEvents() (only the
+  // All/Unassigned background load and the Coaches tab did), so this card sat on "loading…" with zeros.
+  // loadFullPortfolio now kicks the same background load, and the case asserts the real buckets.
   test('JCH-07 Schedule splits Journey Coaching from Onboarding and drops cancelled / attended sessions', async ({ page }) => {
-    test.fail();
     await openDashboard(page);
     const card = page.getByTestId('jchd-sched-card');
     await expect(card, 'JCH-07: the Schedule card renders on the Summary view').toBeVisible({ timeout: 30_000 });
-    await expect(card.getByText('loading…'), 'JCH-07: the appointments read must complete in coach scope').toHaveCount(0, { timeout: 20_000 });
+    await expect(card.getByText('loading…'), 'JCH-07: the appointments read must complete in coach scope').toHaveCount(0, { timeout: 60_000 });
     await expect(page.getByTestId('jchd-sched-jc-today').locator('.jcp-num'), 'JCH-07: nothing is due today').toHaveText('0');
     await expect(page.getByTestId('jchd-sched-jc-week').locator('.jcp-num'), 'JCH-07: JC tomorrow (A); the cancelled one is dropped').toHaveText('1');
     await expect(page.getByTestId('jchd-sched-jc-overdue').locator('.jcp-num'), 'JCH-07: JC yesterday unattended (C); the attended one is dropped').toHaveText('1');
@@ -213,23 +210,25 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
 
   // ===== Joshua's 2026-09-22 follow-ups: A&H analytics card + its drill-down, NA reason chips =====
 
-  test('JCH-08 the A&H analytics card counts source documents in the 180-day window, by flag and source', async ({ page }) => {
-    const docs = await ahDocsInWindow();
+  test('JCH-08 the A&H analytics card counts the COACH\'S OWN base inside the 180-day window', async ({ page }) => {
+    // Scoped since 2026-09-23: the card used to read org-wide and showed a coach other coaches' numbers.
+    const base = new Set((await coachBase()).map((m) => m.id));
+    const docs = (await ahDocsInWindow()).filter((d) => base.has(d.profileid));
     const n = (coll: 'ask AH' | 'love letter' | 'both', pred: (d: any) => boolean) =>
       docs.filter((d) => (coll === 'both' || d._coll === coll) && pred(d)).length;
     const expected = {
-      loveCritical: n('love letter', (d) => d.critical === true),          // A + C(resolved) + X
+      loveCritical: n('love letter', (d) => d.critical === true),          // A + C(resolved); X is off-base
       askTagged: n('ask AH', (d) => d.tagged === true),                    // B
       combinedOpportunity: n('both', (d) => d.opportunity === true),       // none seeded
       resolvedCritical: n('both', (d) => d.critical === true && d.resolved === true),   // C
       unflagged: n('both', (d) => !d.liked && !d.tagged && !d.opportunity && !d.critical),
     };
-    expect(expected, 'oracle sanity: the seeded A&H world (E\'s 200-day-old critical letter is OUTSIDE the window)')
-      .toEqual({ loveCritical: 3, askTagged: 1, combinedOpportunity: 0, resolvedCritical: 1, unflagged: 1 });
+    expect(expected, 'oracle sanity: the coach\'s base only (X is on the admin\'s base; E\'s 200-day-old letter is outside the window)')
+      .toEqual({ loveCritical: 2, askTagged: 1, combinedOpportunity: 0, resolvedCritical: 1, unflagged: 1 });
 
     await openDashboard(page);
     await expect(page.getByTestId('jchd-ahcell-critical-love'),
-      'JCH-08: Love Letter · Critical counts unresolved AND resolved critical letters, but not the 200-day-old one')
+      'JCH-08: Love Letter · Critical counts unresolved AND resolved critical letters on THIS coach\'s base — not the 200-day-old one, not X')
       .toHaveText(String(expected.loveCritical), { timeout: 45_000 });
     await expect(page.getByTestId('jchd-ahcell-tagged-ask'), 'JCH-08: Ask AH · Needs Attention').toHaveText(String(expected.askTagged));
     await expect(page.getByTestId('jchd-ahcell-opportunity-both'), 'JCH-08: nothing seeded carries the opportunity flag').toHaveText('0');
@@ -240,15 +239,17 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
   test('JCH-09 clicking an A&H count lists one row per source document and opens the participant', async ({ page }) => {
     await openDashboard(page);
     const critical = page.getByTestId('jchd-ahcell-critical-love');
-    await expect(critical).toHaveText('3', { timeout: 45_000 });
+    await expect(critical, 'the scoped count: A + C, not X').toHaveText('2', { timeout: 45_000 });
     await critical.click();
 
     const overlay = page.getByTestId('jchd-ahd-overlay');
     await expect(overlay, 'JCH-09: the native drill overlay opens (was a MatDialog before 2026-09-23)').toBeVisible({ timeout: 30_000 });
-    await expect(overlay.getByTestId('jchd-ahd-count'), 'JCH-09: the overlay header repeats the clicked count').toHaveText('3');
+    await expect(overlay.getByTestId('jchd-ahd-count'), 'JCH-09: the overlay header repeats the clicked count').toHaveText('2');
     await expect(overlay.getByTestId('jchd-ahd-row'),
-      'JCH-09: ONE row per source document (C has a resolved letter, X is on another base) — the list reconciles the cell')
-      .toHaveCount(3);
+      'JCH-09: ONE row per source document (C\'s resolved letter counts; X is on another base and must not appear) — the list reconciles the cell')
+      .toHaveCount(2);
+    await expect(overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.X.name }),
+      'JCH-09: a coach cannot drill into another coach\'s participant').toHaveCount(0);
 
     await overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.A.name }).click();
     await expect(overlay, 'JCH-09: picking a row closes the overlay').toHaveCount(0, { timeout: 15_000 });
@@ -308,11 +309,9 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     expect([coaching, attended.length],
       'oracle sanity: 2 attended appointments seeded, exactly 1 of them a coaching session').toEqual([1, 2]);
 
-    // The pipeline card only fills in the ALL view (the coach's own scope never runs the appointments
-    // read — see JCH-07), so this case runs as the admin.
-    await loginAsJourneyAdmin(page);
-    await page.goto('/journey-coach-health', { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('app-journey-coach-health-dashboard')).toBeAttached({ timeout: 30_000 });
+    // Runs in the coach's own scope: since the 2026-09-23 fix that view loads the appointments too
+    // (before it, the pipeline card only ever filled in the ALL view — see JCH-07).
+    await openDashboard(page);
     await expect(page.getByTestId('jchd-btn-025').locator('.jcp-num'),
       `JCH-12: JC done last week = attended COACHING sessions only (${coaching}) — the onboarding call is not one`)
       .toHaveText(String(coaching), { timeout: 60_000 });

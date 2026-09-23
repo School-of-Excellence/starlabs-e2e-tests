@@ -77,3 +77,13 @@ JC-pipeline fix ("JC done" now excludes attended onboarding calls) was made on o
 - JCH-07 unchanged and still `test.fail()`; its row assertions are now scoped to the two Schedule
   columns, which also puts the new column hooks to work.
 Not executed locally (no `environment.emulator.ts`): the gate/emulator run is the first real run.
+
+## Fourth pass — both open defects fixed app-side (2026-09-23)
+- **JCH-07 is no longer `test.fail()`.** `loadFullPortfolio` now runs the appointments read in a coach's
+  own scope, so the Schedule card fills. Timeout raised to 60s: that read is a full-collection scan.
+- **JCH-08 / JCH-09 re-expected at the SCOPED numbers.** The A&H card follows the Viewing scope now, so
+  Love Letter · Critical is 2 (A + C) for the coach, not 3 — X is on the admin's base. This is exactly the
+  change the third-pass note predicted; JCH-09 additionally asserts X CANNOT appear in the drill list,
+  which is the privacy leak the fix closes. The oracle filters the same docs by the coach's roster, so it
+  still derives the number rather than restating it.
+- **JCH-12 moved from admin to the coach's own scope** — the pipeline card exists there now.
