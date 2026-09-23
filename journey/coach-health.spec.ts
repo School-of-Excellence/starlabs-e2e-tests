@@ -262,11 +262,16 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await page.getByTestId('jchd-ahcell-opportunity-both').click();
     await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: a 0 count opens nothing').toHaveCount(0);
 
-    // and the Close button dismisses an open one
+    // and both dismissals work: the Close button, and a click on the backdrop outside the panel
     await page.getByTestId('jchd-ahcell-critical-love').click();
     await expect(page.getByTestId('jchd-ahd-overlay')).toBeVisible({ timeout: 15_000 });
     await page.getByTestId('jchd-ahd-close').click();
     await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: Close dismisses the overlay').toHaveCount(0);
+
+    await page.getByTestId('jchd-ahcell-critical-love').click();
+    await expect(page.getByTestId('jchd-ahd-overlay')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('jchd-ahd-backdrop').click({ position: { x: 5, y: 5 } });
+    await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: a click outside the panel dismisses it').toHaveCount(0);
   });
 
   test('JCH-10 Needs-attention rows carry a chip per live condition, and clean rows carry none', async ({ page }) => {
