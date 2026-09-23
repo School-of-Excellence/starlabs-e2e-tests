@@ -452,6 +452,20 @@ async function seedJourney() {
   await appt('APT_JC_OVD', HC.C.pf, { starttime: noon(-1) });
   await appt('APT_CANC', HC.A.pf, { starttime: noon(1), cancelled: true });
   await appt('APT_DONE', HC.B.pf, { starttime: noon(-1), attended: true });
+  //    Support tickets for the JE dashboard's Participant Health board (JCD-01). X gets ONE OPEN ticket
+  //    and ONE CLOSED one: the closed doc is the negative control for "open only" (fix 5, 2026-09-23 —
+  //    the tile counts via getCountFromServer with status.status == 'open').
+  //    WHY ONE open doc and not two: the app falls back to counting PEOPLE from participant metadata
+  //    when the (clientid + status.status) composite index is absent. With exactly one open ticket on
+  //    one participant BOTH paths yield 1, so the case asserts the same number either way and can never
+  //    go green on the fallback while the real query is broken in a different direction.
+  const issue = (id, pf, status) => db.collection('clientissue').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, clientid: pf, status: { status }, title: `JCH ${status} ticket ${TESTRUNID}`,
+    created: T.fromMillis(Date.now() - 2 * 86400e3), ...tag,
+  });
+  await issue('CI_OPEN_X', HC.X.pf, 'open');
+  await issue('CI_CLOSED_X', HC.X.pf, 'closed');
+
   //    An ATTENDED ONBOARDING call. Without it "JC done" reads the same whether or not the pipeline
   //    excludes onboarding (fix 2026-09-23) — this is the doc that must be left OUT of the count.
   await appt('APT_OB_DONE', HC.A.pf, { starttime: noon(-1), attended: true, onboarding: true });
@@ -483,7 +497,8 @@ const SEEDED = [
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',
   // JC Health world (JCH-*): A&H feedback + journey-coach appointments
-  'love letter', 'ask AH', 'appointments',
+  // clientissue: the JE dashboard's Participant Health tickets tile (JCD-01)
+  'love letter', 'ask AH', 'appointments', 'clientissue',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];

@@ -101,3 +101,19 @@ seeded participant (JCH Xray) carries `customersupporttickets: 2` and every othe
 assertion cannot come from "nobody has tickets". Xray is on the ADMIN's base, so this cannot move any
 coach-scoped JC-Health number (JCH-01..12) — that was the constraint that decided which participant got
 the tickets.
+
+## JE dashboard fixes — JCD-01 rewritten, JCD-02/03 added (2026-09-23 evening)
+App `c5477756` changed three things JCD-01 depended on. The tickets tile no longer counts PEOPLE from
+participant metadata; it counts OPEN `clientissue` docs via `getCountFromServer`. The seed had no
+`clientissue` docs at all, so the old case would have read 0 and failed — rewritten rather than patched.
+
+- **Seed:** `clientissue` gets ONE OPEN ticket and ONE CLOSED ticket, both on X. The closed doc is the
+  negative control for "open only". WHY exactly one open doc: the app falls back to counting PEOPLE from
+  metadata when the `(clientid + status.status)` composite index is missing, and with one open ticket on
+  one participant BOTH paths yield 1 — so the case asserts the same number either way and cannot go
+  green on the fallback while the real query is broken in another direction. Collection added to SEEDED.
+- **JCD-02** proves the Health board link OPENS A TAB rather than navigating: it waits for the `page`
+  event, checks the popup URL, and asserts the JE dashboard is still mounted in the original tab.
+- **JCD-03** proves the Outreach row carries `priority.engine`'s reason. The hand-rolled status line it
+  replaced ("2 open tickets") never contained the arrow, so `→` is the discriminator — a text match on
+  the ticket wording alone would have passed on the old code too.

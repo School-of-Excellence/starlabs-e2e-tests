@@ -123,24 +123,22 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
   });
 
   // ===========================================================================================
-  // JCD-01 — the redesigned Participant Health board (app c67aae29, Joshua's iOS redesign)
+  // JCD-01..03 — the redesigned Participant Health board (app c67aae29 + the 6 fixes in c5477756)
   // ===========================================================================================
   //
-  // The redesign replaced the old month/queue filter blocks with a Participant Health board whose tiles
-  // the component derives in loadParticipantHealth(): it reads EVERY `participant metadata` doc, then
-  // pulls clientissue / healthtracker / appointments scoped to those ids. The Tickets tile counts
-  // PEOPLE with at least one open ticket — openTix[pid] from clientissue, falling back to the doc's own
-  // `customersupporttickets`.
+  // The board is derived in loadCoachHealthAnalytics(): every `participant metadata` doc is the roster,
+  // then healthtracker_healthstate / healthtracker_touchpoint / appointments / clientissue are read
+  // scoped to those ids. The 2026-09-23 fixes changed three things these cases pin down: tickets are
+  // now an OPEN-only server-side count, the Health board link opens in a NEW TAB, and the Outreach rows
+  // carry priority.engine's reason string instead of a hand-rolled status line.
   //
-  // ANTI-CIRCULARITY: the seed writes only raw metadata; the count is the app's. The oracle re-derives
-  // it here from the same docs. NEGATIVE CONTROL: exactly one seeded participant (JCH Xray) carries
-  // tickets — every other participant sits at 0, so a passing assertion cannot come from "nobody has
-  // tickets". Xray is on the ADMIN's base, so this moves no coach-scoped JC-Health number.
-  test('JCD-01 the Participant Health board counts PEOPLE with open tickets', async ({ page }) => {
-    const metas = (await queryWhere('participant metadata', [['testrunid', '==', RUN]])) as any[];
-    const withTickets = metas.filter((m) => Number(m.customersupporttickets ?? 0) > 0);
-    expect(withTickets.length, 'oracle sanity: exactly one seeded participant carries open tickets').toBe(1);
-    expect(metas.length, 'oracle sanity: the rest of the seeded base sits at 0 tickets').toBeGreaterThan(1);
+  // ANTI-CIRCULARITY: the seed writes raw clientissue / metadata docs; every number and string asserted
+  // is the app's own derivation, re-derived here from the same docs.
+  test('JCD-01 the Participant Health tickets tile counts OPEN tickets only', async ({ page }) => {
+    const issues = (await queryWhere('clientissue', [['testrunid', '==', RUN]])) as any[];
+    const open = issues.filter((i) => (i.status?.status ?? '').toLowerCase() === 'open');
+    expect([open.length, issues.length],
+      'oracle sanity: one OPEN ticket seeded, plus a CLOSED one that must be excluded').toEqual([1, 2]);
 
     await loginAsJourneyAdmin(page);
     await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
@@ -148,10 +146,35 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
 
     await expect(
       page.getByTestId('jcd-ph-tickets').locator('.v'),
-      `JCD-01: the Tickets tile counts people with an open ticket (${withTickets.length}), not tickets or participants`,
-    ).toHaveText(String(withTickets.length), { timeout: 60_000 });
+      `JCD-01: the Tickets tile counts OPEN clientissue docs (${open.length}) — the closed one must not count`,
+    ).toHaveText(String(open.length), { timeout: 60_000 });
+  });
 
-    // the board's own link into the JC-Health screen — the redesign's entry point to the detail view
-    await expect(page.getByTestId('jcd-ph-healthboard'), 'JCD-01: the Health board link renders').toBeVisible();
+  test('JCD-02 the Health board link opens the JC-Health screen in a NEW TAB', async ({ page, context }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    const before = context.pages().length;
+    const [popup] = await Promise.all([
+      context.waitForEvent('page', { timeout: 30_000 }),
+      page.getByTestId('jcd-ph-healthboard').click(),
+    ]);
+    expect(popup.url(), 'JCD-02: the new tab lands on the JC-Health dashboard').toContain('/journey-coach-health');
+    expect(context.pages().length, 'JCD-02: a tab was ADDED — the dashboard is not navigated away from').toBe(before + 1);
+    await expect(page.locator('app-journeycoach-dashboard'), 'JCD-02: the JE dashboard is still mounted in the original tab').toBeAttached();
+    await popup.close();
+  });
+
+  test('JCD-03 an Outreach row states WHY, using the shared priority reason', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    // priority.engine builds "<driver> + <driver> -> <action>"; the hand-rolled status line it replaced
+    // (e.g. "2 open tickets") never carried the arrow, so the arrow is what proves the swap.
+    const row = page.getByTestId('jcd-ph-needsattn-row').first();
+    await expect(row, 'JCD-03: at least one participant needs outreach in the seeded base').toBeVisible({ timeout: 60_000 });
+    await expect(row, 'JCD-03: the row carries priority.engine\'s reason, not a bare status line').toContainText('→');
   });
 });
