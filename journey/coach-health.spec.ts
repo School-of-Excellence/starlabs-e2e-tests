@@ -270,7 +270,13 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
 
     await page.getByTestId('jchd-ahcell-critical-love').click();
     await expect(page.getByTestId('jchd-ahd-overlay')).toBeVisible({ timeout: 15_000 });
-    await page.getByTestId('jchd-ahd-backdrop').click({ position: { x: 5, y: 5 } });
+    // Click the backdrop at its LEFT EDGE, MID-HEIGHT. Not the top-left corner: the backdrop is
+    // z-index 60 and the app's mat-toolbar sits above it, so a click up there lands on the toolbar
+    // ("<mat-toolbar …> intercepts pointer events" — the real failure this replaces). Mid-height the
+    // backdrop is genuinely the top-most element, and the panel is centred, so the point is outside it.
+    const backdrop = page.getByTestId('jchd-ahd-backdrop');
+    const box = await backdrop.boundingBox();
+    await backdrop.click({ position: { x: 8, y: Math.round((box?.height ?? 600) / 2) } });
     await expect(page.getByTestId('jchd-ahd-overlay'), 'JCH-09: a click outside the panel dismisses it').toHaveCount(0);
   });
 
