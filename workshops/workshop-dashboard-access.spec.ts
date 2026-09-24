@@ -294,8 +294,12 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     const legend = page.getByTestId('ws-access-legend');
     await expect(legend, 'WDA-10: the legend is present').toBeVisible();
     await legend.click();
+    // Match the bold LABEL exactly: `hasText` is a substring match and several explanations
+    // mention another action by name ("…the participant progress list…"), so filtering the whole
+    // <li> by phrase resolves to more than one element.
     for (const label of ['Send communication', 'Participant progress', 'Extend workshop access', 'All VideoAsk']) {
-      await expect(page.locator('.acc-legend li', { hasText: label }), `WDA-10: legend explains "${label}"`).toBeVisible();
+      await expect(page.locator('.acc-legend li b').filter({ hasText: new RegExp(`^${label}$`) }),
+        `WDA-10: legend explains "${label}"`).toBeVisible();
     }
     // [ASSERT] the seeded person appears with exactly the seeded number of ticks — the editor reads the
     // same document the dashboard does.

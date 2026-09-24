@@ -134,6 +134,10 @@ const ROUTES = [
   { route: '/workshops', label: 'Workshops' },
   { route: '/create-workshop', label: 'Create Workshop' },
   { route: '/workshopconfig', label: 'Workshop Configuration' },
+  // The older editor on its own URL. It is a second way onto the same workshop document, so the
+  // access spec drives it — and authGuard denies any route with no entry here (auth.guard.ts:48),
+  // which would block the case before the screen's own gate could answer.
+  { route: '/workshopconfigold', label: 'Workshop Configuration (legacy)' },
   { route: '/workshop_dashboard', label: 'Workshop Dashboard' },
   { route: '/engagementdashboard', label: 'Engagement Dashboard' },
   { route: '/bigengagementdashboard', label: 'Capacity / BIG Engagement Dashboard' },
