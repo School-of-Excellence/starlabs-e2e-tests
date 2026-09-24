@@ -13,9 +13,10 @@
 import { test, expect } from '@playwright/test';
 import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetHomeWidgetAds,
+  wsUpcomingCostTitle, cleanUpcomingCostWidget,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, pollUntil } from '../queue/support/firestore-admin';
+import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 /** Open the "Upcoming Workshops" tab — tab 1 is "Create / Assign EiFlix Home", not a table. */
 async function openComingSoonTab(page: import('@playwright/test').Page) {
@@ -131,5 +132,59 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     // Restore it so a later WS-18 run still has its negative control (suite order is serial, but this
     // keeps the file independent of ordering).
     await resetHomeWidgetAds();
+  });
+  // ===========================================================================================
+  // WS-38 — Cost is optional on an upcoming workshop, and an unset Cost is stored as ""
+  // ===========================================================================================
+  // Two branches in one action, both falsifiable:
+  //   · Cost carried Validators.required until 2026-09-24. If it still did, save() would
+  //     early-return on form.invalid (createupcomingworkshops.component.ts:777) and NO document
+  //     would ever appear — the poll below would time out rather than pass.
+  //   · The save normalises with `(raw.cost || '').toLowerCase()` (ts:808). A strict toBe('')
+  //     fails on null, on undefined and on a missing field, which is exactly the distinction
+  //     asked for: empty string, never null.
+  // The Cost control is never touched — this is the "did not select anything" path.
+  test('WS-38 an upcoming workshop saves with no Cost chosen, and stores it as an empty string', async ({ page }) => {
+    // [PRECONDITION] no leftover from an earlier run; the app generates the id, so title is the handle.
+    await cleanUpcomingCostWidget();
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixhomeconfig', { waitUntil: 'domcontentloaded' });
+    await openComingSoonTab(page);
+
+    await page.getByTestId('upc-open-dialog-1').click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog, 'WS-38: the add dialog must open').toBeVisible({ timeout: 30_000 });
+
+    // Event date — the input is readonly and opens the picker; take today's cell.
+    await dialog.getByTestId('cre-picker-2').click();
+    await page.locator('.mat-calendar-body-today').first().click();
+    await expect(dialog.getByTestId('cre-picker-2'), 'WS-38: a date was chosen').not.toHaveValue('');
+
+    // The other two required fields. Cost is deliberately left alone.
+    await dialog.locator('input[formcontrolname="type"]').fill('workshop');
+    await dialog.locator('input[formcontrolname="title"]').fill(wsUpcomingCostTitle);
+
+    // [REAL-UI] with Cost untouched, the form is submittable — the button is the app's own
+    // readout of the remaining validators.
+    const submit = dialog.getByTestId('cre-button-9');
+    await expect(submit, 'WS-38: Cost does not block the save').toBeEnabled();
+    await submit.click();
+    await expect(dialog, 'WS-38: the dialog closes on a successful save').toBeHidden({ timeout: 30_000 });
+
+    // [ASSERT] the document the APP created, found by the title we typed — read back from
+    // Firestore, never from the screen.
+    const created = await pollUntil(
+      async () => (await queryWhere('eiflixhomewidgets', [['title', '==', wsUpcomingCostTitle]]))[0] || null,
+      (d: any) => d !== null,
+      { label: 'WS-38: the app created the upcoming workshop', timeoutMs: 30_000 },
+    );
+    expect(created, 'WS-38: the save went through with no Cost chosen').toBeTruthy();
+    expect((created as any).widgettype, 'WS-38: it is a comingsoon widget').toBe('comingsoon');
+    // The whole point: an empty string, and not null, undefined or a missing key.
+    expect((created as any).cost, 'WS-38: an unset Cost is stored as an empty string').toBe('');
+    expect((created as any).cost, 'WS-38: an unset Cost is NOT null').not.toBeNull();
+
+    await cleanUpcomingCostWidget();
   });
 });

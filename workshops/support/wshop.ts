@@ -646,3 +646,22 @@ export async function resetWorkshopAdminLists(): Promise<void> {
     _testdata: true,
   });
 }
+
+// =================================================================================================
+// 2026-09-24 — Cost is optional on an upcoming workshop (eiflixhomeconfig).
+// =================================================================================================
+
+/** The title WS-34 types, so the doc the APP creates can be found and cleaned up by it. */
+export const wsUpcomingCostTitle = `WS Cost Unset ${RUN}`;
+
+/**
+ * Delete any `eiflixhomewidgets` doc carrying WS-34's title. The app generates the id and writes no
+ * testrunid, so the run-scoped sweep cannot see it — the title is the only handle. PRECONDITION and
+ * teardown only; the case never asserts on this.
+ */
+export async function cleanUpcomingCostWidget(): Promise<void> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('eiflixhomewidgets')
+    .where('title', '==', wsUpcomingCostTitle).get().catch(() => ({ docs: [] as any[] }));
+  for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
