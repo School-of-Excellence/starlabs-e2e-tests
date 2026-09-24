@@ -1,0 +1,157 @@
+// content-analytics-v2-addressable.spec.ts — ADDRESSABLE registration for ContentAnalyticsV2Component.
+//
+// Prefix: cav — content-analytics-v2.component.html (starlabs-angular b471a730, "Content Analytics v2: all six
+// tabs on live Firestore, in one component"; design: specs/journals/2026-09-22-content-analytics-v2-design.md).
+//
+// WHY fixme, not behavioural: the component is NOT ROUTABLE on charan-release — its `contentanalytics` route in
+// app.routes.ts is commented out and /contentanalytics still loads the v1 ContentAnalyticsComponent (covered by
+// content-analytics.spec.ts). No page can mount v2, so nothing here can run. Swapping the live route is a product
+// decision (operator, 2026-09-24: "cover what's reachable"). When v2 is routed, replace this block with
+// behavioural cases seeded in seed-content.js — period windows, the six tabs, filters, drill-downs, selection +
+// bulk actions — and delete this file.
+//
+// The ids are whole literals (the readiness scanner credits only literal getByTestId).
+import { test, expect } from '@playwright/test';
+
+test.fixme('CAV-ADDR1 content-analytics-v2 hooks addressable (deferred behavioral: component not routed)', async ({ page }) => {
+  expect(page.getByTestId('cav-state-error')).toBeTruthy();
+  expect(page.getByTestId('cav-state-loading')).toBeTruthy();
+  expect(page.getByTestId('cav-state-empty')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tag-views')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tag-viewers')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tag-repeat')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tag-done')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tag-mid')).toBeTruthy();
+  expect(page.getByTestId('cav-root')).toBeTruthy();
+  expect(page.getByTestId('cav-head-export')).toBeTruthy();
+  expect(page.getByTestId('cav-period-7')).toBeTruthy();
+  expect(page.getByTestId('cav-period-14')).toBeTruthy();
+  expect(page.getByTestId('cav-period-30')).toBeTruthy();
+  expect(page.getByTestId('cav-period-90')).toBeTruthy();
+  expect(page.getByTestId('cav-period-picker')).toBeTruthy();
+  expect(page.getByTestId('cav-period-from')).toBeTruthy();
+  expect(page.getByTestId('cav-period-to')).toBeTruthy();
+  expect(page.getByTestId('cav-period-live')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-log')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-video')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-person')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-mode')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-rec')).toBeTruthy();
+  expect(page.getByTestId('cav-tab-tier')).toBeTruthy();
+  expect(page.getByTestId('cav-tile-viewers')).toBeTruthy();
+  expect(page.getByTestId('cav-tile-views')).toBeTruthy();
+  expect(page.getByTestId('cav-tile-completed')).toBeTruthy();
+  expect(page.getByTestId('cav-alltime')).toBeTruthy();
+  expect(page.getByTestId('cav-alltime-views')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-search')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-source')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-status')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-platform')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-min')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-chip-x')).toBeTruthy();
+  expect(page.getByTestId('cav-filter-clear')).toBeTruthy();
+  expect(page.getByTestId('cav-cap-note')).toBeTruthy();
+  expect(page.getByTestId('cav-log-sort')).toBeTruthy();
+  expect(page.getByTestId('cav-log-row')).toBeTruthy();
+  expect(page.getByTestId('cav-log-more')).toBeTruthy();
+  expect(page.getByTestId('cav-video-band-all')).toBeTruthy();
+  expect(page.getByTestId('cav-video-band-none')).toBeTruthy();
+  expect(page.getByTestId('cav-video-band-low')).toBeTruthy();
+  expect(page.getByTestId('cav-video-band-ok')).toBeTruthy();
+  expect(page.getByTestId('cav-video-sort')).toBeTruthy();
+  expect(page.getByTestId('cav-video-row')).toBeTruthy();
+  expect(page.getByTestId('cav-video-insights')).toBeTruthy();
+  expect(page.getByTestId('cav-video-sub-row')).toBeTruthy();
+  expect(page.getByTestId('cav-person-selall')).toBeTruthy();
+  expect(page.getByTestId('cav-person-sort')).toBeTruthy();
+  expect(page.getByTestId('cav-person-row')).toBeTruthy();
+  expect(page.getByTestId('cav-person-sel')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-person-source')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-person-content')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-person-views')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-loading')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-empty')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-win-7')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-win-10')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-win-14')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-win-30')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-mode-movers')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-mode-movers-all')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-loading')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-by-event')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-by-queue')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-by-other')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-activity')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-product')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-mode')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-partial')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-scope-plays')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-list-people')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-list-content')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-selall')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-row')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-sel')).toBeTruthy();
+  expect(page.getByTestId('cav-mode-content-row')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-mode-plays')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-mode-viewers')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-pick')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-error')).toBeTruthy();
+  expect(page.getByTestId('cav-scope-empty')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-loading')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-empty')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-win-7')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-win-10')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-win-14')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-win-30')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-closing')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-closing-all')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-open')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-pushed-people')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-pushed')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-noclose')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-item-people')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-item-pushes')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-list-people')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-list-content')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-selall')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-row')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-selcol')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-sel')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-row-pushed')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-row-completed')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-row-missed')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-row-closing')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-exp')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-exp-items')).toBeTruthy();
+  expect(page.getByTestId('cav-rec-content-row')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-rec-content-plays')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-loading')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-empty')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-chip-all')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-chip')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-overview-row')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tier-overview-people')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-list-people')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-list-series')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-selall')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-row')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-sel')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-alltime')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-more')).toBeTruthy();
+  expect(page.getByTestId('cav-tier-series-row')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tier-series-access')).toBeTruthy();
+  expect(page.getByTestId('cav-dnum-tier-series-fin')).toBeTruthy();
+  expect(page.getByTestId('cav-ins-modal')).toBeTruthy();
+  expect(page.getByTestId('cav-ins-close')).toBeTruthy();
+  expect(page.getByTestId('cav-act-bar')).toBeTruthy();
+  expect(page.getByTestId('cav-act-clear')).toBeTruthy();
+  expect(page.getByTestId('cav-act-whatsapp')).toBeTruthy();
+  expect(page.getByTestId('cav-act-email')).toBeTruthy();
+  expect(page.getByTestId('cav-act-notification')).toBeTruthy();
+  expect(page.getByTestId('cav-drill-modal')).toBeTruthy();
+  expect(page.getByTestId('cav-drill-close')).toBeTruthy();
+  expect(page.getByTestId('cav-drill-row')).toBeTruthy();
+  expect(page.getByTestId('cav-alltime-modal')).toBeTruthy();
+  expect(page.getByTestId('cav-alltime-close')).toBeTruthy();
+  expect(page.getByTestId('cav-alltime-row')).toBeTruthy();
+});

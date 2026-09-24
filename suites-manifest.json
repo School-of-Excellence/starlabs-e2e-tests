@@ -386,6 +386,7 @@
       "ciReady": true,
       "appPaths": [
         "src/app/Participants Profile Management/**",
+        "src/app/Participant Intelligence/**",
         "src/app/ProfilePicture/**",
         "!**/*.component.spec.ts",
         "src/app/AppEngagement/app-action-pending/**",
