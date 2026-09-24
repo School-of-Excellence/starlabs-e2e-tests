@@ -158,7 +158,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 | **workshops** | `playwright.workshops.config.ts` | 14 | 4 | 0 | Workshop authoring, scheduling, attendance |
 | **comms** | `playwright.comms.config.ts` | 10 | 2 | 7 | Notifications, templates, broadcasts |
 | **support** | `playwright.support.config.ts` | 12 | 3 | 3 | Tickets, support chat, blocked messages |
-| **profiles** | `playwright.profiles.config.ts` | 85 | 11 | 0 | Profile data, analytics, `*_to_pmd` CF effects, bulk-add-products, view-participants-form filters, participant-intelligence (emulator 2026-09-25; PA-CF-* need the functions emulator) |
+| **profiles** | `playwright.profiles.config.ts` | 85 | 11 | 0 | Profile data, analytics, `*_to_pmd` CF effects, view-participants-form filters, participant-intelligence (emulator 2026-09-25; PA-CF-* need the functions emulator) |
 | **evomap** | `playwright.evomap.config.ts` | 13 | 1 | 0 | Evolution mapping authoring + render |
 | **authroles** | `playwright.authroles.config.ts` | 18 | 1 | 2 | Login gate, data-driven authGuard, nav visibility |
 | **journey** | `playwright.journey.config.ts` | 81 | 27 | 0 | Purchase/onboard, sales-lead, product-delivery*, JC health, FTO / team-evolution dashboard (JTED) |

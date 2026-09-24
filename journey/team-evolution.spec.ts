@@ -13,10 +13,12 @@
 //
 // SEEDED WORLD (seed-journey.js step 7, own run tag `<run>_fto`, see seedFto()). The admin logs in; the
 // screen scopes itself to users_roles.ahmember == true, then to the chosen DFU product:
-//   ONG      AH · active on FTO · PP ongoing + a COMPLETED PP · 3 delivery steps (completed / ready / none)
-//   NS       AH · active on FTO (DocumentReference) · 'EI Diagnostics' step READY
+//   ONG      AH · active on FTO · PP ongoing · 3 delivery steps (completed / ready / none)
+//   NS       AH · active on FTO · 'EI Diagnostics' step READY
 //   DIAGDONE AH · active on FTO · 'EI Diagnostics' COMPLETED, a session READY
-//   DONE     AH · active + CONSUMED on FTO · no ongoing PP
+//   DONE     AH · PP ongoing + a COMPLETED PP → active + CONSUMED on FTO
+// The metadata equals what the productsdata_to_pmd Cloud Function derives from the PP rows, so the world
+// is identical in the functions-emulator (CI) and firestore-only (local) lanes.
 //   NOSTEPS  AH · active on FTO · PP ongoing, no delivery-sequence doc
 //   OTHER    AH · active on a NON-DFU product only
 //   NOTAH    no users_roles doc      · active on FTO (+ a diagnostics-ready sequence)
@@ -34,7 +36,7 @@
 //   DFU picker      — the NDFU product, and the suite's untyped P1
 //   Not started     — DIAGDONE (diagnostics done; the READY step is not a diagnostic), NOTAH (not AH)
 //   Completed       — every AH member active but not consumed
-//   Product count   — ONG's second participantsproduct is 'completed' (query keeps ongoing|initiated)
+//   Product count   — DONE's second participantsproduct is 'completed' (query keeps ongoing|initiated)
 //
 // NOT COVERED — deliberately (test.fixme below, with the reason):
 //   Needs attention: the rule reads `appointmentend`/`endtime` off the deliverable's deliveryref, and in
@@ -179,9 +181,11 @@ test.describe('Journey — Team Evolution / FTO dashboard (DFU picker, status ti
     await pickFto(page);
 
     const ong = memberRow(page, P.ONG.name);
-    await expect(ong, 'JTED-05: ONG keeps ONE product — its completed participantsproduct is not ongoing')
-      .toContainText(`${o.ppCount[P.ONG.name]} product`);
-    expect(o.ppCount[P.ONG.name]).toBe(1);
+    expect(o.ppCount[P.ONG.name], 'JTED-05: oracle sanity').toBe(1);
+    expect(o.ppCount[P.DONE.name], 'JTED-05: DONE has 2 rows but only 1 is ongoing').toBe(1);
+    await expect(ong).toContainText(`${o.ppCount[P.ONG.name]} product`);
+    await expect(memberRow(page, P.DONE.name), 'JTED-05: DONE\'s completed participantsproduct is not a product row')
+      .toContainText(`${o.ppCount[P.DONE.name]} product`);
     const totalProducts = Object.values(o.ppCount).reduce((a, b) => a + b, 0);
     await expect(page.getByTestId('jted-ov-product'), 'JTED-05: one product row per ongoing|initiated participantsproduct')
       .toHaveCount(totalProducts);

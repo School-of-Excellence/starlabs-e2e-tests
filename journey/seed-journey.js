@@ -496,15 +496,24 @@ async function seedJourney() {
 // and gets its own teardown pass below.
 //
 // Every rule has something it must EXCLUDE:
-//   ONG      AH · active on FTO · PP ongoing + a COMPLETED PP (status filter must drop it) · 3 steps
-//   NS       AH · active on FTO (as a DocumentReference) · diagnostics step READY → Not started
+//   ONG      AH · active on FTO · PP ongoing · 3 steps
+//   NS       AH · active on FTO · diagnostics step READY → Not started
 //   DIAGDONE AH · active on FTO · diagnostics step COMPLETED, next step ready → NOT Not started
-//   DONE     AH · active + CONSUMED on FTO → Completed · no ongoing PP
+//   DONE     AH · PP ongoing + a COMPLETED PP → active + CONSUMED → Completed; the completed PP must
+//            not render as a product row (query keeps ongoing|initiated)
 //   NOSTEPS  AH · active on FTO · PP ongoing, no delivery-sequence doc → "No delivery steps yet."
 //   OTHER    AH · active on a NON-DFU product only → not in the FTO list; still an A&H card
 //   NOTAH    NOT an AH member (no users_roles) · active on FTO → must never render
 //   ROLEOFF  users_roles with ahmember:FALSE · active on FTO → must never render (flag, not doc, decides)
 //   P_NDFU   products type 'NDFU' → must never reach the DFU picker
+//
+// CF-CONSISTENT (2026-09-25): in CI the functions emulator runs productsdata_to_pmd on every
+// participantsproduct write and REBUILDS activeproduct / consumedproducts from the rows, via a query with
+// orderBy('sequenceorder') — rows without `sequenceorder` are dropped, which emptied everyone's
+// activeproduct in the first CI run. So every PP carries `sequenceorder` (real rows always do), and the
+// metadata below is exactly what the CF would derive from those rows: the world is the same whether or not
+// Functions run. Products carry an `id` field like the real create dialog writes — delivery-dashboard-clone
+// calls doc('products', data.id) on every DFU product and threw on an id-less one.
 const FTO_RUN = `${TESTRUNID}_fto`;
 const FTO = {
   P_DFU: `${FTO_RUN}_P_DFU`, P_NDFU: `${FTO_RUN}_P_NDFU`,
@@ -523,8 +532,8 @@ async function seedFto(db, T) {
   const product = (id) => db.collection('products').doc(id);
   const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
 
-  await set('products', FTO.P_DFU, { product: FTO.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
-  await set('products', FTO.P_NDFU, { product: FTO.names.nonDfu, type: 'NDFU', atcmodel: null, mode: 'online' });
+  await set('products', FTO.P_DFU, { id: FTO.P_DFU, product: FTO.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+  await set('products', FTO.P_NDFU, { id: FTO.P_NDFU, product: FTO.names.nonDfu, type: 'NDFU', atcmodel: null, mode: 'online' });
   // 'EI Diagnostics' is one of the component's literal diagnosticsArray names — the Not-started rule keys on it.
   await set('appointmenttype', FTO.AT_DIAG, { appointmenttype: 'EI Diagnostics' });
   await set('appointmenttype', FTO.AT_SESSION, { appointmenttype: FTO.names.session });
@@ -543,7 +552,7 @@ async function seedFto(db, T) {
     activeproduct, consumedproducts, customerstatus: 'active',
   });
   await meta('ONG', [FTO.P_DFU]);
-  await meta('NS', [product(FTO.P_DFU)]);          // the DocumentReference branch of matchesProductId
+  await meta('NS', [FTO.P_DFU]);
   await meta('DIAGDONE', [FTO.P_DFU]);
   await meta('DONE', [FTO.P_DFU], [FTO.P_DFU]);
   await meta('NOSTEPS', [FTO.P_DFU]);
@@ -551,13 +560,20 @@ async function seedFto(db, T) {
   await meta('NOTAH', [FTO.P_DFU]);
   await meta('ROLEOFF', [FTO.P_DFU]);
 
-  const pp = (id, k, status) => set('participantsproduct', id, { profileid: ftoPf(k), productref: product(FTO.P_DFU), status });
+  // Metadata above == what productsdata_to_pmd derives from these rows (see CF-CONSISTENT note).
+  const pp = (id, k, status, seq = 0, prod = FTO.P_DFU) => set('participantsproduct', id, {
+    profileid: ftoPf(k), productref: product(prod), status, sequenceorder: seq,
+    statusdate: { [status]: T.fromMillis(Date.now() - 20 * 86400e3) },
+  });
   await pp(`${FTO_RUN}_PP_ONG`, 'ONG', 'ongoing');
-  await pp(`${FTO_RUN}_PP_ONG_OLD`, 'ONG', 'completed');   // status filter must drop it
   await pp(`${FTO_RUN}_PP_NS`, 'NS', 'initiated');
   await pp(`${FTO_RUN}_PP_DIAGDONE`, 'DIAGDONE', 'ongoing');
+  await pp(`${FTO_RUN}_PP_DONE`, 'DONE', 'ongoing');
+  await pp(`${FTO_RUN}_PP_DONE_OLD`, 'DONE', 'completed', 1);   // → consumed; status filter must drop the row
   await pp(`${FTO_RUN}_PP_NOSTEPS`, 'NOSTEPS', 'ongoing');
+  await pp(`${FTO_RUN}_PP_OTHER`, 'OTHER', 'ongoing', 0, FTO.P_NDFU);
   await pp(`${FTO_RUN}_PP_NOTAH`, 'NOTAH', 'ongoing');
+  await pp(`${FTO_RUN}_PP_ROLEOFF`, 'ROLEOFF', 'ongoing');
 
   // deliverables — the real shape participant-delivery-sequence writes: {type, deliveryref → activity doc}.
   const deliverable = async (id, type, activity) => {

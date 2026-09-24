@@ -62,13 +62,6 @@ const ID = {
   // console guard deliberately catches. We do not touch app logic; we seed the realistic non-empty
   // state (production always has events) so the screen exercises its populated path.
   EVT0: `${TESTRUNID}_EVT0`,
-  // Bulk Add Products (bap-*) History-tab world. Two chunk docs sharing one batchId:
-  //  - BPJ_DONE  : success only, failures:[]  -> "done"       (Retry button must NOT render)
-  //  - BPJ_FAIL  : one failure with a reason  -> "attention"  (Retry button MUST render)
-  // The pair is the inclusion/exclusion negative control for canRetry() (failures.length>0).
-  BPJ_BATCH: `${TESTRUNID}_BPJ_B1`,
-  BPJ_DONE: `${TESTRUNID}_BPJ_done`,
-  BPJ_FAIL: `${TESTRUNID}_BPJ_fail`,
 };
 
 // The uP! Life Report formid the form-tracker tab-2 query filters by (participant-form-tracker.ts:144).
@@ -351,41 +344,6 @@ async function seedProfiles() {
     ...tag,
   });
 
-  // Bulk Add Products History-tab world (bap-*). Result docs are written as the CF leaves
-  // them (retry:false, processing:false) so the History tab renders finished jobs. The DONE
-  // job has failures:[] (Retry hidden); the FAIL job has one failure (Retry shown).
-  // Lean job docs: success holds profileids only, failures hold {profileid, reason}. The History UI
-  // resolves participant + creator metadata at display time from `participant metadata`.
-  const bpjBase = {
-    batchId: ID.BPJ_BATCH,
-    createdat: new Date(),
-    createdby: PF.admin,
-    productref: ID.P1,
-    packageref: ID.PKG1,
-    minimumpayment: 100,
-    profiles: [],
-    retry: false,
-    processing: false,
-    claimedAt: null,
-    totalcount: 1,
-  };
-  await db.collection('bulkProductJobs').doc(ID.BPJ_DONE).set({
-    ...bpjBase,
-    docid: ID.BPJ_DONE,
-    description: 'seeded done job for history tab',
-    success: [PF.p0],
-    failures: [],
-    ...tag,
-  });
-  await db.collection('bulkProductJobs').doc(ID.BPJ_FAIL).set({
-    ...bpjBase,
-    docid: ID.BPJ_FAIL,
-    description: 'seeded failing job for history tab',
-    success: [],
-    failures: [{ profileid: PF.p0, reason: 'no-journey' }],
-    ...tag,
-  });
-
   return {
     TESTRUNID, ID, PF, EMAIL, NAME, UP_LIFE_REPORT_FORMID,
     counts: {
@@ -398,7 +356,7 @@ async function seedProfiles() {
 
 // Collections this seed writes (for teardown). formsByClient lives in the forms DB — swept separately.
 const SEEDED = [
-  'journey', 'products', 'package', 'event collection', 'bulkProductJobs',
+  'journey', 'products', 'package', 'event collection',
   'profile_data', 'participant metadata', 'participantjourneyproduct', 'participantsproduct',
   'ask AH', 'love letter', 'appflowbreaks',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
