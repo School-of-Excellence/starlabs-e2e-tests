@@ -731,7 +731,10 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
     }
   });
 
-  // ── team-evolution-dashboard  (prefix: jted, 27 controls) — route /team-evolution-dashboard ──
+  // ── team-evolution-dashboard  (prefix: jted, 16 controls) — route /team-evolution-dashboard ──
+  // 2026-09-24: Mahalakshmi's FTO overview (pulled onto charan-release) retired the mock KPI/filter/table
+  // controls (jted-btn-009 … jted-div-018, jted-div-027). jted-a-020 moved to the A&H card name link.
+  // Behaviour of the new overview is asserted in journey/team-evolution.spec.ts (JTED-*).
   test('jted — team-evolution-dashboard controls are addressable at /team-evolution-dashboard', async ({ page }) => {
     await loginAsJourneyAdmin(page);
     await page.goto('/team-evolution-dashboard', { waitUntil: 'domcontentloaded' });
@@ -745,16 +748,6 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jted-btn-006'),
       page.getByTestId('jted-inp-007'),
       page.getByTestId('jted-inp-008'),
-      page.getByTestId('jted-btn-009'),
-      page.getByTestId('jted-sel-010'),
-      page.getByTestId('jted-sel-011'),
-      page.getByTestId('jted-sel-012'),
-      page.getByTestId('jted-sel-013'),
-      page.getByTestId('jted-div-014'),
-      page.getByTestId('jted-tr-015'),
-      page.getByTestId('jted-btn-016'),
-      page.getByTestId('jted-div-017'),
-      page.getByTestId('jted-div-018'),
       page.getByTestId('jted-inp-019'),
       page.getByTestId('jted-a-020'),
       page.getByTestId('jted-btn-021'),
@@ -763,7 +756,6 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jted-div-024'),
       page.getByTestId('jted-inp-025'),
       page.getByTestId('jted-div-026'),
-      page.getByTestId('jted-div-027'),
     ];
     for (const c of controls) {
       expect(c, 'jted: interactive control must be addressable and visible').toBeTruthy();

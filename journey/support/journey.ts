@@ -138,6 +138,19 @@ export const jchParticipants = {
   F: { pf: `${RUN}_pf_hc_f`, name: `JCH Foxtrot ${RUN}` },
   X: { pf: `${RUN}_pf_hc_x`, name: `JCH Xray ${RUN}` },
 };
+/** FTO / Team Evolution world (seed-journey.js step 7) — its own run tag, see seedFto(). */
+const FTO_RUN = `${RUN}_fto`;
+const ftoPerson = (k: string) => ({ pf: `${FTO_RUN}_pf_${k.toLowerCase()}`, name: `FTO ${k[0]}${k.slice(1).toLowerCase()} ${RUN}` });
+export const ftoWorld = {
+  RUN: FTO_RUN,
+  P_DFU: `${FTO_RUN}_P_DFU`,
+  names: { product: `FTO Product ${RUN}`, nonDfu: `FTO Non-DFU ${RUN}`, session: `FTO Session ${RUN}`, form: `FTO Intake ${RUN}` },
+  people: {
+    ONG: ftoPerson('ONG'), NS: ftoPerson('NS'), DIAGDONE: ftoPerson('DIAGDONE'), DONE: ftoPerson('DONE'),
+    NOSTEPS: ftoPerson('NOSTEPS'), OTHER: ftoPerson('OTHER'), NOTAH: ftoPerson('NOTAH'), ROLEOFF: ftoPerson('ROLEOFF'),
+  },
+};
+
 export const jchTexts = {
   criticalLetter: `JCH critical letter ${RUN}`,
   askQuestion: `JCH ask question ${RUN}`,

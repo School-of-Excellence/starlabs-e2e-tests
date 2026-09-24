@@ -470,6 +470,9 @@ async function seedJourney() {
   //    excludes onboarding (fix 2026-09-23) — this is the doc that must be left OUT of the count.
   await appt('APT_OB_DONE', HC.A.pf, { starttime: noon(-1), attended: true, onboarding: true });
 
+  // 7) FTO / TEAM EVOLUTION world (journey/team-evolution.spec.ts, JTED-*) ==========================
+  await seedFto(db, T);
+
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
     names: {
@@ -482,6 +485,111 @@ async function seedJourney() {
     counts: { journey: 2, products: 2, journeyToProduct: 1, participantjourneyproduct: 3 },
   };
 }
+
+// ---- FTO / Team Evolution world ------------------------------------------------------------------
+// /team-evolution-dashboard reads: users_roles(ahmember==true).profile_ref → 'participant metadata'
+// (profileid in …) → per chosen DFU product: participantsproduct (status ongoing|initiated) +
+// participantdeliverysequence → deliverables.deliveryref → appointmenttype / delivery forms.
+//
+// OWN RUN TAG (`<run>_fto`), not the suite's: catalog.spec JP-03 asserts EXACTLY 2 `products` for the
+// suite tag, and coach-health counts `participant metadata` by it. A separate tag keeps both untouched
+// and gets its own teardown pass below.
+//
+// Every rule has something it must EXCLUDE:
+//   ONG      AH · active on FTO · PP ongoing + a COMPLETED PP (status filter must drop it) · 3 steps
+//   NS       AH · active on FTO (as a DocumentReference) · diagnostics step READY → Not started
+//   DIAGDONE AH · active on FTO · diagnostics step COMPLETED, next step ready → NOT Not started
+//   DONE     AH · active + CONSUMED on FTO → Completed · no ongoing PP
+//   NOSTEPS  AH · active on FTO · PP ongoing, no delivery-sequence doc → "No delivery steps yet."
+//   OTHER    AH · active on a NON-DFU product only → not in the FTO list; still an A&H card
+//   NOTAH    NOT an AH member (no users_roles) · active on FTO → must never render
+//   ROLEOFF  users_roles with ahmember:FALSE · active on FTO → must never render (flag, not doc, decides)
+//   P_NDFU   products type 'NDFU' → must never reach the DFU picker
+const FTO_RUN = `${TESTRUNID}_fto`;
+const FTO = {
+  P_DFU: `${FTO_RUN}_P_DFU`, P_NDFU: `${FTO_RUN}_P_NDFU`,
+  AT_DIAG: `${FTO_RUN}_AT_DIAG`, AT_SESSION: `${FTO_RUN}_AT_SESSION`, DF: `${FTO_RUN}_DF`,
+  names: {
+    product: `FTO Product ${TESTRUNID}`, nonDfu: `FTO Non-DFU ${TESTRUNID}`,
+    session: `FTO Session ${TESTRUNID}`, form: `FTO Intake ${TESTRUNID}`,
+  },
+  people: ['ONG', 'NS', 'DIAGDONE', 'DONE', 'NOSTEPS', 'OTHER', 'NOTAH', 'ROLEOFF'],
+};
+const ftoPf = (k) => `${FTO_RUN}_pf_${k.toLowerCase()}`;
+const ftoName = (k) => `FTO ${k[0]}${k.slice(1).toLowerCase()} ${TESTRUNID}`;
+
+async function seedFto(db, T) {
+  const tag = TAG(FTO_RUN);
+  const product = (id) => db.collection('products').doc(id);
+  const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
+
+  await set('products', FTO.P_DFU, { product: FTO.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+  await set('products', FTO.P_NDFU, { product: FTO.names.nonDfu, type: 'NDFU', atcmodel: null, mode: 'online' });
+  // 'EI Diagnostics' is one of the component's literal diagnosticsArray names — the Not-started rule keys on it.
+  await set('appointmenttype', FTO.AT_DIAG, { appointmenttype: 'EI Diagnostics' });
+  await set('appointmenttype', FTO.AT_SESSION, { appointmenttype: FTO.names.session });
+  await set('delivery forms', FTO.DF, { formname: FTO.names.form, formarray: [] });
+
+  // A&H membership. ROLEOFF has the doc with the flag FALSE; NOTAH has none at all.
+  for (const k of ['ONG', 'NS', 'DIAGDONE', 'DONE', 'NOSTEPS', 'OTHER', 'ROLEOFF']) {
+    await set('users_roles', `${FTO_RUN}_role_${k.toLowerCase()}`, {
+      id: `${FTO_RUN}_role_${k.toLowerCase()}`, name: ftoName(k), participant: false,
+      ahmember: k !== 'ROLEOFF', profile_ref: db.collection('profile_data').doc(ftoPf(k)),
+    });
+  }
+
+  const meta = (k, activeproduct, consumedproducts = []) => set('participant metadata', ftoPf(k), {
+    profileid: ftoPf(k), name: ftoName(k), email: `${ftoPf(k)}@example.com`,
+    activeproduct, consumedproducts, customerstatus: 'active',
+  });
+  await meta('ONG', [FTO.P_DFU]);
+  await meta('NS', [product(FTO.P_DFU)]);          // the DocumentReference branch of matchesProductId
+  await meta('DIAGDONE', [FTO.P_DFU]);
+  await meta('DONE', [FTO.P_DFU], [FTO.P_DFU]);
+  await meta('NOSTEPS', [FTO.P_DFU]);
+  await meta('OTHER', [FTO.P_NDFU]);
+  await meta('NOTAH', [FTO.P_DFU]);
+  await meta('ROLEOFF', [FTO.P_DFU]);
+
+  const pp = (id, k, status) => set('participantsproduct', id, { profileid: ftoPf(k), productref: product(FTO.P_DFU), status });
+  await pp(`${FTO_RUN}_PP_ONG`, 'ONG', 'ongoing');
+  await pp(`${FTO_RUN}_PP_ONG_OLD`, 'ONG', 'completed');   // status filter must drop it
+  await pp(`${FTO_RUN}_PP_NS`, 'NS', 'initiated');
+  await pp(`${FTO_RUN}_PP_DIAGDONE`, 'DIAGDONE', 'ongoing');
+  await pp(`${FTO_RUN}_PP_NOSTEPS`, 'NOSTEPS', 'ongoing');
+  await pp(`${FTO_RUN}_PP_NOTAH`, 'NOTAH', 'ongoing');
+
+  // deliverables — the real shape participant-delivery-sequence writes: {type, deliveryref → activity doc}.
+  const deliverable = async (id, type, activity) => {
+    const target = type === 'form' ? db.collection('delivery forms').doc(activity) : db.collection('appointmenttype').doc(activity);
+    await set('deliverables', id, { type, deliveryref: target });
+    return db.collection('deliverables').doc(id);
+  };
+  const seq = (k, ppId, delivery) => set('participantdeliverysequence', ftoPf(k), {
+    profileid: ftoPf(k), products: [{ participantproductid: ppId, productref: product(FTO.P_DFU), delivery }],
+  });
+  await seq('ONG', `${FTO_RUN}_PP_ONG`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_1`, 'appointment', FTO.AT_SESSION), status: 'completed' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_2`, 'form', FTO.DF), status: 'ready' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_3`, 'appointment', FTO.AT_SESSION), status: null },
+  ]);
+  await seq('NS', `${FTO_RUN}_PP_NS`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_NS_1`, 'appointment', FTO.AT_DIAG), status: 'ready' },
+  ]);
+  await seq('DIAGDONE', `${FTO_RUN}_PP_DIAGDONE`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_DD_1`, 'appointment', FTO.AT_DIAG), status: 'completed' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_DD_2`, 'appointment', FTO.AT_SESSION), status: 'ready' },
+  ]);
+  // NOTAH gets a Not-started-shaped sequence too, so leaking it would move the Not-started tile.
+  await seq('NOTAH', `${FTO_RUN}_PP_NOTAH`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_NOTAH_1`, 'appointment', FTO.AT_DIAG), status: 'ready' },
+  ]);
+}
+
+const FTO_SEEDED = [
+  'products', 'appointmenttype', 'delivery forms', 'deliverables', 'users_roles',
+  'participant metadata', 'participantsproduct', 'participantdeliverysequence',
+];
 
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
 const SEEDED = [
@@ -511,7 +619,8 @@ const APP_WRITE_PROFILEIDS = [PF.p0, PF.p1];
 async function teardownJourney() {
   const admin = initAdminAuto();
   const db = admin.firestore();
-  const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
+  const n = await seed.teardownCollections(db, SEEDED, TESTRUNID)
+    + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN);
 
   // APP-written docs (no testrunid) — delete by their natural key (profileid). Covers JP-06's new
   // journeyproductpurchase / participant purchase logs and JP-09's email archive doc.
@@ -533,7 +642,7 @@ async function teardownJourney() {
   return n + appDeleted;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, seedJourney, teardownJourney };
+module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, seedJourney, teardownJourney };
 
 if (require.main === module) {
   const mode = process.argv[2];
