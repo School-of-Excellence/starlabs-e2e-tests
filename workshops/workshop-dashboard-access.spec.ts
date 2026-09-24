@@ -253,7 +253,10 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     await page.goto(`/workshopconfigold/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('wc-no-edit-access'), 'WDA-08: /workshopconfigold is not a way around the gate')
       .toBeVisible({ timeout: 45_000 });
-    await expect(page.locator('.main-content'), 'WDA-08: the legacy editor body must not render').toHaveCount(0);
+    // Scoped to the component's own container: `.main-content` on its own is the app SHELL's
+    // mat-drawer-content (app.component.html:161), which is on every page and is never 0.
+    await expect(page.locator('.workshop-config-container > .main-content'),
+      'WDA-08: the legacy editor body must not render').toHaveCount(0);
   });
 
   // ===========================================================================================
