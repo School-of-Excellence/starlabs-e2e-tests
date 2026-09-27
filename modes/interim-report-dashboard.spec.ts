@@ -11,6 +11,8 @@
 //   p0 · IRL_COMPLETED   submitted   · interim crossover + interim evolutionprogress + love letter
 //   p1 · IRL_ONGOING     ongoing     · ask AH (both asks), NO crossover
 //   p1 · IRL_NOTSTARTED  not started · reports[] empty
+//   p1 · IRL_CANCELLED   status 'cancelled' · reports[] non-empty — the control for "a cancelled report is
+//                        not part of any dashboard number" (IRD-18); it would read as Ongoing otherwise
 //   journeys A (p0.activejourney) and B (p1.lastcompletedjourney) · one event p0 ATTENDED and p1 only REGISTERED
 //   p1 also owns LL_RESOLVED — a letter that is resolved but carries NO Needs Attention / Critical tag,
 //   the control for "Resolved counts every resolved letter" (IRD-13)
@@ -613,6 +615,46 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
   });
 
   // ===========================================================================================
+  // IRD-18 — a CANCELLED interim report is not part of any dashboard number (operator, 2026-09-27).
+  // The seed's IRL_CANCELLED is p1's third log: in range, steps saved, so it would read as Ongoing —
+  // only its status differs. The oracle reads it straight from Firestore, so the case proves the
+  // dashboard DROPPED a document that is really there, not that the document is missing.
+  // ===========================================================================================
+  test('IRD-18 a cancelled interim report is left out of the counts and the lists', async ({ page }) => {
+    test.setTimeout(120_000);
+    // [ORACLE] the cancelled log exists, belongs to p1, and carries steps
+    const cancelled = await getDoc('interimreport log', modeIds.IRL_CANCELLED);
+    expect(cancelled, 'IRD-18: the cancelled log is in the database').toBeTruthy();
+    expect(cancelled!.status).toBe('cancelled');
+    expect(cancelled!.profileid).toBe(modeProfileIds.participant1);
+    expect(cancelled!.reports?.length, 'IRD-18: it has steps, so nothing else would exclude it')
+      .toBeGreaterThan(0);
+    // …and p1 owns three logs in total, of which one is cancelled
+    expect(await countWhere('interimreport log', [['profileid', '==', modeProfileIds.participant1]]),
+      'IRD-18: p1 has three logs in the database').toBe(3);
+
+    await openDashboard(page);
+    await filterToParticipant(page, modeActors.participant1);
+
+    // [ASSERT] the strip counts the other two only — and Ongoing stays 1, which is what the cancelled
+    // log would have joined
+    expect(await stripCount(page.getByTestId('ird-strip-all')), 'IRD-18: the cancelled log is not counted').toBe(2);
+    expect(await stripCount(page.getByTestId('ird-strip-ongoing')), 'IRD-18: it did not land in Ongoing').toBe(1);
+    expect(await stripCount(page.getByTestId('ird-strip-submitted'))).toBe(0);
+    expect(await stripCount(page.getByTestId('ird-strip-notstarted'))).toBe(1);
+
+    // [ASSERT] and it is absent from the list behind the count, not merely uncounted
+    await page.getByTestId('ird-strip-all').click();
+    await expect(page.getByTestId('ird-modal-close')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('ird-modal-row'), 'IRD-18: the list holds the two live reports')
+      .toHaveCount(2, { timeout: 30_000 });
+    // the rows carry their position in the list (operator, 2026-09-27) — 1..n over what is on screen
+    await expect(page.getByTestId('ird-modal-row').first().getByTestId('ird-row-no')).toHaveText('1');
+    await expect(page.getByTestId('ird-modal-row').nth(1).getByTestId('ird-row-no')).toHaveText('2');
+    await page.getByTestId('ird-modal-close').click();
+  });
+
+  // ===========================================================================================
   // IRD-ADDR2 — the dashboard controls the cases above do not drive, registered as literal
   // getByTestId so the readiness gate credits every ird-* hook on the screen (the scanner only sees
   // literal ids — scripts/readiness/lib.cjs TESTID_REF). Behavioral coverage of each grid cell,
@@ -706,6 +748,10 @@ test.describe('Modes — Interim Report Dashboard (counts, filters, tagging, exp
     // partial numbers); reproducing a dropped connection is not deterministic in the emulator lane
     expect(page.getByTestId('ird-retry')).toBeTruthy();
     expect(page.getByTestId('ird-retry-event')).toBeTruthy();
+    // "Show all" under a capped list — drawn only past the cap (60 in a drill-down, 40 in By participant);
+    // the seeded world is three reports, and seeding 60+ to drive it would slow every case in this file
+    expect(page.getByTestId('ird-modal-show-all')).toBeTruthy();
+    expect(page.getByTestId('ird-people-show-all')).toBeTruthy();
     // the parent tab's Export (Love Letter / Ask A&H tables)
     expect(page.getByTestId('irl-export-records')).toBeTruthy();
   });

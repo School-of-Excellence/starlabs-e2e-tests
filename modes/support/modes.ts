@@ -48,6 +48,7 @@ export const modeIds = {
   IRL_ONGOING: `${RUN}_irl_ongoing`,
   // Interim Report Dashboard world (IRD-*)
   IRL_NOTSTARTED: `${RUN}_irl_notstarted`,
+  IRL_CANCELLED: `${RUN}_irl_cancelled`,   // status 'cancelled' — the dashboard drops it (IRD-18)
   XOVER_IRD: `${RUN}_xover_ird`,
   EVO_IRD: `${RUN}_evo_ird`,
   LL_IRD: `${RUN}_ll_ird`,
