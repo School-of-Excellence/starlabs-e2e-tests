@@ -110,6 +110,7 @@ export const wsAddIds = {
   HW_CS_NOORDER: `${RUN}_hw_cs3`,
   HW_ADS: `${RUN}_hw_ads`,
   HS_A: `${RUN}_hs_a`,
+  EP_HS: `${RUN}_ep_hs`,
   NUT_SEGMENT: `${RUN}_nut_seg`,
   NUT_CAL_A: `${RUN}_nut_cal_a`,
   NUT_CAL_B: `${RUN}_nut_cal_b`,
@@ -663,5 +664,36 @@ export async function cleanUpcomingCostWidget(): Promise<void> {
   const admin = seed.initAdmin();
   const snap = await admin.firestore().collection('eiflixhomewidgets')
     .where('title', '==', wsUpcomingCostTitle).get().catch(() => ({ docs: [] as any[] }));
+  for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
+
+// =================================================================================================
+// 2026-09-29 — series-level fields on the Add Home Series dialog (eiflixhomeconfig, Home Series tab).
+// =================================================================================================
+
+/** The episode WS-39 picks — the dialog refuses to save with none selected. */
+export const wsHomeSeriesEpisodeTitle = `WS HS Episode ${RUN}`;
+
+/** The series title WS-39 types, and the handle its cleanup uses. */
+export const wsHomeSeriesTitle = `WS HS Fields ${RUN}`;
+
+/** Exactly what WS-39 types and toggles, so the spec asserts app output against known input. */
+export const wsHomeSeriesFields = {
+  pickoftheweek: true,
+  heading: `HS Heading ${RUN}`,
+  headleft: `HS Left ${RUN}`,
+  headright: `HS Right ${RUN}`,
+  subtitle: `HS Subtitle ${RUN}`,
+};
+
+/**
+ * Delete any `eiflixhomeseries` doc carrying WS-39's title. The app generates the id and writes no
+ * testrunid, so the run-scoped sweep cannot see it — the title is the only handle. PRECONDITION and
+ * teardown only; the case never asserts on this.
+ */
+export async function cleanHomeSeriesFieldsDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('eiflixhomeseries')
+    .where('title', '==', wsHomeSeriesTitle).get().catch(() => ({ docs: [] as any[] }));
   for (const d of snap.docs) await d.ref.delete().catch(() => { });
 }

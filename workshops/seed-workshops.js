@@ -63,6 +63,7 @@ const ID = {
   HW_CS_NOORDER: `${TESTRUNID}_hw_cs3`,    // eiflixhomewidgets comingsoon, NO order → sorts last (WS-19)
   HW_ADS: `${TESTRUNID}_hw_ads`,           // eiflixhomewidgets widgettype:'ads' — NEGATIVE CONTROL (WS-18) + delete target (WS-20)
   HS_A: `${TESTRUNID}_hs_a`,               // eiflixhomeseries row (tab 3)
+  EP_HS: `${TESTRUNID}_ep_hs`,             // one `episodes` doc — the Add Home Series dialog cannot save without one
   NUT_SEGMENT: `${TESTRUNID}_nut_seg`,     // newusertags type:'newusersegments' (WS-22/23 + campaign segment join)
   NUT_CAL_A: `${TESTRUNID}_nut_cal_a`,     // newusertags type:'wccalendar'
   NUT_CAL_B: `${TESTRUNID}_nut_cal_b`,     // newusertags type:'wccalendar'
@@ -235,6 +236,14 @@ async function seedAddendum(db, T, tag, at) {
     docid: ID.HW_ADS, widgettype: 'ads', order: 1, head: 'AD', headright: 'NEW',
     title: `HC AdOnly ${TESTRUNID}`, subtitle: 'seeded ad', description: 'ads-tab only',
     footer: 'footer', buttonname: 'Go', navigationlink: 'https://example.com/ad', show: true, ...tag,
+  });
+  // The Add Home Series dialog lists `episodes` in its multi-select and refuses to save with none
+  // picked (homeseries.component.ts:188), so WS-39 needs exactly one real episode to choose. Fields
+  // mirror the content seeder's episode shape — no new keys, the episodes schema is frozen.
+  await db.collection('episodes').doc(ID.EP_HS).set({
+    docid: ID.EP_HS, title: `WS HS Episode ${TESTRUNID}`, description: 'seed episode for home series',
+    videoUrl: 'https://example.com/test.mp4', imageUrl: 'https://example.com/test.jpg',
+    convertedtohls: true, series: [], ...tag,
   });
   await db.collection('eiflixhomeseries').doc(ID.HS_A).set({
     docid: ID.HS_A, title: `HC Series ${TESTRUNID}`, created: at(-2),
@@ -582,6 +591,8 @@ const SEEDED = [
   'user_data', 'profile_data', 'users_roles', 'dashboard',
   // 2026-09-04 addendum (WS-16..WS-33). All run-tagged, so the sweep is scoped to THIS run.
   'eiflix workshop', 'eiflixhomewidgets', 'eiflixhomeseries', 'newusertags', 'new_user_data',
+  // WS-39 precondition: one episode for the Add Home Series multi-select. Run-tagged.
+  'episodes',
   'classify', 'event collection', 'journey', 'bigeventmentor', 'bigeventparticipantsplan',
   'delivery forms', 'eiflixcampaign', 'workshopcampaigncalendar',
 ];
