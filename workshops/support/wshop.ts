@@ -684,6 +684,7 @@ export const wsHomeSeriesFields = {
   headleft: `HS Left ${RUN}`,
   headright: `HS Right ${RUN}`,
   subtitle: `HS Subtitle ${RUN}`,
+  buttontext: `HS Button ${RUN}`,
 };
 
 /**

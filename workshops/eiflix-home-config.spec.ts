@@ -189,17 +189,17 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     await cleanUpcomingCostWidget();
   });
   // ===========================================================================================
-  // WS-39 — the Add Home Series dialog carries the five series-level fields, and saves them
+  // WS-39 — the Add Home Series dialog carries the six series-level fields, and saves them
   // ===========================================================================================
-  // Added 2026-09-29: pickoftheweek (toggle) + heading / headleft / headright / subtitle (inputs),
-  // beside the series Title. This Subtitle belongs to the SERIES — each episode card in the same
+  // Added 2026-09-29: pickoftheweek (toggle) + heading / headleft / headright / subtitle /
+  // buttontext (inputs), beside the series Title. This Subtitle belongs to the SERIES — each episode card in the same
   // dialog has its own `subtitle`, and the two must not be confused, so the case asserts the series
   // subtitle at the TOP level of the document while the episode row keeps its own.
   //
   // Anti-circularity: every value below is typed BY the test and read back out of Firestore from
   // the document the APP created. The seed writes none of them, so a passing assertion can only
   // come from the dialog's own save path (homeseries.component.ts:206).
-  test('WS-39 Add Home Series stores pick of the week, heading, head left, head right and subtitle', async ({ page }) => {
+  test('WS-39 Add Home Series stores pick of the week, heading, head left, head right, subtitle and button text', async ({ page }) => {
     // [PRECONDITION] no leftover from an earlier run; the app generates the id, so title is the handle.
     await cleanHomeSeriesFieldsDoc();
 
@@ -217,6 +217,7 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     await dialog.getByTestId('hom-subtitle').fill(wsHomeSeriesFields.subtitle);
     await dialog.getByTestId('hom-headleft').fill(wsHomeSeriesFields.headleft);
     await dialog.getByTestId('hom-headright').fill(wsHomeSeriesFields.headright);
+    await dialog.getByTestId('hom-buttontext').fill(wsHomeSeriesFields.buttontext);
 
     // The toggle is a mat-slide-toggle: click its own button, then read the app's state back.
     const pick = dialog.getByTestId('hom-pickoftheweek');
@@ -242,13 +243,14 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     );
     expect(created, 'WS-39: the save went through').toBeTruthy();
 
-    // The five fields, each compared to the value this test supplied.
+    // The six fields, each compared to the value this test supplied.
     expect(created.pickoftheweek, 'WS-39: pick of the week is stored as a boolean true').toBe(true);
     expect(created.heading, 'WS-39: heading is stored').toBe(wsHomeSeriesFields.heading);
     expect(created.headleft, 'WS-39: head left is stored').toBe(wsHomeSeriesFields.headleft);
     expect(created.headright, 'WS-39: head right is stored').toBe(wsHomeSeriesFields.headright);
     expect(created.subtitle, 'WS-39: the SERIES subtitle is stored at the top level')
       .toBe(wsHomeSeriesFields.subtitle);
+    expect(created.buttontext, 'WS-39: button text is stored').toBe(wsHomeSeriesFields.buttontext);
 
     // [ASSERT] the per-episode row still owns its own subtitle — the series subtitle did not
     // overwrite it, and the episode picked is the one we chose.
