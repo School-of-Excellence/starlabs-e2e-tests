@@ -75,6 +75,8 @@ const ID = {
   EVT_BIG: `${TESTRUNID}_evt_big`,         // event collection atcmodel:'B!G'      (WS-28)
   EVT_NONBIG: `${TESTRUNID}_evt_nonbig`,   // event collection NOT B!G — NEGATIVE CONTROL (WS-28)
   JRN_BIG: `${TESTRUNID}_jrn_big`,         // journey atcmodel:'B!G' — keeps the `in` filter non-empty (Risk #12)
+  JRN_AUD: `${TESTRUNID}_jrn_aud`,         // journey with a `journey` NAME — the audience picker reads that field
+  TIER_AUD: `${TESTRUNID}_tier_aud`,       // tier with a `tier` NAME — same picker, the other choice
   // The bigeventmentor doc id MUST EQUAL the event id: onEventChange() does a direct
   // getDoc(doc(db,'bigeventmentor', eventId)) (bigeventmentor.component.ts:201) and createBigEventMentor()
   // writes it under the event's own id (ts:289). A separately-named doc is simply never found, and the
@@ -305,6 +307,16 @@ async function seedAddendum(db, T, tag, at) {
   // raw profileid (`mapparticipant[id] || id`, bigeventmentor.html:137). `bigjourney` is built from the
   // journey DOC IDS (ts:163), so activejourney must be the journey doc id, not its name.
   await db.collection('participant metadata').doc(PF.p0).set({ activejourney: ID.JRN_BIG }, { merge: true });
+
+  // Audience options for the EiFlix Home config rows (WS-40). The picker shows `journey.journey`
+  // and `tier.tier` and stores the DOCUMENT ID, so the name and the id must differ visibly —
+  // otherwise a test asserting the stored id could pass while the app stored the label.
+  await db.collection('journey').doc(ID.JRN_AUD).set({
+    docid: ID.JRN_AUD, journey: `WS Audience Journey ${TESTRUNID}`, ...tag,
+  });
+  await db.collection('tier').doc(ID.TIER_AUD).set({
+    docid: ID.TIER_AUD, tier: `WS Audience Tier ${TESTRUNID}`, ...tag,
+  });
   // p0 starts in `registered` and is ABSENT from `reached` — WS-29 drives the real move and asserts the
   // app wrote BOTH arrays (added to one, removed from the other).
   await db.collection('bigeventmentor').doc(ID.BEM).set({
@@ -595,6 +607,8 @@ const SEEDED = [
   'episodes',
   'classify', 'event collection', 'journey', 'bigeventmentor', 'bigeventparticipantsplan',
   'delivery forms', 'eiflixcampaign', 'workshopcampaigncalendar',
+  // WS-40 audience options. Run-tagged, so other runs' tiers are untouched.
+  'tier',
 ];
 
 async function teardownWorkshops() {

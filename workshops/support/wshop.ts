@@ -111,6 +111,8 @@ export const wsAddIds = {
   HW_ADS: `${RUN}_hw_ads`,
   HS_A: `${RUN}_hs_a`,
   EP_HS: `${RUN}_ep_hs`,
+  JRN_AUD: `${RUN}_jrn_aud`,
+  TIER_AUD: `${RUN}_tier_aud`,
   NUT_SEGMENT: `${RUN}_nut_seg`,
   NUT_CAL_A: `${RUN}_nut_cal_a`,
   NUT_CAL_B: `${RUN}_nut_cal_b`,
@@ -697,4 +699,34 @@ export async function cleanHomeSeriesFieldsDoc(): Promise<void> {
   const snap = await admin.firestore().collection('eiflixhomeseries')
     .where('title', '==', wsHomeSeriesTitle).get().catch(() => ({ docs: [] as any[] }));
   for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
+
+// =================================================================================================
+// 2026-09-29 — audience (Journey OR Tier) on a Create / Assign EiFlix Home row.
+// =================================================================================================
+
+/** The names the audience dropdowns render; the DOCUMENT IDS are what get stored. */
+export const wsAudienceNames = {
+  journey: `WS Audience Journey ${RUN}`,
+  tier: `WS Audience Tier ${RUN}`,
+};
+
+/** The one home-config document the EiFlix Home tab reads and writes. */
+export async function eiflixHomeConfig(): Promise<any[]> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('classify').doc('eiflixwebapp').get();
+  const v = snap.exists ? (snap.data() || {})['homeconfig'] : null;
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * Clear the home-config array. `classify/eiflixwebapp` is a fixed-id document shared with the live
+ * EiFlix home surface, so this NEVER deletes it — it empties only the one field the tab owns, and
+ * only on the disposable test project (initAdmin hard-aborts anywhere else). PRECONDITION and
+ * teardown only; no assertion reads this back.
+ */
+export async function resetEiflixHomeConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('classify').doc('eiflixwebapp')
+    .set({ homeconfig: [], testrunid: RUN, _testdata: true }, { merge: true });
 }

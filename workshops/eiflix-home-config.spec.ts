@@ -15,6 +15,7 @@ import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetHomeWidgetAds,
   wsUpcomingCostTitle, cleanUpcomingCostWidget,
   wsHomeSeriesTitle, wsHomeSeriesFields, wsHomeSeriesEpisodeTitle, cleanHomeSeriesFieldsDoc,
+  wsIds, wsAudienceNames, eiflixHomeConfig, resetEiflixHomeConfig,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -259,5 +260,85 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     expect(created.homeseries[0].subtitle, 'WS-39: the episode row keeps its own (empty) subtitle').toBe('');
 
     await cleanHomeSeriesFieldsDoc();
+  });
+  // ===========================================================================================
+  // WS-40 — a home row is narrowed to journeys OR tiers, never both, and stores document ids
+  // ===========================================================================================
+  // Added 2026-09-29 to the "Create / Assign EiFlix Home" tab, after Show to: a two-way chooser
+  // (Journey / Tier) and a searchable multi-select of whichever was picked.
+  //
+  // The two halves that are easy to get wrong, and are therefore what this case pins:
+  //   · the dropdown shows `journey.journey` / `tier.tier` but must store the DOCUMENT ID. The
+  //     seeded name and id differ visibly, so storing the label instead would fail here.
+  //   · the two are exclusive. The case picks a journey, saves, then switches the SAME row to
+  //     Tier and saves again — the journey array must come back empty, which a test that only
+  //     ever set one of them could never detect.
+  test('WS-40 an EiFlix Home row stores journey ids, then swaps to tier ids exclusively', async ({ page }) => {
+    // [PRECONDITION] start from an empty home config so the row under test is index 0.
+    await resetEiflixHomeConfig();
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixhomeconfig', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Create / Assign EiFlix Home' }).click();
+
+    // Add one static widget from the library — the tab refuses to save with no rows.
+    const libItem = page.getByTestId('eif2-add-option-1').first();
+    await expect(libItem, 'WS-40: the library must offer a widget').toBeVisible({ timeout: 30_000 });
+    await libItem.click();
+
+    // ── Journey ──
+    await page.getByTestId('eif2-audience-journey').first().click();
+    const journeySelect = page.getByTestId('eif2-journey-select').first();
+    await expect(journeySelect, 'WS-40: choosing Journey reveals the journey picker').toBeVisible();
+    await expect(page.getByTestId('eif2-tier-select'), 'WS-40: and not the tier picker').toHaveCount(0);
+
+    await journeySelect.click();
+    // The search box narrows the list — the feature asked for, and the fastest way to the option.
+    await page.locator('.mat-mdc-select-panel input').first().fill(wsAudienceNames.journey);
+    const journeyOption = page.getByRole('option', { name: wsAudienceNames.journey });
+    await expect(journeyOption, 'WS-40: the seeded journey is offered by NAME').toBeVisible({ timeout: 15_000 });
+    await journeyOption.click();
+    await page.keyboard.press('Escape');
+
+    await page.getByTestId('eif2-button-4').click();
+
+    // [ASSERT] the app stored the journey's DOCUMENT ID, and left tier empty.
+    const afterJourney: any = await pollUntil(
+      async () => (await eiflixHomeConfig())[0] || null,
+      (e: any) => e !== null && e.audiencetype === 'journey',
+      { label: 'WS-40: the app saved a journey audience', timeoutMs: 30_000 },
+    );
+    expect(afterJourney.audiencetype, 'WS-40: the chosen kind is stored').toBe('journey');
+    expect(afterJourney.journey, 'WS-40: the journey DOCUMENT ID is stored, not its name')
+      .toEqual([wsIds.JRN_AUD]);
+    expect(afterJourney.tier, 'WS-40: the other list is written empty, not left out').toEqual([]);
+
+    // ── Tier, on the SAME row ──
+    await page.getByTestId('eif2-audience-tier').first().click();
+    const tierSelect = page.getByTestId('eif2-tier-select').first();
+    await expect(tierSelect, 'WS-40: choosing Tier reveals the tier picker').toBeVisible();
+    await expect(page.getByTestId('eif2-journey-select'), 'WS-40: and hides the journey picker').toHaveCount(0);
+
+    await tierSelect.click();
+    await page.locator('.mat-mdc-select-panel input').first().fill(wsAudienceNames.tier);
+    const tierOption = page.getByRole('option', { name: wsAudienceNames.tier });
+    await expect(tierOption, 'WS-40: the seeded tier is offered by NAME').toBeVisible({ timeout: 15_000 });
+    await tierOption.click();
+    await page.keyboard.press('Escape');
+
+    await page.getByTestId('eif2-button-4').click();
+
+    // [ASSERT] the swap is real: tier now holds the id and the journey list was CLEARED.
+    const afterTier: any = await pollUntil(
+      async () => (await eiflixHomeConfig())[0] || null,
+      (e: any) => e !== null && e.audiencetype === 'tier',
+      { label: 'WS-40: the app saved a tier audience', timeoutMs: 30_000 },
+    );
+    expect(afterTier.audiencetype, 'WS-40: the chosen kind swapped').toBe('tier');
+    expect(afterTier.tier, 'WS-40: the tier DOCUMENT ID is stored').toEqual([wsIds.TIER_AUD]);
+    expect(afterTier.journey, 'WS-40: the previous journey selection was cleared — the two are exclusive')
+      .toEqual([]);
+
+    await resetEiflixHomeConfig();
   });
 });
