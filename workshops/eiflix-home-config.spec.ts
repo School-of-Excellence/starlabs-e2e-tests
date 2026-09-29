@@ -294,7 +294,15 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
 
     await journeySelect.click();
     // The search box narrows the list — the feature asked for, and the fastest way to the option.
-    await page.locator('.mat-mdc-select-panel input').first().fill(wsAudienceNames.journey);
+    // ngx-mat-select-search marks its host <mat-option> aria-disabled (so it can never be SELECTED)
+    // while keeping it interactive, and renders a hidden helper <input> beside the visible one. A
+    // plain `fill` therefore waits the full timeout on "element is not enabled" (this is what failed
+    // run 99003855355, and the same trap cost WS-31 a run earlier). Address the visible input by its
+    // placeholder, click with the actionability check bypassed, and type — which drives the
+    // component's real keyup handler.
+    const journeySearch = page.getByPlaceholder('Search journeys');
+    await journeySearch.click({ force: true });
+    await page.keyboard.type(wsAudienceNames.journey);
     const journeyOption = page.getByRole('option', { name: wsAudienceNames.journey });
     await expect(journeyOption, 'WS-40: the seeded journey is offered by NAME').toBeVisible({ timeout: 15_000 });
     await journeyOption.click();
@@ -320,7 +328,10 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     await expect(page.getByTestId('eif2-journey-select'), 'WS-40: and hides the journey picker').toHaveCount(0);
 
     await tierSelect.click();
-    await page.locator('.mat-mdc-select-panel input').first().fill(wsAudienceNames.tier);
+    // Same ngx-mat-select-search handling as the journey picker above.
+    const tierSearch = page.getByPlaceholder('Search tiers');
+    await tierSearch.click({ force: true });
+    await page.keyboard.type(wsAudienceNames.tier);
     const tierOption = page.getByRole('option', { name: wsAudienceNames.tier });
     await expect(tierOption, 'WS-40: the seeded tier is offered by NAME').toBeVisible({ timeout: 15_000 });
     await tierOption.click();
