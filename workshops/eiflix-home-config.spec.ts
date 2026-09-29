@@ -15,7 +15,7 @@ import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetHomeWidgetAds,
   wsUpcomingCostTitle, cleanUpcomingCostWidget,
   wsHomeSeriesTitle, wsHomeSeriesFields, wsHomeSeriesEpisodeTitle, cleanHomeSeriesFieldsDoc,
-  wsIds, wsAudienceNames, eiflixHomeConfig, resetEiflixHomeConfig,
+  wsAudienceNames, eiflixHomeConfig, resetEiflixHomeConfig,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -274,6 +274,13 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
   //     Tier and saves again — the journey array must come back empty, which a test that only
   //     ever set one of them could never detect.
   test('WS-40 an EiFlix Home row stores journey ids, then swaps to tier ids exclusively', async ({ page }) => {
+    // [PRECONDITION] the seeded ids must actually exist. Without this, a constant
+    // read from the wrong export object is `undefined`, and the assertions below
+    // compare ['someid'] against [undefined] — a confusing one-element diff rather
+    // than a clear failure (this is what run 99045513373 reported).
+    expect(wsAddIds.JRN_AUD, 'WS-40: the seeded journey id must be defined').toBeTruthy();
+    expect(wsAddIds.TIER_AUD, 'WS-40: the seeded tier id must be defined').toBeTruthy();
+
     // [PRECONDITION] start from an empty home config so the row under test is index 0.
     await resetEiflixHomeConfig();
 
@@ -318,7 +325,7 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     );
     expect(afterJourney.audiencetype, 'WS-40: the chosen kind is stored').toBe('journey');
     expect(afterJourney.journey, 'WS-40: the journey DOCUMENT ID is stored, not its name')
-      .toEqual([wsIds.JRN_AUD]);
+      .toEqual([wsAddIds.JRN_AUD]);
     expect(afterJourney.tier, 'WS-40: the other list is written empty, not left out').toEqual([]);
 
     // ── Tier, on the SAME row ──
@@ -346,7 +353,7 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
       { label: 'WS-40: the app saved a tier audience', timeoutMs: 30_000 },
     );
     expect(afterTier.audiencetype, 'WS-40: the chosen kind swapped').toBe('tier');
-    expect(afterTier.tier, 'WS-40: the tier DOCUMENT ID is stored').toEqual([wsIds.TIER_AUD]);
+    expect(afterTier.tier, 'WS-40: the tier DOCUMENT ID is stored').toEqual([wsAddIds.TIER_AUD]);
     expect(afterTier.journey, 'WS-40: the previous journey selection was cleared — the two are exclusive')
       .toEqual([]);
 
