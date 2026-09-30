@@ -57,7 +57,7 @@
 ### queue
 - **studio** → `queue/studio-core.spec.ts queue/studio-session.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts`
 - **operator** → `queue/operator.spec.ts queue/selfmovable-gate.spec.ts queue/watch-videos.spec.ts queue/actors-health.spec.ts queue/authoring.spec.ts queue/cf-sideeffects.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts`
-- **big** → `queue/big-analytics.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts`
+- **big** → `queue/big-analytics.spec.ts queue/big-cohorts-duplicate.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts`
 
 ## CF predeploy gate (local, before every `firebase deploy`)
 
