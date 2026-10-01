@@ -11,17 +11,40 @@
 //   • WS-12: drive the real "Move Next" button and assert the value the APP WROTE to `participant
 //     workshop` (manualcompletion:true + status 'completed' on the current sub-challenge) — never a
 //     value the test wrote; the test only resets the precondition.
+//   • WS-41: the Email column's expected value is READ BACK from `participant metadata` (CF-owned
+//     field, see wsMetaNames) — the test never chooses the address it then asserts on.
+//   • WS-43: p0's name and email are normally the same string, so the case first stamps a name that
+//     shares nothing with the email; the row surviving a search for the email's local part can then
+//     only mean the app searched the email. Restored via alignWorkshopMetadataNames().
+//   • WS-44: the tag's condition (`workshoponly`) is a precondition write; the assertion is on what
+//     the app RENDERED from it — a text element with a painted background, and no new.png anywhere.
+//
+// Hook prefix: this screen's hooks are `wd-*` (workshop-dashboard.component.html).
 //
 // The dashboard query (`workshop participant enrolled where workshopref==<ref>`) and the participant-
 // workshop query are single-equality reads — NO composite index needed.
-import { test, expect } from '@playwright/test';
+import { test, expect, Locator } from '@playwright/test';
 import {
-  wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopMover, resetParticipantWorkshopP0,
+  wsActors, wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopMover,
+  resetParticipantWorkshopP0, alignWorkshopMetadataNames, p0MetadataEmail, stampP0DistinctName,
+  stampP0Workshoponly, wsP0SearchName,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
+
+/**
+ * Put a term in the progress-table search box the way a person does.
+ *
+ * The input is bound to `(keyup)="applyFilter($event)"` — Playwright's fill() dispatches `input` only,
+ * so it sets the value and the filter never runs. Clearing with fill('') is fine (the keyups that
+ * follow carry the complete value), but the term itself must arrive as real key events.
+ */
+async function typeSearch(search: Locator, term: string): Promise<void> {
+  await search.fill('');
+  await search.pressSequentially(term, { delay: 10 });
+}
 
 test.describe('Workshop dashboard — enrolled metric + progress + move-next (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
@@ -134,6 +157,160 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
     const afterSub1 = (after as any)!.challenges[0].challenges[1];
     expect(afterSub1.status, 'WS-12: sub-challenge[1] marked completed by the app').toBe('completed');
     expect(afterSub1.manualcompletion, 'WS-12: app set manualcompletion:true').toBe(true);
+  });
+
+  // ===========================================================================================
+  // WS-41 — the Email column sits immediately after Participant and renders the stored address
+  // ===========================================================================================
+  test('WS-41 Participant Progress Details shows an Email column right after Participant, with the stored address', async ({ page }) => {
+    // Precondition: the CF and the seed both write `participant metadata`.email, so read back whichever
+    // landed — the oracle is Firestore, never a literal in this file.
+    const storedEmail = await p0MetadataEmail();
+    expect(storedEmail, 'WS-41: precondition — p0 has a stored email').toBeTruthy();
+    expect(storedEmail, 'WS-41: precondition — the stored email looks like an address').toContain('@');
+
+    await loginAsWshopAdmin(page);
+    await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
+
+    // [REAL-UI] header row of the progress table, scoped to that table — "Total Enrolled" is a metric
+    // card elsewhere on the page and an unscoped header lookup would collide with the shell.
+    const headers = page.locator('table.progress-table tr[mat-header-row] th, table.progress-table th[mat-header-cell]');
+    await expect(headers.first(), 'WS-41: the progress table header must render').toBeVisible({ timeout: 90_000 });
+    const headerText = (await headers.allInnerTexts()).map((t) => t.trim()).filter(Boolean);
+
+    // [ASSERT] Email is a column, and it is the one straight after Participant. W_DASH is
+    // categorybased:false (seed-workshops.js), so the runtime-spliced "Type" column is absent here.
+    const pIdx = headerText.findIndex((t) => /^Participant$/i.test(t));
+    const eIdx = headerText.findIndex((t) => /^Email$/i.test(t));
+    expect(pIdx, `WS-41: a Participant header exists. Headers=${JSON.stringify(headerText)}`).toBeGreaterThanOrEqual(0);
+    expect(eIdx, `WS-41: an Email header exists. Headers=${JSON.stringify(headerText)}`).toBeGreaterThanOrEqual(0);
+    expect(eIdx, `WS-41: Email comes directly after Participant. Headers=${JSON.stringify(headerText)}`).toBe(pIdx + 1);
+
+    // [ASSERT] the cell renders the address the app read from `participant metadata` — compared to the
+    // Firestore value above, which this test did not write.
+    const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
+    await expect(p0Row, 'WS-41: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
+    await expect(p0Row.locator('.participant-email'), 'WS-41: the Email cell renders the stored address')
+      .toHaveText(storedEmail, { timeout: 30_000 });
+  });
+
+  // ===========================================================================================
+  // WS-42 — Total / Status / Assignment are parked: no header, no cell, and Move Next still there
+  // ===========================================================================================
+  test('WS-42 the Total, Status and Assignment columns are not rendered (and Action survives)', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
+
+    const headers = page.locator('table.progress-table tr[mat-header-row] th, table.progress-table th[mat-header-cell]');
+    await expect(headers.first(), 'WS-42: the progress table header must render').toBeVisible({ timeout: 90_000 });
+    const headerText = (await headers.allInnerTexts()).map((t) => t.trim()).filter(Boolean);
+
+    // [ASSERT] exact-match each parked header. A substring test would be wrong in both directions:
+    // "Total" is inside the "Total Enrolled" metric card, and "Current Challenge" contains neither.
+    for (const parked of ['Total', 'Status', 'Assignment']) {
+      expect(headerText.some((t) => t.toLowerCase() === parked.toLowerCase()),
+        `WS-42: "${parked}" is parked and must not be a column. Headers=${JSON.stringify(headerText)}`).toBe(false);
+    }
+    // The Review button lived only in the Assignment cell, so it goes with the column.
+    await expect(page.getByTestId('wd-review-assignment-38'), 'WS-42: the Assignment cell Review button is gone with its column')
+      .toHaveCount(0);
+
+    // [ASSERT] the columns that stayed are still there — this is a parking change, not a table rewrite.
+    for (const kept of ['Participant', 'Email', 'Current Challenge', 'Progress', 'Completed', 'Action']) {
+      expect(headerText.some((t) => t.toLowerCase() === kept.toLowerCase()),
+        `WS-42: "${kept}" must still be a column. Headers=${JSON.stringify(headerText)}`).toBe(true);
+    }
+    // mat-table throws "Could not find column with id" if a displayed id lost its cell definition; a
+    // rendered data row with the same cell count as the header proves every kept column still has one.
+    const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
+    await expect(p0Row, 'WS-42: the data row must render').toBeVisible({ timeout: 90_000 });
+    // Against the raw header count, not headerText.length — that array drops blank labels.
+    expect(await p0Row.locator('td').count(), 'WS-42: one data cell per header column').toBe(await headers.count());
+  });
+
+  // ===========================================================================================
+  // WS-43 — the search box matches on email, not just on name
+  // ===========================================================================================
+  test('WS-43 searching the participant list by email keeps the matching row and a miss empties it', async ({ page }) => {
+    // Precondition (anti-circular): p0's name and email are normally the SAME string (the CF sets
+    // metadata.name from profile_data.name, which the auth seed sets to the actor's email). Give p0 a
+    // name that shares nothing with the email, so only the email path can satisfy the search.
+    const storedEmail = await p0MetadataEmail();
+    expect(storedEmail, 'WS-43: precondition — p0 has a stored email').toBeTruthy();
+    await stampP0DistinctName();
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
+
+      const rows = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]');
+      await expect(rows.first(), 'WS-43: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
+      // The stamped name must actually be on screen before searching, or the search proves nothing about
+      // which field matched.
+      await expect(rows.first().locator('.participant-name'), 'WS-43: the row shows the stamped distinct name')
+        .toHaveText(wsP0SearchName, { timeout: 30_000 });
+      const baseline = await rows.count();
+      expect(baseline, 'WS-43: at least one row before filtering').toBeGreaterThanOrEqual(1);
+
+      // Scoped to the participants card: "Search by name or email" is a placeholder several other
+      // screens use too, and the dashboard opens dialogs that carry it (group chat, cohort picker).
+      const search = page.locator('mat-card.participants-card').getByPlaceholder('Search by name or email');
+      await expect(search, 'WS-43: the search field must render').toBeVisible({ timeout: 15_000 });
+
+      // [ASSERT] the email's local part is absent from the stamped name, from the profileid and from
+      // every other searched field — so the row surviving means the app searched the email.
+      const localPart = storedEmail.split('@')[0];
+      expect(wsP0SearchName.toLowerCase().includes(localPart.toLowerCase()),
+        `WS-43: precondition — the stamped name must not contain "${localPart}"`).toBe(false);
+      expect(wsProfileIds.p0.toLowerCase().includes(localPart.toLowerCase()),
+        `WS-43: precondition — the profileid must not contain "${localPart}"`).toBe(false);
+      // TRAP: the input is wired to (keyup), and Playwright's fill() dispatches only `input` — it would
+      // set the box and never run applyFilter(). pressSequentially() sends real key events per character.
+      await typeSearch(search, localPart);
+      await expect(rows, 'WS-43: the row matched on its email alone').toHaveCount(baseline, { timeout: 15_000 });
+
+      // [ASSERT] negative control — a term in no field at all empties the table, so the filter is really
+      // running and the match above was not just "the filter is a no-op".
+      await typeSearch(search, `nosuchparticipant-${RUN}-zzz`);
+      await expect(rows, 'WS-43: a term in no field filters every row out').toHaveCount(0, { timeout: 15_000 });
+    } finally {
+      await alignWorkshopMetadataNames();
+    }
+  });
+
+  // ===========================================================================================
+  // WS-44 — the "New" marker is a highlighted text tag, not the assets/new.png image
+  // ===========================================================================================
+  test('WS-44 a new participant is marked with a highlighted "New" text tag, no image', async ({ page }) => {
+    // Precondition: `workshoponly` is the flag the tag renders on. Not CF-owned, so this write stands.
+    await stampP0Workshoponly(true);
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
+
+      const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
+      await expect(p0Row, 'WS-44: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
+
+      // [ASSERT] the tag is text the app rendered from the flag, in the participant cell.
+      const badge = p0Row.locator('.new-badge');
+      await expect(badge, 'WS-44: the flagged participant carries a New tag').toBeVisible({ timeout: 30_000 });
+      await expect(badge, 'WS-44: the tag is the word New').toHaveText(/^New$/i);
+
+      // [ASSERT] it is a real element, not an <img> — the old marker was assets/new.png, and the point of
+      // the change is that the tag no longer depends on an image loading.
+      expect(await badge.evaluate((el) => el.tagName.toLowerCase()), 'WS-44: the tag is not an image').not.toBe('img');
+      await expect(p0Row.locator('img[src*="new.png"]'), 'WS-44: no new.png image anywhere in the row').toHaveCount(0);
+
+      // [ASSERT] and it is actually highlighted — a background the app painted, not the default
+      // transparent. Read from the live computed style, not from the stylesheet.
+      const bg = await badge.evaluate((el) => getComputedStyle(el).backgroundColor);
+      expect(bg, `WS-44: the tag has a highlight background. Got "${bg}"`).not.toMatch(/rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
+    } finally {
+      await stampP0Workshoponly(false);
+    }
   });
 });
 

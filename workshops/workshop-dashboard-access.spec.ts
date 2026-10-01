@@ -140,7 +140,10 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     // [ASSERT] no participant-progress grant → no Participant Data panel, and the row actions are gone.
     await expect(page.locator('#participantDataCard'), 'WDA-02: Participant Data is not granted').toHaveCount(0);
     await expect(page.getByTestId('wd-move-participant-to-next-37'), 'WDA-02: Move next is not granted').toHaveCount(0);
-    await expect(page.getByTestId('wd-review-assignment-38'), 'WDA-02: Review is not granted').toHaveCount(0);
+    // The Review button shared this grant, but the Assignment column was PARKED on 2026-10-01 — it is
+    // absent for everyone now, so asserting count 0 here would pass without testing the grant. Move next
+    // above carries the proof; WS-42 owns the column's absence. Restore if the column comes back:
+    //   await expect(page.getByTestId('wd-review-assignment-38'), 'WDA-02: Review is not granted').toHaveCount(0);
 
     // [ASSERT] the export grant IS honoured on the same table — proof the table rendered and that the
     // absences above are per-action, not a blanket failure to draw the page.

@@ -730,3 +730,48 @@ export async function resetEiflixHomeConfig(): Promise<void> {
   await admin.firestore().collection('classify').doc('eiflixwebapp')
     .set({ homeconfig: [], testrunid: RUN, _testdata: true }, { merge: true });
 }
+
+// =================================================================================================
+// 2026-10-01 — Participant Progress Details: Email column, email in search, text "New" tag.
+// =================================================================================================
+
+/**
+ * p0's stored email, read straight from Firestore — the INDEPENDENT oracle for the Email column.
+ *
+ * Never hard-code the expected address: `participant metadata`.email is CF-OWNED (see wsMetaNames
+ * above), so whichever of the seed or the trigger wrote last is the value the dashboard renders.
+ * Reading it back makes the assertion correct in both orders without the test choosing the value.
+ */
+export async function p0MetadataEmail(): Promise<string> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0).get();
+  return String((snap.data() || {})['email'] || '');
+}
+
+/**
+ * PRECONDITION: give p0 a display name that shares NO substring with their email, so a search for the
+ * email can only match through the email. Without this the two are identical (the CF sets
+ * metadata.name := profile_data.name, which seedAuthChain sets to the actor's EMAIL), and a passing
+ * search would prove nothing — the name path would satisfy it.
+ *
+ * Restore with alignWorkshopMetadataNames(), which puts the CF's terminal name back.
+ */
+export const wsP0SearchName = `ZZ Searchable ${RUN}`;
+export async function stampP0DistinctName(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0)
+    .set({ name: wsP0SearchName }, { merge: true });
+}
+
+/**
+ * PRECONDITION: flip p0's `workshoponly` flag — the condition the dashboard renders the "New" tag on.
+ * Not a CF-owned field (the trigger merges only name/email/countrycode/phonenumber), so this write
+ * stands. Pass false to remove it again; the suite runs with workers:1, so the stamp is not racing
+ * another case.
+ */
+export async function stampP0Workshoponly(on: boolean): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0)
+    .set({ workshoponly: on ? true : FV.delete() }, { merge: true });
+}
