@@ -161,7 +161,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 | **profiles** | `playwright.profiles.config.ts` | 85 | 11 | 0 | Profile data, analytics, `*_to_pmd` CF effects, bulk-add-products, view-participants-form filters, participant-intelligence (emulator 2026-09-25; PA-CF-* need the functions emulator) |
 | **evomap** | `playwright.evomap.config.ts` | 13 | 1 | 0 | Evolution mapping authoring + render |
 | **authroles** | `playwright.authroles.config.ts` | 18 | 1 | 2 | Login gate, data-driven authGuard, nav visibility |
-| **journey** | `playwright.journey.config.ts` | 81 | 27 | 0 | Purchase/onboard, sales-lead, product-delivery*, JC health, FTO / team-evolution dashboard (JTED) |
+| **journey** | `playwright.journey.config.ts` | 83 | 27 | 0 | Purchase/onboard, sales-lead, product-delivery*, JC health, FTO / team-evolution dashboard (JTED), delivery-dashboard stuck cases (DDC-STK) |
 | **business** | `playwright.business.config.ts` | 20 | 1 | 0 | Expense planner, zones, HPC, quizzes, touchpoints |
 
 \* the journey product-delivery cases (JP-PD/JP-EDIT) **validate two real production source fixes** end-to-end

@@ -473,6 +473,9 @@ async function seedJourney() {
   // 7) FTO / TEAM EVOLUTION world (journey/team-evolution.spec.ts, JTED-*) ==========================
   await seedFto(db, T);
 
+  // 8) DELIVERY DASHBOARD STUCK CASES world (journey/delivery-dashboard-stuck.spec.ts, DDC-STK-*) ======
+  await seedDdcStuck(db, T);
+
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
     names: {
@@ -607,6 +610,64 @@ const FTO_SEEDED = [
   'participant metadata', 'participantsproduct', 'participantdeliverysequence',
 ];
 
+// ── DELIVERY DASHBOARD — STUCK CASES (DDC-STK-*) ─────────────────────────────────────────────────────
+// Rule under test (app bb5bca74, mahalakshmi 2026-09-29): an initiated|ongoing participantsproduct is a
+// Stuck Case when its most recent ATTENDED appointment (appointments.participantproductid == the PP's
+// docid, attended == true, newest endtime) ended >= 15 days ago. Before bb5bca74 it was "15 days since
+// statusdate" — so EVERY PP here carries a 20-day-old statusdate: under the old rule all five would be
+// stuck, and the four controls below are what prove the new rule ran.
+//   STALE   ongoing   · attended appt ended 18d ago + a NEWER UNattended appt (2d) → STUCK, DAYS "18";
+//                       carries subscriptionstart/end so the two new columns have something to render
+//   RECENT  initiated · attended appt ended 3d ago                                → not stuck
+//   NOAPPT  ongoing   · no appointment at all                                    → not stuck (dropped)
+//   UNATT   ongoing   · only an UNattended appt 30d ago                          → not stuck
+//   DONE    completed · attended appt ended 40d ago                              → not stuck (status)
+// Own run tag + own product, so the FTO world's JTED counts are untouched. CF-consistent like seedFto:
+// every PP has sequenceorder + statusdate; metadata.activeproduct is what productsdata_to_pmd derives.
+const DDC_RUN = `${TESTRUNID}_ddc`;
+const DDC = {
+  P: `${DDC_RUN}_P_DFU`,
+  names: { product: `DDC Stuck Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
+  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE'],
+  subStart: Date.UTC(2026, 0, 15, 12), subEnd: Date.UTC(2027, 0, 14, 12),
+};
+const ddcPf = (k) => `${DDC_RUN}_pf_${k.toLowerCase()}`;
+const ddcPp = (k) => `${DDC_RUN}_PP_${k}`;
+const ddcName = (k) => `${DDC.names.tag} ${k[0]}${k.slice(1).toLowerCase()}`;
+
+async function seedDdcStuck(db, T) {
+  const tag = TAG(DDC_RUN);
+  const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
+  const ago = (d) => T.fromMillis(Date.now() - d * 86400e3 - 2 * 3600e3);   // +2h: clear of the floor() edge
+
+  await set('products', DDC.P, { id: DDC.P, product: DDC.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+
+  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed' };
+  for (const k of DDC.people) {
+    await set('participant metadata', ddcPf(k), {
+      profileid: ddcPf(k), name: ddcName(k), email: `${ddcPf(k)}@example.com`, customerstatus: 'active',
+      activeproduct: k === 'DONE' ? [] : [DDC.P], consumedproducts: k === 'DONE' ? [DDC.P] : [],
+    });
+    await set('participantsproduct', ddcPp(k), {
+      profileid: ddcPf(k), productref: db.collection('products').doc(DDC.P), status: status[k], sequenceorder: 0,
+      statusdate: { [status[k]]: ago(20) },
+      ...(k === 'STALE' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
+    });
+  }
+
+  const appt = (id, k, endDaysAgo, attended) => set('appointments', `${DDC_RUN}_${id}`, {
+    participantproductid: ddcPp(k), profileid: ddcPf(k), attended, cancelled: false,
+    starttime: ago(endDaysAgo), endtime: ago(endDaysAgo),
+  });
+  await appt('APT_STALE_DONE', 'STALE', 18, true);   // 18 ≠ the 20d statusdate, so DAYS ≠ DAYS STUCK
+  await appt('APT_STALE_NOSHOW', 'STALE', 2, false);   // newer, but unattended — must not reset the clock
+  await appt('APT_RECENT', 'RECENT', 3, true);
+  await appt('APT_UNATT', 'UNATT', 30, false);
+  await appt('APT_DONE', 'DONE', 40, true);
+}
+
+const DDC_SEEDED = ['products', 'participant metadata', 'participantsproduct', 'appointments'];
+
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
 const SEEDED = [
   'journey', 'products', 'package', 'journey-to-product', 'productToDeliverySequence',
@@ -636,7 +697,8 @@ async function teardownJourney() {
   const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID)
-    + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN);
+    + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN)
+    + await seed.teardownCollections(db, DDC_SEEDED, DDC_RUN);
 
   // APP-written docs (no testrunid) — delete by their natural key (profileid). Covers JP-06's new
   // journeyproductpurchase / participant purchase logs and JP-09's email archive doc.
@@ -658,7 +720,7 @@ async function teardownJourney() {
   return n + appDeleted;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, seedJourney, teardownJourney };
+module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, DDC_RUN, DDC, seedJourney, teardownJourney };
 
 if (require.main === module) {
   const mode = process.argv[2];
