@@ -16,6 +16,11 @@
 //   • WS-43: p0's name and email are normally the same string, so the case first stamps a name that
 //     shares nothing with the email; the row surviving a search for the email's local part can then
 //     only mean the app searched the email. Restored via alignWorkshopMetadataNames().
+//     This case is ALSO the regression test for the crash it found on 2026-10-01: the predicate
+//     dereferenced a sub-challenge's `name` bare, and the seeded sub-challenges carry `heading`
+//     instead — so typing in the box threw, MatTableDataSource aborted the filter pass, and the
+//     table silently stopped responding. The console guard catches the throw; the negative-control-
+//     first ordering catches the silence.
 //   • WS-44: the tag's condition (`workshoponly`) is a precondition write; the assertion is on what
 //     the app RENDERED from it — a text element with a painted background, and no new.png anywhere.
 //
@@ -268,13 +273,19 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
         `WS-43: precondition — the profileid must not contain "${localPart}"`).toBe(false);
       // TRAP: the input is wired to (keyup), and Playwright's fill() dispatches only `input` — it would
       // set the box and never run applyFilter(). pressSequentially() sends real key events per character.
-      await typeSearch(search, localPart);
-      await expect(rows, 'WS-43: the row matched on its email alone').toHaveCount(baseline, { timeout: 15_000 });
-
-      // [ASSERT] negative control — a term in no field at all empties the table, so the filter is really
-      // running and the match above was not just "the filter is a no-op".
+      //
+      // ORDER MATTERS, and this is the lesson from the 2026-10-01 CI run. The negative control goes
+      // FIRST. A filterPredicate that throws leaves filteredData untouched, so every row stays — which
+      // is indistinguishable from "the email matched" if the positive case runs first. Proving the
+      // filter can REMOVE the row is what makes the positive case afterwards mean anything.
       await typeSearch(search, `nosuchparticipant-${RUN}-zzz`);
-      await expect(rows, 'WS-43: a term in no field filters every row out').toHaveCount(0, { timeout: 15_000 });
+      await expect(rows, 'WS-43: a term in no field filters every row out (filter is live, not throwing)')
+        .toHaveCount(0, { timeout: 15_000 });
+
+      // [ASSERT] now the row comes BACK for a term that exists only in the email — so the match is the
+      // app reading the email, and not a filter that never ran.
+      await typeSearch(search, localPart);
+      await expect(rows, 'WS-43: the row returns, matched on its email alone').toHaveCount(baseline, { timeout: 15_000 });
     } finally {
       await alignWorkshopMetadataNames();
     }
