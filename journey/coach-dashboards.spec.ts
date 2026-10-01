@@ -13,7 +13,7 @@
 // participantjourneyproduct document, and the test derives the same number independently through the Admin
 // SDK. Two readers of the same data, and the test writes neither the tally nor the view.
 import { test, expect } from '@playwright/test';
-import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin } from './support/journey';
+import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin, journeyNames, jcdAssuredLeads } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
 
@@ -176,5 +176,35 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
     const row = page.getByTestId('jcd-ph-needsattn-row').first();
     await expect(row, 'JCD-03: at least one participant needs outreach in the seeded base').toBeVisible({ timeout: 60_000 });
     await expect(row, 'JCD-03: the row carries priority.engine\'s reason, not a bare status line').toContainText('→');
+  });
+
+  // JCD-04 — Assured Sales: an empty Journey cell falls back to the sale's product (app d86af3ea)
+  //
+  // formatCellValue() returned '-' for an empty `journey` on the sales tables; it now resolves the row's
+  // productref through the dashboard's own products map. SEEDED: SLP (journey '', productref → P1) and the
+  // control SLJ (journey J1 AND productref → P1), both assured (paymentplan set) this month.
+  // ANTI-CIRCULARITY: the test writes ids only; both cell texts are names the app looks up itself — the
+  // product name from `products`, the journey name from `journey`. SLJ proves the fallback fires ONLY on
+  // an empty journey (otherwise its cell would read the product too).
+  test('JCD-04 Assured Sales shows the product name when a sale has no journey — and the journey when it has one', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    await page.getByTestId('jcd-lnk-assured-table').click();
+    const table = page.locator('table.jcd-table');
+    // header text is "Journey" + the sort icon (⇅), so match the leading word
+    const journeyCol = table.locator('th').filter({ hasText: /^\s*Journey\b/ });
+    await expect(journeyCol, 'JCD-04: the Assured Sales table opens with a Journey column').toHaveCount(1, { timeout: 30_000 });
+    // the column's position among the header cells (S.No is index 0 — it is a th too)
+    const ths = await table.locator('thead th').allTextContents();
+    const jIdx = ths.findIndex((t) => /^\s*Journey\b/.test(t));
+    const journeyCell = (name: string) => table.locator('tr.jcd-tr').filter({ hasText: name }).locator('td').nth(jIdx);
+
+    await page.getByTestId('jcd-inp-133').fill(`JCD Assured`);
+    await expect(journeyCell(jcdAssuredLeads.productOnly), 'JCD-04: a product-only sale shows its PRODUCT in the Journey cell')
+      .toHaveText(journeyNames.product1, { timeout: 60_000 });
+    await expect(journeyCell(jcdAssuredLeads.withJourney), 'JCD-04: a sale with a journey keeps showing the JOURNEY')
+      .toHaveText(journeyNames.journey1);
   });
 });

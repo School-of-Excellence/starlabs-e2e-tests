@@ -162,6 +162,12 @@ export const ddcStuckWorld = {
   subscription: { start: 'Jan 15, 2026', end: 'Jan 14, 2027' },
 };
 
+/** JE dashboard Assured Sales leads (seed-journey.js, JCD-04). */
+export const jcdAssuredLeads = {
+  productOnly: `JCD Assured Product Only ${RUN}`,
+  withJourney: `JCD Assured With Journey ${RUN}`,
+};
+
 export const jchTexts = {
   criticalLetter: `JCH critical letter ${RUN}`,
   askQuestion: `JCH ask question ${RUN}`,

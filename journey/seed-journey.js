@@ -84,6 +84,8 @@ const ID = {
   PJP_ONB: `${TESTRUNID}_PJP_ONB`,  // participantjourneyproduct (journeyref J1, initiated, paymentplan set, NOT onboarded) — JP-08 + JP-09 (the single deterministic onboard target for p1)
   SL1: `${TESTRUNID}_SL1`,          // salesleads doc (status null) — JP-10 reject (test-project-only, no Watson)
   SL2: `${TESTRUNID}_SL2`,          // salesleads doc (pending, initial payment APPROVED) — JP-27..32 approve
+  SLP: `${TESTRUNID}_SLP`,          // salesleads doc — ASSURED, product-only (journey '') — JCD-04
+  SLJ: `${TESTRUNID}_SLJ`,          // salesleads doc — ASSURED, journey + product (negative control) — JCD-04
   DF1: `${TESTRUNID}_DF1`,          // delivery forms doc with a formarray — formtemplate render (JP-16) + a deliverysequence-authoring activity option (JP-AUTH)
   APT1: `${TESTRUNID}_APT1`,        // appointmenttype doc — a second deliverysequence-authoring activity option
   EMT1: `${TESTRUNID}_EMT1`,        // email templates doc (active:true) — JP-09 onboarding email template
@@ -350,6 +352,21 @@ async function seedJourney() {
     initialpaymentapproved: true,
     ...tag,
   });
+
+  //    JCD-04 (app d86af3ea, sashong 2026-09-29): two ASSURED sales leads (paymentplan set, purchased in the
+  //    current month) for the JE dashboard's Assured Sales table. SLP is a product-only sale — `journey` is
+  //    empty, `productref` → P1 — so the Journey cell must fall back to the product's name. SLJ is the
+  //    negative control: it carries BOTH a journey and a productref, and must show the journey, not the
+  //    product. status 'approved' keeps both out of the /salesleads pending queue JP-10/27..32 drive.
+  for (const [id, journey, label] of [[ID.SLP, '', 'Product Only'], [ID.SLJ, ID.J1, 'With Journey']]) {
+    await db.collection('salesleads').doc(id).set({
+      docid: id, profileid: `${TESTRUNID}_pf_${id.slice(-3).toLowerCase()}`, name: `JCD Assured ${label} ${TESTRUNID}`,
+      email: `${id.toLowerCase()}@example.com`, journey, productref: productRef(ID.P1), journeytype: 'new',
+      status: 'approved', paymentplan: 'monthly', paymentplanassureddate: T.fromMillis(Date.now() - 60e3),
+      date: T.fromMillis(Date.now() - 60e3), purchasedate: T.fromMillis(Date.now() - 60e3),
+      totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, salespersonname: 'E2E Seeder', ...tag,
+    });
+  }
 
   //    delivery forms doc with a formarray — formtemplate route (?id=DF1) builds the form from this
   //    (JP-16 render), and it is also a "Form" delivery activity option in the deliverysequence
