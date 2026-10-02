@@ -17,7 +17,13 @@
 // SIDE EFFECT (recon Risk #14): rendering this screen WRITES an `eiflixdailywatchers` rollup keyed by a
 // shared day id (ts:1227/1247). Nothing here asserts on it; teardown removes what the run created.
 import { test, expect } from '@playwright/test';
-import { installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds, alignWorkshopMetadataNames } from './support/wshop';
+import {
+  installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
+  alignWorkshopMetadataNames,
+  // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
+  // object yields `undefined` silently (the hub has no tsc step).
+  wsAddNames, seedUserTypeLoginLogs, clearUserTypeLoginLogs,
+} from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { countWhere } from '../queue/support/firestore-admin';
 
@@ -181,5 +187,108 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs
     expect(section.getByTestId('eif-logs-count')).toBeTruthy();
     expect(section.getByTestId('eif-logs-sort-name')).toBeTruthy();
     expect(section.getByTestId('eif-logs-sort-os')).toBeTruthy();
+  });
+});
+
+// =============================================================================================
+// WS-45 — EiFlix Mobile App Logs: the New users / Existing users filter.
+//
+// Anti-circularity: the rule under test is the dashboard's OWN definition of a new user — the one
+// its "Total New Users" card uses (new_user_data with movedtoexist !== true). The case seeds one
+// login from each side of that rule and asserts which rows the app leaves on screen; it never reads
+// the app's own classification back into its expectation.
+//
+// The subtle half is NU_C: a new_user_data record that HAS been moved to paid. It must land under
+// Existing, not New — otherwise the filter and the two cards above it would disagree about the same
+// person. A two-way split that silently dropped them would pass a naive "New shows fewer rows" test.
+//
+// Separate describe with its own seeder: WS-31 asserts exact tallies ("2 of 2 unique people", four
+// rows in 30D), so these extra people must not exist while it runs.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: app log user-type filter', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedLoginLogs();
+    await seedUserTypeLoginLogs();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearUserTypeLoginLogs();
+    await clearLoginLogs();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-45 the user-type filter splits the log into new and existing, with moved-to-paid counted as existing', async ({ page }) => {
+    // Preconditions on the constants themselves: an undefined name would turn every `filter({hasText})`
+    // below into a match-everything locator, and the case would fail somewhere far from the cause.
+    expect(wsAddNames.nuAlpha, 'WS-45: the new user name constant resolves').toBeTruthy();
+    expect(wsAddNames.nuCharlie, 'WS-45: the moved-to-paid user name constant resolves').toBeTruthy();
+    expect(wsMetaNames.p0, 'WS-45: the participant name constant resolves').toBeTruthy();
+    expect(wsMetaNames.p1, 'WS-45: the second participant name constant resolves').toBeTruthy();
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-logs-section');
+    await expect(section, 'WS-45: the logs section renders').toBeVisible({ timeout: 60_000 });
+
+    const rows = section.getByTestId('eif-logs-row');
+    const rowFor = (name: string) => rows.filter({ hasText: name });
+
+    // Baseline (Today, no filter): all four of today's EiFlix logins are on screen — two existing
+    // people, one still-new person, one moved-to-paid person.
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: the new user logged in today').toHaveCount(1, { timeout: 60_000 });
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-45: the moved-to-paid user logged in today').toHaveCount(1);
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: an existing participant logged in today').toHaveCount(1);
+    await expect(rowFor(wsMetaNames.p1), 'WS-45: a second existing participant logged in today').toHaveCount(1);
+
+    const typeFilter = section.getByTestId('eif-logs-usertype-filter');
+    await expect(typeFilter, 'WS-45: the user-type filter renders').toBeVisible({ timeout: 15_000 });
+
+    // ---- New users -------------------------------------------------------------------------
+    await typeFilter.click();
+    await page.getByTestId('eif-logs-usertype-new').click();
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: New keeps the still-new user').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: New drops an existing participant').toHaveCount(0);
+    await expect(rowFor(wsMetaNames.p1), 'WS-45: New drops the second existing participant').toHaveCount(0);
+    // [ASSERT] the load-bearing one: moved to paid is NOT new any more.
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-45: New drops the moved-to-paid user').toHaveCount(0);
+
+    // ---- Existing users --------------------------------------------------------------------
+    await typeFilter.click();
+    await page.getByTestId('eif-logs-usertype-existing').click();
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: Existing keeps the participants').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsMetaNames.p1), 'WS-45: Existing keeps the second participant').toHaveCount(1);
+    // [ASSERT] the other half of the same rule — the split is total, nobody falls through it.
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-45: Existing picks up the moved-to-paid user').toHaveCount(1);
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: Existing drops the still-new user').toHaveCount(0);
+
+    // ---- All users brings both halves back, on its own ---------------------------------------
+    await typeFilter.click();
+    await page.getByTestId('eif-logs-usertype-all').click();
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: All restores the new user').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-45: All restores the moved-to-paid user').toHaveCount(1);
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: All restores the participants').toHaveCount(1);
+    await expect(section.getByTestId('eif-logs-clear'), 'WS-45: back to All is back to no filters').toHaveCount(0);
+
+    // ---- It stacks with the other filters, and Clear counts it ------------------------------
+    await typeFilter.click();
+    await page.getByTestId('eif-logs-usertype-existing').click();
+    await section.getByTestId('eif-logs-os-filter').click();
+    await page.getByTestId('eif-logs-os-option').filter({ hasText: 'ios' }).click();
+    await expect(rowFor(wsMetaNames.p1), 'WS-45: Existing + ios keeps the ios participant').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: Existing + ios drops the android participant').toHaveCount(0);
+    await expect(section.getByTestId('eif-logs-clear'), 'WS-45: both filters are counted').toContainText('2');
+
+    // Clear puts the user type back to All along with everything else.
+    await section.getByTestId('eif-logs-clear').click();
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: Clear restores the new user').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsMetaNames.p0), 'WS-45: Clear restores the participants').toHaveCount(1);
+    await expect(section.getByTestId('eif-logs-clear'), 'WS-45: no filters left to clear').toHaveCount(0);
   });
 });

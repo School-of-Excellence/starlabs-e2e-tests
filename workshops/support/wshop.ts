@@ -775,3 +775,61 @@ export async function stampP0Workshoponly(on: boolean): Promise<void> {
   await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0)
     .set({ workshoponly: on ? true : FV.delete() }, { merge: true });
 }
+
+// =================================================================================================
+// 2026-10-02 — New users / Existing users filter on the EiFlix Mobile App Logs.
+// =================================================================================================
+
+/**
+ * Extra `loginlog` rows for the user-type filter, kept SEPARATE from seedLoginLogs() on purpose.
+ *
+ * WS-31 asserts exact tallies off that seed ("2 of 2 unique people", four rows in 30D, three name
+ * options). Adding people to it would have rewritten every one of those numbers. These rows exist
+ * only for the duration of the user-type case's own describe.
+ */
+export const wsLogUserTypeIds = {
+  newUserRow: `${RUN}_ll_today_nu_new`,
+  paidUserRow: `${RUN}_ll_today_nu_paid`,
+};
+
+/**
+ * PRECONDITION for the user-type filter: two more EiFlix logins today, one from each side of the
+ * rule the dashboard's own cards use.
+ *
+ *   NU_A — a `new_user_data` record with no `movedtoexist`  → still a NEW user
+ *   NU_C — the same, flipped to `movedtoexist: true`        → counts as EXISTING
+ *
+ * NU_C is the doc this suite already treats as mutable (resetNewUserTags), and flipping a field
+ * changes no document COUNT, so WS-30's floor over `new_user_data` is untouched. Restored by
+ * clearUserTypeLoginLogs().
+ *
+ * Neither NU person has a `participant metadata` row, so the table shows their new_user_data name
+ * ("NU Alpha <run>" / "NU Charlie <run>") — the CF that rewrites metadata names never touches them.
+ */
+export async function seedUserTypeLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const today = T.fromDate(new Date());
+  await db.collection('new_user_data').doc(wsAddIds.NU_C).set({ movedtoexist: true }, { merge: true });
+  await Promise.all([
+    db.collection('loginlog').doc(wsLogUserTypeIds.newUserRow).set({
+      docid: wsLogUserTypeIds.newUserRow, app: 'EiFlix', profileid: wsAddIds.NU_A,
+      date: today, device_os: 'android', current_version: '3.0.0', testrunid: RUN, _testdata: true,
+    }),
+    db.collection('loginlog').doc(wsLogUserTypeIds.paidUserRow).set({
+      docid: wsLogUserTypeIds.paidUserRow, app: 'EiFlix', profileid: wsAddIds.NU_C,
+      date: today, device_os: 'ios', current_version: '3.0.1', testrunid: RUN, _testdata: true,
+    }),
+  ]);
+}
+
+/** Undo seedUserTypeLoginLogs: drop the two rows and put NU_C back to "not moved". */
+export async function clearUserTypeLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  await db.collection('new_user_data').doc(wsAddIds.NU_C).set({ movedtoexist: FV.delete() }, { merge: true });
+  await Promise.all(Object.values(wsLogUserTypeIds).map(id =>
+    db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}
