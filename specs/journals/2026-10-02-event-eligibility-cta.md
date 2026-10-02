@@ -34,3 +34,10 @@ profiles 87 pass / 11 skip (PA-34 its `test.fail()`); PA-08 failed only because 
 events' `evt_journey_1` + workshops' `wshop_jrn_big` (journey docs with no `journey` field) — participants-analytics'
 journey typeahead does `e.journey.trim()` and throws on them. CI spawns one emulator per suite, so they never meet;
 with the two leftovers removed PA-08 passes. modes 79 pass / 4 skip.
+
+## EPC-ELIG-01 (surya 7835cb21 — buckets wired)
+Seed 9f: own event + product + arena (eligibility journey EVL, status ['active']) so EPC-01/02 are untouched; six
+requesters, one per bucket (ELIG / UPG journey mismatch / ADD not owner / CONT non active / NE discontinued) and
+APPR approved — Requested must read 5 and every bucket exactly 1, which only holds if approved people are excluded
+and each rule fires on its own requester. Passed first run. Note the app computes buckets on overview load, not on
+metadata arrival — on the emulator metadata wins the race; if this case ever reads "Not eligible 5", that race is why.

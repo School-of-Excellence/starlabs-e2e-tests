@@ -6,6 +6,7 @@
 //   evl  — EventListComponent          (event-list.component.html; Configure CTA button)
 //   ued  — UpdateEventDetailComponent  (update-event-detail.component.html; eligibility block)
 //   ecta — EventCtaConfigComponent     (event-cta-config.component.html; the CTA dialog)
+//   epc  — EventParticipationConfirmationsComponent (overview row; eligibility buckets, surya 7835cb21)
 //
 // Reference: starlabs-angular specs/journals/2026-10-02-pull-surya-event-eligibility-cta.md.
 //
@@ -14,6 +15,9 @@
 //   big marathon LIVE (status 'live') + cohort `EVL Live Cohort <run>`
 //   big marathon OLD  (status 'completed') + cohort `EVL Old Cohort <run>`   ← NEGATIVE CONTROL
 //   classify/eventcta + classify/eventstatusmessage with run-unique strings
+//   (9f) an event + arena product whose `eligibility` = journey EVL, status ['active']; six requesters:
+//        ELIG (active, journey, owner) · UPG (journey mismatch) · ADD (not owner) · CONT (non active) ·
+//        NE (discontinued) · APPR (approved — must land in NO bucket)
 //
 // ANTI-CIRCULARITY. UED-ELIG-01 only clicks and types a search term; which cohorts are offered is the
 // app's own join (live marathons → cohorts by marathonref) — the OLD cohort proves the status filter ran.
@@ -21,10 +25,16 @@
 // read of the docs the app WROTE (the test types one value and checks the rest survived the whole-doc
 // setDoc), and that an invalid form writes nothing.
 //
+// EPC-ELIG-01: every bucket count is the app's own classification of joined docs (metadata status/journey ×
+// product ownership × the arena's rules); the seed writes one requester per bucket and an APPROVED one that
+// proves approved requesters are excluded (Requested stays 5, each bucket exactly 1).
+//
 // NOT COVERED: saving an event with eligibility (the editor's Save needs a full event + arena product +
-// image pipeline); the eligibility BUCKETS on the confirmations screen (surya 573e1f59 — not wired yet).
+// image pipeline); the funnel drill-down's new breakdown rows; the cohort / consumption rules in buckets.
 import { test, expect, Page } from '@playwright/test';
 import { installEvtStubs, loginAsEvtAdmin, evtEligibility as E, evtCta as C, restoreCtaConfig } from './support/events';
+
+const RUN = process.env.EVT_RUNID || 'evt';
 import { getDoc } from '../queue/support/firestore-admin';
 
 test.beforeEach(async ({ page }) => {
@@ -86,6 +96,26 @@ test.describe('Events — event editor eligibility + Configure CTA (live-maratho
     await expect(page.getByTestId('ued-consumption-count')).toHaveValue('2');
     await page.getByTestId('ued-consumption-remove').click();
     await expect(page.getByTestId('ued-consumption-product'), 'UED-ELIG-01: the rule row is removed').toHaveCount(0);
+  });
+
+  test('EPC-ELIG-01 the confirmations overview splits requesters into Eligible / Upgrade / Addon / Continuity / Not eligible', async ({ page }) => {
+    await page.goto('/event-participation-confirmation', { waitUntil: 'domcontentloaded' });
+    const row = page.getByTestId('epc-overview-row').filter({ hasText: `EVL Bucket Product ${RUN}` });
+    await expect(row, 'EPC-ELIG-01: the bucket arena event is listed (upcoming)').toHaveCount(1, { timeout: 60_000 });
+
+    // column positions from the header (the row's cells line up with these th)
+    const heads = (await page.locator('table th').allTextContents()).map((t) => t.trim());
+    const cell = (label: string) => row.locator('td').nth(heads.indexOf(label));
+    for (const label of ['Requested', 'Eligible', 'Upgrade', 'Addon', 'Continuity', 'Not eligible', 'Approved']) {
+      expect(heads.indexOf(label), `EPC-ELIG-01: the overview has a "${label}" column`).toBeGreaterThan(-1);
+    }
+    await expect(cell('Eligible'), 'EPC-ELIG-01: active + journey + owner → Eligible').toHaveText('1', { timeout: 60_000 });
+    await expect(cell('Upgrade'), 'EPC-ELIG-01: journey mismatch → Upgrade').toHaveText('1');
+    await expect(cell('Addon'), 'EPC-ELIG-01: not an owner → Addon').toHaveText('1');
+    await expect(cell('Continuity'), 'EPC-ELIG-01: non active + journey → Continuity').toHaveText('1');
+    await expect(cell('Not eligible'), 'EPC-ELIG-01: neither active nor non active → Not eligible').toHaveText('1');
+    await expect(cell('Requested'), 'EPC-ELIG-01: the approved requester is not counted as requested').toHaveText('5');
+    await expect(cell('Approved'), 'EPC-ELIG-01: …it is counted as Approved').toHaveText('1');
   });
 
   test.describe('Configure CTA', () => {

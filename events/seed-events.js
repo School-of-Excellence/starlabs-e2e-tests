@@ -117,6 +117,9 @@ const ID = {
   ELIG_MAR_OLD: `${TESTRUNID}_elig_mar_old`,    // big marathon status 'completed' → its cohort is NOT offered
   ELIG_COH_LIVE: `${TESTRUNID}_elig_coh_live`,
   ELIG_COH_OLD: `${TESTRUNID}_elig_coh_old`,
+  BK_EVENT: `${TESTRUNID}_bk_event`,            // event collection for the eligibility-bucket world (EPC-ELIG-01)
+  BK_PRODUCT: `${TESTRUNID}_bk_product`,
+  BK_ARENA: `${TESTRUNID}_bk_arena`,            // arena events with an `eligibility` block
 };
 
 const STAGE_A = 'Stage A';                 // EVT-15/16 single seeded queue stage
@@ -337,6 +340,49 @@ async function seedEvents() {
   await db.collection('classify').doc('eventstatusmessage').set({
     requested: { message: `Requested msg ${TESTRUNID}` }, confirmationmessage: { message: `Confirmed msg ${TESTRUNID}` }, ...tag,
   });
+
+  // 9f) ELIGIBILITY BUCKETS (EPC-ELIG-01, app 7835cb21 surya) — the confirmations overview splits an arena
+  //     event's REQUESTED participants into Eligible / Upgrade / Addon / Continuity / Not eligible from the
+  //     arena's `eligibility` (here: journey ELIG_J, customer status ['active'], no cohort/consumption rule),
+  //     the requester's participant metadata (customerstatus + activejourney) and product ownership
+  //     (participantsproduct on the arena product with status null). One requester per bucket, plus an
+  //     APPROVED one that must land in no bucket. Own event + product, so EPC-01/02's counts are untouched.
+  const BK_START = T.fromMillis(Date.now() - 86400e3), BK_END = T.fromMillis(Date.now() + 10 * 86400e3);
+  await db.collection('event collection').doc(ID.BK_EVENT).set({
+    docid: ID.BK_EVENT, name: `EVL Bucket Event ${TESTRUNID}`, start_date: BK_START, end_date: BK_END,
+    startdate: BK_START, enddate: BK_END, delete: false, ...tag,
+  });
+  await productRef(ID.BK_PRODUCT).set({ id: ID.BK_PRODUCT, docid: ID.BK_PRODUCT, product: `EVL Bucket Product ${TESTRUNID}`, atcmodel: null, ...tag });
+  await db.collection('arena events').doc(ID.BK_ARENA).set({
+    docid: ID.BK_ARENA, eventref: db.collection('event collection').doc(ID.BK_EVENT), productref: productRef(ID.BK_PRODUCT),
+    title: `EVL Bucket Arena ${TESTRUNID}`, startdate: BK_START, enddate: BK_END, delete: false,
+    eligibility: { journeyid: [ID.ELIG_J], cohortid: [], customerstatus: ['active'], productconsumption: [] }, ...tag,
+  });
+  //   key        customerstatus  activejourney        owns product  EPR        → bucket
+  const BUCKETS = [
+    ['ELIG',  'active',       ID.ELIG_J,             true,  'requested'],  // → eligible
+    ['UPG',   'active',       `${TESTRUNID}_jr_x`,   true,  'requested'],  // journey mismatch → upgrade
+    ['ADD',   'active',       ID.ELIG_J,             false, 'requested'],  // not an owner → addon
+    ['CONT',  'non active',   ID.ELIG_J,             true,  'requested'],  // non active, journey matches → continuity
+    ['NE',    'discontinued', ID.ELIG_J,             true,  'requested'],  // neither status → not eligible
+    ['APPR',  'active',       ID.ELIG_J,             true,  'approved'],   // approved → counted Approved, in NO bucket
+  ];
+  for (const [k, cs, jr, owns, st] of BUCKETS) {
+    const pf = `${TESTRUNID}_pf_bk_${k.toLowerCase()}`;
+    await db.collection('participant metadata').doc(pf).set({
+      profileid: pf, name: `EVL Bucket ${k} ${TESTRUNID}`, email: `${pf}@example.com`,
+      customerstatus: cs, activejourney: jr, consumedproducts: [], ...tag,
+    });
+    await db.collection('event participation request').doc(`${TESTRUNID}_epr_bk_${k.toLowerCase()}`).set({
+      profileid: pf, arenaeventid: ID.BK_ARENA, eventref: db.collection('event collection').doc(ID.BK_EVENT),
+      productref: productRef(ID.BK_PRODUCT), status: st, ...tag,
+    });
+    if (owns) {
+      await db.collection('participantsproduct').doc(`${TESTRUNID}_pp_bk_${k.toLowerCase()}`).set({
+        profileid: pf, productref: productRef(ID.BK_PRODUCT), status: null, sequenceorder: 0, ...tag,
+      });
+    }
+  }
 
   // 9c) PARTICIPANT METADATA — events-stage-data (ESD-01) does a per-profile getDoc for every row it
   //     builds; without this doc every row renders metaMissing:true (blank name/email/journey/customer
