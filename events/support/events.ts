@@ -92,6 +92,19 @@ export const evtNames = {
   stageA: 'Stage A',
 };
 
+/** Event eligibility + CTA config world (seed-events.js 9d/9e). */
+export const evtEligibility = {
+  journey: `EVL Elig Journey ${RUN}`,
+  liveCohort: `EVL Live Cohort ${RUN}`,
+  oldCohort: `EVL Old Cohort ${RUN}`,
+};
+export const evtCta = {
+  confirmButton: `Confirm btn ${RUN}`,
+  nocta: `NoCta desc ${RUN}`,
+  requested: `Requested msg ${RUN}`,
+  confirmed: `Confirmed msg ${RUN}`,
+};
+
 /** Install the prod firewall + all external stubs. Call in beforeEach BEFORE navigating. */
 export async function installEvtStubs(page: Page): Promise<void> {
   await installProdFirewall(page);
@@ -302,4 +315,23 @@ export async function resetLed3MarkForP7(): Promise<void> {
     .where('markedmanually', '==', true)
     .get();
   for (const d of snap.docs) await d.ref.delete();
+}
+
+/**
+ * Put classify/eventcta + classify/eventstatusmessage back to the seeded, run-tagged values. ECTA-02's
+ * Submit setDoc()s both docs WITHOUT a testrunid, so without this the seed teardown could not sweep them.
+ * PRECONDITION/cleanup only — never asserted.
+ */
+export async function restoreCtaConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  const cta = (k: string) => ({ button: `${k} btn ${RUN}`, description: `${k} desc ${RUN}` });
+  await db.collection('classify').doc('eventcta').set({
+    confirmparticipation: cta('Confirm'), addon: cta('Addon'), upgrade: cta('Upgrade'),
+    continuity: cta('Continuity'), nocta: cta('NoCta'), ...tag,
+  });
+  await db.collection('classify').doc('eventstatusmessage').set({
+    requested: { message: `Requested msg ${RUN}` }, confirmationmessage: { message: `Confirmed msg ${RUN}` }, ...tag,
+  });
 }

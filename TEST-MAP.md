@@ -152,7 +152,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 |---|---|---:|---:|---:|---|
 | **queue** | `playwright.queue.config.ts` | ~188 | 2 | meta | Queue Manager: staging, stage-log, assignment, dashboards |
 | **appointments** | `playwright.appointments.config.ts` | 18 | 1 | 0 | Booking join-chain, slots, roster, team-hours, studio |
-| **events** | `playwright.events.config.ts` | 15 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones |
+| **events** | `playwright.events.config.ts` | 19 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones, event-editor eligibility (UED-ELIG-01), Configure CTA (ECTA-01..03) |
 | **modes** | `playwright.modes.config.ts` | 72 +8 engine | 3 | 2 | Mode rollup/arc engine, wishlist, app-engagement; the interim-report dashboard carries IRD-01..18 (counts, per-ATC-model crossover, filters, tagging/resolve, export, multi-select → composers, kept filters, in-dialog send bar, cancelled excluded) |
 | **content** | `playwright.content.config.ts` | 11 | 4 | 4 | Series/episodes, tier access, playlists, HLS, content-analytics-v2 hooks (fixme — not routed) |
 | **workshops** | `playwright.workshops.config.ts` | 14 | 4 | 0 | Workshop authoring, scheduling, attendance |
