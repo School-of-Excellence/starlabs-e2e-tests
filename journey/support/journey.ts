@@ -157,6 +157,7 @@ export const ddcStuckWorld = {
   RUN: `${RUN}_ddc`,
   tag: DDC_TAG,
   product: `DDC Stuck Product ${RUN}`,
+  parallel: `DDC Parallel Product ${RUN}`,
   names: { STALE: `${DDC_TAG} Stale`, RECENT: `${DDC_TAG} Recent`, NOAPPT: `${DDC_TAG} Noappt`, UNATT: `${DDC_TAG} Unatt`, DONE: `${DDC_TAG} Done` },
   // seedDdcStuck writes these as UTC noon, so the app's 'MMM dd, yyyy' renders the same day in any TZ.
   subscription: { start: 'Jan 15, 2026', end: 'Jan 14, 2027' },

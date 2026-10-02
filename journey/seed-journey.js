@@ -581,9 +581,16 @@ async function seedFto(db, T) {
   await meta('ROLEOFF', [FTO.P_DFU]);
 
   // Metadata above == what productsdata_to_pmd derives from these rows (see CF-CONSISTENT note).
+  // JTED-09 (app dfdb6b57): the Overview list is ordered by each member's earliest `statusdate.initiated`,
+  // oldest first; a member with no initiated date goes last. Distinct ages per member make the order provable:
+  // ONG 40d → DIAGDONE 30d → NOSTEPS 25d → NS 20d → DONE (no initiated date).
+  const INITIATED_DAYS = { ONG: 40, DIAGDONE: 30, NOSTEPS: 25, NS: 20 };
   const pp = (id, k, status, seq = 0, prod = FTO.P_DFU) => set('participantsproduct', id, {
     profileid: ftoPf(k), productref: product(prod), status, sequenceorder: seq,
-    statusdate: { [status]: T.fromMillis(Date.now() - 20 * 86400e3) },
+    statusdate: {
+      [status]: T.fromMillis(Date.now() - 20 * 86400e3),
+      ...(INITIATED_DAYS[k] && prod === FTO.P_DFU && status !== 'completed' ? { initiated: T.fromMillis(Date.now() - INITIATED_DAYS[k] * 86400e3) } : {}),
+    },
   });
   await pp(`${FTO_RUN}_PP_ONG`, 'ONG', 'ongoing');
   await pp(`${FTO_RUN}_PP_NS`, 'NS', 'initiated');
@@ -644,7 +651,8 @@ const FTO_SEEDED = [
 const DDC_RUN = `${TESTRUNID}_ddc`;
 const DDC = {
   P: `${DDC_RUN}_P_DFU`,
-  names: { product: `DDC Stuck Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
+  P2: `${DDC_RUN}_P_PARALLEL`,
+  names: { product: `DDC Stuck Product ${TESTRUNID}`, parallel: `DDC Parallel Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
   people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE'],
   subStart: Date.UTC(2026, 0, 15, 12), subEnd: Date.UTC(2027, 0, 14, 12),
 };
@@ -658,12 +666,20 @@ async function seedDdcStuck(db, T) {
   const ago = (d) => T.fromMillis(Date.now() - d * 86400e3 - 2 * 3600e3);   // +2h: clear of the floor() edge
 
   await set('products', DDC.P, { id: DDC.P, product: DDC.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+  // DDC-FLT (app dfdb6b57): a NON-DFU second product STALE also holds → the dashboard shows it as STALE's
+  // "parallel product" (activeproduct minus the row's product). NDFU so it never becomes a dashboard row itself.
+  await set('products', DDC.P2, { id: DDC.P2, product: DDC.names.parallel, type: 'NDFU', atcmodel: null, mode: 'online' });
 
   const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed' };
+  // DDC-FLT filter axes: STALE = active · regular · has a parallel product; RECENT = non active · defaulted · none.
+  // (RECENT is the "Initiated – Not Consuming" row, STALE the "Stuck" row — the two rows the All tab shows.)
+  const custStatus = { RECENT: 'non active' };
+  const finStatus = { STALE: 'regular', RECENT: 'defaulted' };
   for (const k of DDC.people) {
     await set('participant metadata', ddcPf(k), {
-      profileid: ddcPf(k), name: ddcName(k), email: `${ddcPf(k)}@example.com`, customerstatus: 'active',
-      activeproduct: k === 'DONE' ? [] : [DDC.P], consumedproducts: k === 'DONE' ? [DDC.P] : [],
+      profileid: ddcPf(k), name: ddcName(k), email: `${ddcPf(k)}@example.com`, customerstatus: custStatus[k] || 'active',
+      ...(finStatus[k] ? { financialstatus: finStatus[k] } : {}),
+      activeproduct: k === 'DONE' ? [] : (k === 'STALE' ? [DDC.P, DDC.P2] : [DDC.P]), consumedproducts: k === 'DONE' ? [DDC.P] : [],
     });
     await set('participantsproduct', ddcPp(k), {
       profileid: ddcPf(k), productref: db.collection('products').doc(DDC.P), status: status[k], sequenceorder: 0,
@@ -671,6 +687,12 @@ async function seedDdcStuck(db, T) {
       ...(k === 'STALE' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
     });
   }
+
+  // STALE's parallel-product row (CF-consistent: productsdata_to_pmd derives activeproduct [P, P2] from it)
+  await set('participantsproduct', `${DDC_RUN}_PP_STALE_P2`, {
+    profileid: ddcPf('STALE'), productref: db.collection('products').doc(DDC.P2), status: 'ongoing', sequenceorder: 1,
+    statusdate: { ongoing: ago(20) },
+  });
 
   const appt = (id, k, endDaysAgo, attended) => set('appointments', `${DDC_RUN}_${id}`, {
     participantproductid: ddcPp(k), profileid: ddcPf(k), attended, cancelled: false,
