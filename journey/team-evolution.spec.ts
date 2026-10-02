@@ -119,6 +119,12 @@ async function renderedNames(page: Page): Promise<string[]> {
     (els) => els.map((e) => (e.childNodes[0]?.textContent || '').trim()));
   return names.filter((n) => n.startsWith('FTO ')).sort();
 }
+/** Same names, in RENDERED order (JTED-09 asserts the order itself). */
+async function renderedNamesInOrder(page: Page): Promise<string[]> {
+  const names = await page.getByTestId('jted-ov-row').locator('.name-strong').evaluateAll(
+    (els) => els.map((e) => (e.childNodes[0]?.textContent || '').trim()));
+  return names.filter((n) => n.startsWith('FTO '));
+}
 
 test.describe('Journey — Team Evolution / FTO dashboard (DFU picker, status tiles, delivery steps, A&H cards)', () => {
   test('JTED-01 the product picker offers DFU products only', async ({ page }) => {
@@ -226,6 +232,15 @@ test.describe('Journey — Team Evolution / FTO dashboard (DFU picker, status ti
 
   // Needs attention can't move on real-shaped data — see the file header. Un-fixme once the rule reads
   // the completed step's end time from the booked appointment rather than the activity doc.
+  test('JTED-09 the Overview list is ordered by when each member\'s product was initiated, oldest first', async ({ page }) => {
+    await openDashboard(page);
+    await pickFto(page);
+    // seed: initiated ONG 40d · DIAGDONE 30d · NOSTEPS 25d · NS 20d · DONE none (→ last). The order is the app's
+    // sort of the joined participantsproduct rows; insertion order of the metadata would be ONG, NS, DIAGDONE…
+    await expect.poll(() => renderedNamesInOrder(page), { message: 'JTED-09: oldest initiated first, undated last', timeout: 60_000 })
+      .toEqual([P.ONG.name, P.DIAGDONE.name, P.NOSTEPS.name, P.NS.name, P.DONE.name]);
+  });
+
   test.fixme('JTED-07 Needs attention flags a member whose next step has waited 7+ days (deferred: rule reads a field real data lacks)', async ({ page }) => {
     await openDashboard(page);
     await pickFto(page);

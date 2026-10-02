@@ -20,6 +20,12 @@
 // name comes from `participant metadata`. The test asserts none of the values it wrote except the
 // formatted subscription dates, and those only as "the column renders the PP's field".
 //
+// DDC-FLT (app dfdb6b57, mahalakshmi 2026-10-01, pulled 2026-10-02): the new "All" tab (= Awaiting + Initiated
+// – Not Consuming + Stuck rows, each with a status) and the Customer Status / Financial Status / Parallel Product
+// filters + Clear Filter. In this world the All tab holds exactly two run rows — STALE (Stuck; active, regular,
+// parallel product = the NDFU `DDC Parallel Product`) and RECENT (Initiated – Not Consuming; non active,
+// defaulted, no parallel) — so every filter has one row it must keep and one it must drop.
+//
 // NOT COVERED: the participant-set cache (stuckKey) — it only changes WHEN the appointment read re-runs,
 // which no assertion here can observe without counting reads. Subscription columns on the other three
 // tables use the same header/row path; Stuck Cases is the one asserted.
@@ -83,5 +89,77 @@ test.describe('Journey — Delivery dashboard Stuck Cases (last attended appoint
     }).toPass({ timeout: 90_000 });
     await expect(row.locator('.pm-date-text').filter({ hasText: W.subscription.start }), 'DDC-STK-02: SUBSCRIPTION START').toHaveCount(1);
     await expect(row.locator('.pm-date-text').filter({ hasText: W.subscription.end }), 'DDC-STK-02: SUBSCRIPTION END').toHaveCount(1);
+  });
+});
+
+/** Open a mat-select from the keyboard and pick one option by its visible text. Takes a Locator (gate rule). */
+async function pickFilter(page: Page, select: import('@playwright/test').Locator, option: string) {
+  await select.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('option', { name: option, exact: true }).click();
+  await page.keyboard.press('Escape');
+}
+
+test.describe('Journey — Delivery dashboard All tab + filters (customer status, financial status, parallel product)', () => {
+  /** Open Participants → All, narrow to the run, and wait for BOTH run rows (the Stuck one lands async). */
+  async function openAll(page: Page) {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-delivery-dashboard-clone')).toBeAttached({ timeout: 30_000 });
+    await page.getByTestId('ddc-btn-017').click();
+    const host = page.locator('app-delivery-dashboard-clone');
+    await host.getByRole('tab', { name: /^All/ }).click();
+    const panel = host.getByRole('tabpanel', { name: /^All/ });
+    const rows = panel.locator('tr.pm-table-row');
+    await expect(async () => {
+      await page.getByTestId('ddc-inp-104').fill('');
+      await page.getByTestId('ddc-inp-104').fill(W.tag);
+      await expect(rows).toHaveCount(2, { timeout: 3_000 });
+    }, 'the All tab shows the two run rows (STALE stuck + RECENT idle)').toPass({ timeout: 90_000 });
+    return rows;
+  }
+
+  test('DDC-FLT-01 the All tab lists every actionable row with its status and parallel product', async ({ page }) => {
+    const rows = await openAll(page);
+    const stale = rows.filter({ hasText: W.names.STALE });
+    const recent = rows.filter({ hasText: W.names.RECENT });
+    await expect(stale, 'DDC-FLT-01: STALE is listed as Stuck').toContainText('Stuck');
+    await expect(stale, 'DDC-FLT-01: STALE shows its parallel product').toContainText(W.parallel);
+    await expect(recent, 'DDC-FLT-01: RECENT is listed as Initiated – Not Consuming').toContainText('Initiated – Not Consuming');
+    await expect(recent, 'DDC-FLT-01: RECENT has no parallel product').not.toContainText(W.parallel);
+    for (const k of ['NOAPPT', 'UNATT', 'DONE'] as const) {
+      await expect(rows.filter({ hasText: W.names[k] }), `DDC-FLT-01: ${k} is in no actionable bucket`).toHaveCount(0);
+    }
+  });
+
+  test('DDC-FLT-02 each filter keeps its match, drops the other, and Clear Filter resets them all', async ({ page }) => {
+    const rows = await openAll(page);
+    const only = async (k: 'STALE' | 'RECENT', why: string) => {
+      await expect(rows, why).toHaveCount(1);
+      await expect(rows.first(), why).toContainText(W.names[k]);
+    };
+
+    await pickFilter(page, page.getByTestId('ddc-msel-125'), 'Non-active');
+    await only('RECENT', 'DDC-FLT-02: Customer Status = Non-active keeps RECENT only');
+    await page.getByTestId('ddc-btn-129').click();
+    await expect(page.getByTestId('ddc-inp-104'), 'DDC-FLT-02: Clear Filter also clears the search').toHaveValue('');
+
+    await page.getByTestId('ddc-inp-104').fill(W.tag);
+    await expect(rows).toHaveCount(2);
+    await pickFilter(page, page.getByTestId('ddc-msel-126'), 'Regular');
+    await only('STALE', 'DDC-FLT-02: Financial Status = Regular keeps STALE only');
+    await page.getByTestId('ddc-btn-129').click();
+
+    await page.getByTestId('ddc-inp-104').fill(W.tag);
+    await expect(rows).toHaveCount(2);
+    await pickFilter(page, page.getByTestId('ddc-msel-127'), 'Parallel Product Available');
+    await only('STALE', 'DDC-FLT-02: Parallel Product Available keeps STALE only');
+    await pickFilter(page, page.getByTestId('ddc-msel-127'), 'No Parallel Product');
+    await only('RECENT', 'DDC-FLT-02: No Parallel Product keeps RECENT only');
+  });
+
+  test.fixme('DDC-ADDR1 All-tab filter-indicator Clear addressable (deferred behavioral — shown only for tile-driven filters)', async ({ page }) => {
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('ddc-btn-128')).toBeTruthy();
   });
 });
