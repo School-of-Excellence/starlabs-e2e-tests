@@ -118,6 +118,20 @@ test.describe('Events — event editor eligibility + Configure CTA (live-maratho
     await expect(cell('Approved'), 'EPC-ELIG-01: …it is counted as Approved').toHaveText('1');
   });
 
+  test('EPC-ELIG-02 the funnel\'s Addon segment lists the non-owner with a reason and Assign product', async ({ page }) => {
+    // surya 7a23f823: the Addon bucket's drill-down now behaves like "No product" — Reason column + Assign product.
+    await page.goto('/event-participation-confirmation', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('epc-overview-row').filter({ hasText: `EVL Bucket Product ${RUN}` }).click();
+    const addon = page.getByTestId('pf-breakdown-row').filter({ hasText: /^\s*Addon/ });
+    await expect(addon, 'EPC-ELIG-02: the funnel offers an Addon segment').toHaveCount(1, { timeout: 60_000 });
+    await addon.click();
+    const addRow = page.locator('tr').filter({ hasText: `EVL Bucket ADD ${RUN}` });
+    await expect(addRow, 'EPC-ELIG-02: the non-owner is in the Addon segment').toHaveCount(1, { timeout: 30_000 });
+    await expect(addRow.getByTestId('pf-row-assign-product'), 'EPC-ELIG-02: …with Assign product').toBeVisible();
+    await expect(page.locator('tr').filter({ hasText: `EVL Bucket ELIG ${RUN}` }), 'EPC-ELIG-02: an eligible owner is not in Addon').toHaveCount(0);
+    await expect(page.locator('th').filter({ hasText: /^\s*Reason\s*$/ }), 'EPC-ELIG-02: the Addon table carries a Reason column').toHaveCount(1);
+  });
+
   test.describe('Configure CTA', () => {
     test.afterAll(async () => { await restoreCtaConfig(); });
 

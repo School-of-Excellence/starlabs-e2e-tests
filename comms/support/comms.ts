@@ -47,6 +47,7 @@ export const commsIds = {
   NR_CF: `${RUN}_nr_cf`,
   ZOOM_DONE: `${RUN}_zoom_completed`,
   ZOOM_FAIL: `${RUN}_zoom_failed`,
+  ZOOM_VERIFIED: `${RUN}_zoom_verified`,
   CHAT_GROUP: `${RUN}_chat_group`,
   CHAT_CHANNEL: `${RUN}_chat_channel`,
   OW_TEMPLATE: `${RUN}_oneway_tmpl`,

@@ -1,0 +1,114 @@
+// zoom-backup-verify.spec.ts — /zoom-recording-dashboard: backup VERIFY, VERIFY ALL and MOVE TO ZOOM TRASH
+// (starlabs-angular charan-release 2026-10-05, plan specs/plans/2026-10-02-zoom-backup-reliability.md Phase 4).
+//
+// Hook prefix: zrd — ZoomRecordingDashboardComponent (same prefix communication-center-controls-addressable uses).
+// Reference: starlabs-angular specs/journals/2026-10-02-zoom-backup-reliability.md.
+//
+// SEEDED WORLD (comms/seed-comms.js §4), all startTime = today:
+//   Completed Meeting  — completed, never verified          → trash BLOCKED ("Verify the backup first")
+//   Failed Meeting     — failed                             → trash BLOCKED ("Only a completed backup…")
+//   Verified Meeting   — completed + verification.ok + its meetinguid is in Zoom → the ONLY trashable row
+//
+// THE ZOOM-TO-DROPBOX SERVER IS STUBBED. The emulator build has no zoomMigrationApiUrl, so the dashboard calls
+// relative /api/zoom/* on the app origin; page.route answers them. No Zoom or Dropbox call can leave the test,
+// and nothing is ever trashed for real. What is asserted is the APP's side: which rows it allows to be trashed
+// (its own gate over the seeded docs + the presence list), the exact docIds it sends, and how it renders the
+// server's answers (verify message, verify-all tallies + problem list, trash result).
+//
+// NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/.
+import { test, expect, Page, Route } from '@playwright/test';
+import { installCommsStubs, loginAsCommsAdmin, commsIds } from './support/comms';
+import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+
+const RUN = process.env.COMM_RUNID || 'comm';
+const TOPIC = { done: `Completed Meeting ${RUN}`, fail: `Failed Meeting ${RUN}`, ok: `Verified Meeting ${RUN}` };
+
+let guard: ConsoleGuard;
+let calls: { path: string; body: any }[];
+
+/** Stub the zoom-to-dropbox API. `recordings` lists only the verified meeting as still present in Zoom. */
+async function stubZoomApi(page: Page) {
+  calls = [];
+  await page.route('**/api/zoom/**', async (route: Route) => {
+    const url = new URL(route.request().url());
+    const body = route.request().postDataJSON?.() ?? null;
+    calls.push({ path: url.pathname, body });
+    const json = (o: any, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(o) });
+    const okVerification = { ok: true, checkedAt: new Date().toISOString(), folderExists: true, zoomPresent: true, files: {}, zoomMissing: [] };
+    switch (url.pathname) {
+      case '/api/zoom/recordings':
+        return json({ recordings: [{ uuid: `${RUN}_uuid_verified`, meetingId: 'zz-not-a-seeded-id' }] });
+      case '/api/zoom/verify':
+        return json({ success: true, status: 'completed', verification: okVerification });
+      case '/api/zoom/verify-batch':
+        return json({
+          success: true,
+          results: (body?.docIds ?? []).map((id: string) => id === commsIds.ZOOM_FAIL
+            ? { docId: id, topic: TOPIC.fail, result: 'failed', problems: ['audio: missing in Dropbox'] }
+            : { docId: id, topic: id, result: 'verified', problems: [] }),
+        });
+      case '/api/zoom/trash':
+        return json({ success: true, verification: okVerification });
+      default:
+        return json({ error: 'unexpected' }, 404);
+    }
+  });
+}
+
+test.beforeEach(async ({ page }) => {
+  guard = attachConsoleGuard(page);
+  await installCommsStubs(page);
+  await stubZoomApi(page);
+  await loginAsCommsAdmin(page);
+  await page.goto('/zoom-recording-dashboard', { waitUntil: 'domcontentloaded' });
+  await page.getByTestId('zrd-search').fill(`Meeting ${RUN}`);
+  await expect(page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: TOPIC.ok }), 'the seeded rows render').toHaveCount(1, { timeout: 30_000 });
+});
+test.afterEach(() => assertNoFatal(guard, 'zoom backup verify: no fatal console errors / pageerrors'));
+
+const rowOf = (page: Page, topic: string) => page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: topic });
+
+test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (server stubbed)', () => {
+  test('ZRD-01 only a completed, verified backup still in Zoom can be moved to trash; the others say why', async ({ page }) => {
+    await expect(rowOf(page, TOPIC.ok).getByTestId('zrd-trash-row'), 'ZRD-01: the verified row is trashable').toBeEnabled({ timeout: 30_000 });
+    await expect(rowOf(page, TOPIC.ok), 'ZRD-01: …and shows ✓ verified').toContainText('✓ verified');
+    const done = rowOf(page, TOPIC.done).getByTestId('zrd-trash-row');
+    await expect(done, 'ZRD-01: an unverified backup is blocked').toBeDisabled();
+    await expect(done).toHaveAttribute('title', /Verify the backup first/);
+    const fail = rowOf(page, TOPIC.fail).getByTestId('zrd-trash-row');
+    await expect(fail, 'ZRD-01: a failed backup is blocked').toBeDisabled();
+    await expect(fail).toHaveAttribute('title', /Only a completed backup/);
+  });
+
+  test('ZRD-02 Verify backup posts the record id and reports the server\'s verdict', async ({ page }) => {
+    await rowOf(page, TOPIC.done).getByTestId('zrd-openfilemodel').click();
+    await page.getByTestId('zrd-verify').click();
+    await expect(page.getByText('All files are in Dropbox with the exact size Zoom reports.'), 'ZRD-02: the ok verdict is shown').toBeVisible();
+    expect(calls.find((c) => c.path === '/api/zoom/verify')?.body, 'ZRD-02: it verified THIS record').toEqual({ docId: commsIds.ZOOM_DONE });
+    await expect(page.getByTestId('zrd-trash'), 'ZRD-02: the modal\'s trash stays blocked until the doc itself is verified').toBeDisabled();
+  });
+
+  test('ZRD-03 Verify all sends every listed record and tallies verified / failed with the problem text', async ({ page }) => {
+    await expect(page.getByTestId('zrd-verifyall'), 'ZRD-03: three listed targets').toContainText('Verify all (3)');
+    await page.getByTestId('zrd-verifyall').click();
+    await expect(page.getByText('✓ 2 verified'), 'ZRD-03: two verified').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('⚠ 1 failed'), 'ZRD-03: one failed').toBeVisible();
+    await expect(page.getByText(`⚠ ${TOPIC.fail} — audio: missing in Dropbox`), 'ZRD-03: the failure names the meeting and the problem').toBeVisible();
+    const sent = calls.filter((c) => c.path === '/api/zoom/verify-batch').flatMap((c) => c.body?.docIds ?? []).sort();
+    expect(sent, 'ZRD-03: exactly the three listed records were sent').toEqual([commsIds.ZOOM_DONE, commsIds.ZOOM_FAIL, commsIds.ZOOM_VERIFIED].sort());
+    await expect(page.getByTestId('zrd-verifyall-stop'), 'ZRD-03: Stop is only offered while running').toHaveCount(0);
+  });
+
+  test('ZRD-04 Move to Zoom trash asks first, then trashes ONLY the confirmed record', async ({ page }) => {
+    let prompted = '';
+    page.once('dialog', async (d) => { prompted = d.message(); await d.dismiss(); });
+    await rowOf(page, TOPIC.ok).getByTestId('zrd-trash-row').click();
+    await expect.poll(() => prompted, { message: 'ZRD-04: a confirm names the meeting' }).toContain(TOPIC.ok);
+    expect(calls.some((c) => c.path === '/api/zoom/trash'), 'ZRD-04: dismissing the confirm sends nothing').toBe(false);
+
+    page.once('dialog', (d) => d.accept());
+    await rowOf(page, TOPIC.ok).getByTestId('zrd-trash-row').click();
+    await expect(rowOf(page, TOPIC.ok), 'ZRD-04: the row reports the result').toContainText('Moved to Zoom trash.');
+    expect(calls.filter((c) => c.path === '/api/zoom/trash').map((c) => c.body), 'ZRD-04: one trash call, for this record').toEqual([{ docId: commsIds.ZOOM_VERIFIED }]);
+  });
+});
