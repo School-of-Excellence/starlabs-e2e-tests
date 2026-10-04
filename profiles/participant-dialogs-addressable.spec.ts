@@ -49,6 +49,11 @@ test.describe('Participants — dialog & child component controls addressable', 
     if ((await page.getByTestId('csd-history-page-prev-18').count()) > 0) await expect(page.getByTestId('csd-history-page-prev-18').first()).toBeAttached();
     if ((await page.getByTestId('csd-history-page-next-19').count()) > 0) await expect(page.getByTestId('csd-history-page-next-19').first()).toBeAttached();
     if ((await page.getByTestId('csd-history-backdrop-20').count()) > 0) await expect(page.getByTestId('csd-history-backdrop-20').first()).toBeAttached();
+    // Search boxes of the A–Z sorted list / tag dropdowns (create form and side panel).
+    if ((await page.getByTestId('csd-list-search-21').count()) > 0) await expect(page.getByTestId('csd-list-search-21').first()).toBeAttached();
+    if ((await page.getByTestId('csd-tag-search-22').count()) > 0) await expect(page.getByTestId('csd-tag-search-22').first()).toBeAttached();
+    if ((await page.getByTestId('csd-add-list-search-23').count()) > 0) await expect(page.getByTestId('csd-add-list-search-23').first()).toBeAttached();
+    if ((await page.getByTestId('csd-add-tag-search-24').count()) > 0) await expect(page.getByTestId('csd-add-tag-search-24').first()).toBeAttached();
   });
 
   test('export-with-filters controls are addressable (ewf)', async ({ page }) => {
