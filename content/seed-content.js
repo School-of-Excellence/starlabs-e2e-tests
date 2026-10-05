@@ -434,6 +434,9 @@ const SEEDED = [
   'tier', 'tier access config', 'health stories', 'adsplaylist', 'content_urls',
   'learning-materials', 'content analytics', 'buffermix archive', 'recommended mix playlist',
   'participant metadata',
+  // CN-43/CN-44 seed run-tagged new_user_data rows as a per-test precondition. The case clears them
+  // in afterEach; this is the backstop for a run that dies before it gets there.
+  'new_user_data',
   // CN-11 dialog drivers + CN-04/12 series/learning-material catalog refs
   'journey', 'products', 'biglevel',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)

@@ -434,3 +434,98 @@ export async function deleteCreatedAd(calltoaction: string): Promise<void> { awa
 export async function deleteCreatedAdsPlaylist(adstitle: string): Promise<void> { await deleteWhere('adsplaylist', 'adstitle', adstitle); }
 /** CN-12: delete any `learning-materials` doc a prior run's Upload Material dialog wrote under this name. */
 export async function deleteCreatedLearningMaterial(name: string): Promise<void> { await deleteWhere('learning-materials', 'name', name); }
+
+// =================================================================================================
+// 2026-10-05 — /contentanalytics: new_user_data filtered to movedtoexist !== true, plus the email
+// and status columns in the CSV export.
+// =================================================================================================
+
+/** Profiles for CN-43/CN-44. Own ids so CN-40/41/42 never see these rows. */
+export const analyticsUserTypes = {
+  stillNew: `${RUN}_ca_nu_new`,
+  movedToExist: `${RUN}_ca_nu_moved`,
+  existing: `${RUN}_ca_pm_exist`,
+};
+
+/** Names and emails the screen must render / the export must carry. Run-scoped so they are unique. */
+export const analyticsUserTypeText = {
+  // One run-unique PREFIX across all three. The screen's name filter is a PREFIX match
+  // (`indexOf(term) === 0`, content-analytics.component.ts customfilter), so typing this isolates
+  // exactly these three people out of whatever else the shared emulator holds in the window.
+  prefix: `CAUT${RUN}`,
+  stillNewName: `CAUT${RUN} New`,
+  movedName: `CAUT${RUN} Moved`,
+  existingName: `CAUT${RUN} Exist`,
+  stillNewEmail: `ca.new.${RUN}@example.com`,
+  movedEmail: `ca.moved.${RUN}@example.com`,
+  existingEmail: `ca.exist.${RUN}@example.com`,
+};
+
+/** The one `content analytics` log each of them owns. */
+export const analyticsUserTypeLogIds = {
+  stillNew: `${RUN}_ca_log_nu_new`,
+  movedToExist: `${RUN}_ca_log_nu_moved`,
+  existing: `${RUN}_ca_log_pm_exist`,
+};
+
+/**
+ * PRECONDITION for the new-user rule and the export columns: three people, one in-window log each.
+ *
+ *   stillNew     — `new_user_data` only, NO movedtoexist          → a new user; name + (New User) tag
+ *   movedToExist — `new_user_data` with movedtoexist: true, and
+ *                  deliberately NO `participant metadata`          → NOT a new user any more, so the
+ *                                                                     stale row must not name them
+ *   existing     — `participant metadata` only                     → an ordinary existing person
+ *
+ * The middle one is the whole point. Giving it no metadata row is what makes the case falsifiable:
+ * with metadata present the template would prefer that name anyway and the assertion would pass
+ * whether or not the new_user_data filter exists.
+ *
+ * Distinct videoid/profileid/totaltimespend per row, so none of them trips the duplicate detector
+ * CN-41 counts. Status is a KNOWN value the export must carry.
+ */
+export async function seedAnalyticsUserTypes(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const recent = () => { const d = new Date(); d.setDate(d.getDate() - 1); return T.fromDate(d); };
+
+  await db.collection('new_user_data').doc(analyticsUserTypes.stillNew).set({
+    docid: analyticsUserTypes.stillNew, name: analyticsUserTypeText.stillNewName,
+    email: analyticsUserTypeText.stillNewEmail, ...tag,
+  });
+  await db.collection('new_user_data').doc(analyticsUserTypes.movedToExist).set({
+    docid: analyticsUserTypes.movedToExist, name: analyticsUserTypeText.movedName,
+    email: analyticsUserTypeText.movedEmail, movedtoexist: true, ...tag,
+  });
+  await db.collection('participant metadata').doc(analyticsUserTypes.existing).set({
+    docid: analyticsUserTypes.existing, profileid: analyticsUserTypes.existing,
+    name: analyticsUserTypeText.existingName, email: analyticsUserTypeText.existingEmail, ...tag,
+  });
+
+  const log = (id: string, profileid: string, n: number) => db.collection('content analytics').doc(id).set({
+    docid: id, profileid, type: 'eiflixcontent', platform_name: 'Eiflix',
+    videoid: `${RUN}_vid_usertype_${n}`, videoname: `TEST_VID_USERTYPE_${n}`,
+    totaltimespend: 1100 + n, totalruntime: 1300 + n, status: 'incomplete',
+    lastwatchedtime: '00:05', logdate: recent(), ...tag,
+  });
+  await Promise.all([
+    log(analyticsUserTypeLogIds.stillNew, analyticsUserTypes.stillNew, 1),
+    log(analyticsUserTypeLogIds.movedToExist, analyticsUserTypes.movedToExist, 2),
+    log(analyticsUserTypeLogIds.existing, analyticsUserTypes.existing, 3),
+  ]);
+}
+
+/** Remove everything seedAnalyticsUserTypes() wrote, so CN-40/41/42 see the plain seed. */
+export async function clearAnalyticsUserTypes(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    ...Object.values(analyticsUserTypeLogIds).map(id => drop('content analytics', id)),
+    drop('new_user_data', analyticsUserTypes.stillNew),
+    drop('new_user_data', analyticsUserTypes.movedToExist),
+    drop('participant metadata', analyticsUserTypes.existing),
+  ]);
+}
