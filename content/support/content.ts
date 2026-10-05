@@ -459,6 +459,13 @@ export const analyticsUserTypeText = {
   stillNewEmail: `ca.new.${RUN}@example.com`,
   movedEmail: `ca.moved.${RUN}@example.com`,
   existingEmail: `ca.exist.${RUN}@example.com`,
+  // Phones, with the country code spelled the way EACH collection really spells it: new_user_data
+  // carries `countryCode`, participant metadata carries the lower-cased `countrycode` (written by
+  // profiledata_to_participantmetadata). The export must handle both, so the seed uses both.
+  stillNewPhone: '9000000001',
+  stillNewPhoneRendered: '+91 9000000001',
+  existingPhone: '9000000003',
+  existingPhoneRendered: '+44 9000000003',
 };
 
 /** The one `content analytics` log each of them owns. */
@@ -504,7 +511,8 @@ export async function seedAnalyticsUserTypes(): Promise<void> {
 
   await db.collection('new_user_data').doc(analyticsUserTypes.stillNew).set({
     docid: analyticsUserTypes.stillNew, name: analyticsUserTypeText.stillNewName,
-    email: analyticsUserTypeText.stillNewEmail, ...tag,
+    email: analyticsUserTypeText.stillNewEmail,
+    phonenumber: analyticsUserTypeText.stillNewPhone, countryCode: '+91', ...tag,
   });
   await db.collection('new_user_data').doc(analyticsUserTypes.movedToExist).set({
     docid: analyticsUserTypes.movedToExist, name: analyticsUserTypeText.movedName,
@@ -512,7 +520,8 @@ export async function seedAnalyticsUserTypes(): Promise<void> {
   });
   await db.collection('participant metadata').doc(analyticsUserTypes.existing).set({
     docid: analyticsUserTypes.existing, profileid: analyticsUserTypes.existing,
-    name: analyticsUserTypeText.existingName, email: analyticsUserTypeText.existingEmail, ...tag,
+    name: analyticsUserTypeText.existingName, email: analyticsUserTypeText.existingEmail,
+    phonenumber: analyticsUserTypeText.existingPhone, countrycode: '+44', ...tag,
   });
 
   const videoNames = [analyticsVideoNames.one, analyticsVideoNames.two, analyticsVideoNames.three];

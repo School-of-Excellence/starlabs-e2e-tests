@@ -229,6 +229,7 @@ test.describe('Content — /contentanalytics new-user rule + export columns', ()
     // [ASSERT] both columns exist, by exact name — a substring check would pass on "emailaddress"
     // or on "status" inside some other header.
     expect(columns, `CN-48: an email column. Header=${header}`).toContain('email');
+    expect(columns, `CN-48: a phonenumber column. Header=${header}`).toContain('phonenumber');
     expect(columns, `CN-48: a status column. Header=${header}`).toContain('status');
 
     // [ASSERT] and they carry real values, not empty cells. Email resolves from participant
@@ -239,12 +240,20 @@ test.describe('Content — /contentanalytics new-user rule + export columns', ()
     expect(existingLine, `CN-48: the existing person has a row. Body=${body.join(' | ')}`).toBeTruthy();
     expect(existingLine, 'CN-48: their email comes from participant metadata')
       .toContain(analyticsUserTypeText.existingEmail);
+    // [ASSERT] phone, country code first. This person's record spells it `countrycode` (the
+    // lower-cased one the CF writes onto participant metadata) — reading only `countryCode` would
+    // silently drop the code for every existing person.
+    expect(existingLine, 'CN-48: their phone carries the lower-cased countrycode')
+      .toContain(analyticsUserTypeText.existingPhoneRendered);
     expect(existingLine, 'CN-48: the seeded status is exported').toContain('incomplete');
 
     const newLine = lineFor(analyticsUserTypeText.stillNewName);
     expect(newLine, 'CN-48: the still-new person has a row').toBeTruthy();
     expect(newLine, 'CN-48: their email comes from new_user_data')
       .toContain(analyticsUserTypeText.stillNewEmail);
+    // ...and their record spells it `countryCode`, the other way round. Both spellings, one column.
+    expect(newLine, 'CN-48: their phone carries the camel-cased countryCode')
+      .toContain(analyticsUserTypeText.stillNewPhoneRendered);
 
     // [ASSERT] the seeded rows have exactly as many cells as the header. This is the guard that
     // matters: ConvertToCSV quotes nothing, so a value carrying a comma would silently shift every
