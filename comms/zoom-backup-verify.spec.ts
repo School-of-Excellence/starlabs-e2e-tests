@@ -15,7 +15,13 @@
 // (its own gate over the seeded docs + the presence list), the exact docIds it sends, and how it renders the
 // server's answers (verify message, verify-all tallies + problem list, trash result).
 //
-// NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/.
+// ZRD-05..07 (Retry + duplicate cleanup): Retry is offered only on a failed / partial / verify_failed / stalled
+// row (the Failed row here — never the completed ones); a server answer of `duplicate_removed` raises a page
+// notice whose "View backup" opens the record that holds the full backup (keptDocId), and Verify all counts
+// removed leftovers separately from verified.
+//
+// NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/; the
+// "Queued…" migrate state (needs the Zoom panel's live recordings list).
 import { test, expect, Page, Route } from '@playwright/test';
 import { installCommsStubs, loginAsCommsAdmin, commsIds } from './support/comms';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -25,10 +31,13 @@ const TOPIC = { done: `Completed Meeting ${RUN}`, fail: `Failed Meeting ${RUN}`,
 
 let guard: ConsoleGuard;
 let calls: { path: string; body: any }[];
+/** Per-test server behaviour for the duplicate-cleanup paths (ZRD-06/07); reset in stubZoomApi. */
+let mode: { retry: 'queued' | 'duplicate'; batchDuplicateOf?: string };
 
 /** Stub the zoom-to-dropbox API. `recordings` lists only the verified meeting as still present in Zoom. */
 async function stubZoomApi(page: Page) {
   calls = [];
+  mode = { retry: 'queued' };
   await page.route('**/api/zoom/**', async (route: Route) => {
     const url = new URL(route.request().url());
     const body = route.request().postDataJSON?.() ?? null;
@@ -45,8 +54,14 @@ async function stubZoomApi(page: Page) {
           success: true,
           results: (body?.docIds ?? []).map((id: string) => id === commsIds.ZOOM_FAIL
             ? { docId: id, topic: TOPIC.fail, result: 'failed', problems: ['audio: missing in Dropbox'] }
-            : { docId: id, topic: id, result: 'verified', problems: [] }),
+            : id === mode.batchDuplicateOf
+              ? { docId: id, topic: id, result: 'duplicate_removed', problems: [] }
+              : { docId: id, topic: id, result: 'verified', problems: [] }),
         });
+      case '/api/zoom/retry':
+        return json(mode.retry === 'duplicate'
+          ? { success: true, status: 'duplicate_removed', keptDocId: commsIds.ZOOM_VERIFIED }
+          : { success: true, status: 'queued', dispatch: 'task' });
       case '/api/zoom/trash':
         return json({ success: true, verification: okVerification });
       default:
@@ -110,5 +125,33 @@ test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (s
     await rowOf(page, TOPIC.ok).getByTestId('zrd-trash-row').click();
     await expect(rowOf(page, TOPIC.ok), 'ZRD-04: the row reports the result').toContainText('Moved to Zoom trash.');
     expect(calls.filter((c) => c.path === '/api/zoom/trash').map((c) => c.body), 'ZRD-04: one trash call, for this record').toEqual([{ docId: commsIds.ZOOM_VERIFIED }]);
+  });
+
+  test('ZRD-05 Retry is offered only on the failed row, posts that record and reports it queued', async ({ page }) => {
+    await expect(rowOf(page, TOPIC.done).getByTestId('zrd-retry-row'), 'ZRD-05: no Retry on a completed backup').toHaveCount(0);
+    await expect(rowOf(page, TOPIC.ok).getByTestId('zrd-retry-row'), 'ZRD-05: no Retry on a verified backup').toHaveCount(0);
+    await rowOf(page, TOPIC.fail).getByTestId('zrd-retry-row').click();
+    await expect(rowOf(page, TOPIC.fail), 'ZRD-05: the row reports the restart').toContainText('Queued — the backup restarts shortly');
+    expect(calls.filter((c) => c.path === '/api/zoom/retry').map((c) => c.body), 'ZRD-05: one retry, for the failed record').toEqual([{ docId: commsIds.ZOOM_FAIL }]);
+  });
+
+  test('ZRD-06 a Retry that finds a leftover duplicate raises a page notice whose View backup opens the kept record', async ({ page }) => {
+    mode.retry = 'duplicate';
+    await rowOf(page, TOPIC.fail).getByTestId('zrd-retry-row').click();
+    await expect(page.getByText(`Removed a leftover duplicate of "${TOPIC.fail}"`), 'ZRD-06: the page notice names the meeting').toBeVisible();
+    await page.getByTestId('zrd-notice-view').click();
+    await expect(page.locator('.modal-head h2'), 'ZRD-06: View backup opens the record that holds the full backup').toHaveText(TOPIC.ok);
+    await page.getByTestId('zrd-closefilemodel-2').click();
+    await expect(page.locator('.modal-head h2'), 'ZRD-06: the modal closes').toHaveCount(0);
+    await page.getByTestId('zrd-notice-close').click();
+    await expect(page.getByText(`Removed a leftover duplicate of "${TOPIC.fail}"`), 'ZRD-06: the notice dismisses').toHaveCount(0);
+  });
+
+  test('ZRD-07 Verify all counts removed leftover duplicates apart from verified ones', async ({ page }) => {
+    mode.batchDuplicateOf = commsIds.ZOOM_DONE;
+    await page.getByTestId('zrd-verifyall').click();
+    await expect(page.getByText('1 leftover duplicate(s) removed'), 'ZRD-07: the duplicate is counted as removed').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText('✓ 1 verified'), 'ZRD-07: …and not as verified').toBeVisible();
+    await expect(page.getByText('⚠ 1 failed')).toBeVisible();
   });
 });

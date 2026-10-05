@@ -29,3 +29,9 @@ big area 24 pass / 3 skip (BLD-01..03 found a real crash first: undated cohorts 
 the app); comms 28 pass / 12 skip (ZRD-01..04 first run); events 43 pass + LED3-01/02 green once the queue suite's
 leftover run1 "ongoing" queue docs were cleared from the shared LOCAL emulator (the ATC guard refused them — correct;
 CI spawns one emulator per suite).
+
+## ZRD-05..07 (zoom Retry + duplicate cleanup, operator's follow-up)
+Retry must appear on the Failed row only (completed / verified rows are the controls); the stub's `/api/zoom/retry`
+answers `queued` or, per test, `duplicate_removed` + keptDocId=ZOOM_VERIFIED — the page notice's View backup must
+open THAT record. Verify all's `duplicate_removed` result is counted apart from verified. Run (app c42241e6): comms
+31 pass / 12 skip / 0 fail; ZRD-06 needed the modal's ✕ (zrd-closefilemodel-2), not an overlay click.
