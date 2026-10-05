@@ -35,3 +35,8 @@ Retry must appear on the Failed row only (completed / verified rows are the cont
 answers `queued` or, per test, `duplicate_removed` + keptDocId=ZOOM_VERIFIED — the page notice's View backup must
 open THAT record. Verify all's `duplicate_removed` result is counted apart from verified. Run (app c42241e6): comms
 31 pass / 12 skip / 0 fail; ZRD-06 needed the modal's ✕ (zrd-closefilemodel-2), not an overlay click.
+
+## ZRD-08/09 (live cost rates)
+`/api/cost-rates` stubbed per test: 503 → the cost line must say "(fallback rate)" and claim no live source; a live
+answer with values distinct from the app's fallback constants (₹88.25, $0.08/GB vs ₹96.4, $0.12) must replace them
+and show "(live rate, Oct 5)". Run (app 2a5f282e): comms 33 pass / 12 skip / 0 fail.

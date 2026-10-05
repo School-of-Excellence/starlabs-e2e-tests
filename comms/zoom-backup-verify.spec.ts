@@ -20,6 +20,9 @@
 // notice whose "View backup" opens the record that holds the full backup (keptDocId), and Verify all counts
 // removed leftovers separately from verified.
 //
+// ZRD-08/09 (live cost rates): the cost line shows the server's USD→INR + egress price when /api/cost-rates
+// answers (values the stub chose, distinct from the app's fallback constants) and "(fallback rate)" otherwise.
+//
 // NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/; the
 // "Queued…" migrate state (needs the Zoom panel's live recordings list).
 import { test, expect, Page, Route } from '@playwright/test';
@@ -32,12 +35,18 @@ const TOPIC = { done: `Completed Meeting ${RUN}`, fail: `Failed Meeting ${RUN}`,
 let guard: ConsoleGuard;
 let calls: { path: string; body: any }[];
 /** Per-test server behaviour for the duplicate-cleanup paths (ZRD-06/07); reset in stubZoomApi. */
-let mode: { retry: 'queued' | 'duplicate'; batchDuplicateOf?: string };
+let mode: { retry: 'queued' | 'duplicate'; batchDuplicateOf?: string; costRates: 'down' | 'live' };
 
 /** Stub the zoom-to-dropbox API. `recordings` lists only the verified meeting as still present in Zoom. */
 async function stubZoomApi(page: Page) {
   calls = [];
-  mode = { retry: 'queued' };
+  mode = { retry: 'queued', costRates: 'down' };
+  // /api/cost-rates (live FX + egress price). 'down' = server unreachable → the app must fall back.
+  await page.route('**/api/cost-rates', (route: Route) => mode.costRates === 'live'
+    ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        usdToInr: 88.25, rateDate: '2026-10-05', rateSource: 'TEST-FX', egressUsdPerGb: 0.08,
+        fetchedAt: new Date().toISOString(), stale: false }) })
+    : route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"down"}' }));
   await page.route('**/api/zoom/**', async (route: Route) => {
     const url = new URL(route.request().url());
     const body = route.request().postDataJSON?.() ?? null;
@@ -153,5 +162,22 @@ test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (s
     await expect(page.getByText('1 leftover duplicate(s) removed'), 'ZRD-07: the duplicate is counted as removed').toBeVisible({ timeout: 30_000 });
     await expect(page.getByText('✓ 1 verified'), 'ZRD-07: …and not as verified').toBeVisible();
     await expect(page.getByText('⚠ 1 failed')).toBeVisible();
+  });
+
+  test('ZRD-08 with the cost-rate server down, the cost line says it is using the fallback rate', async ({ page }) => {
+    const basis = page.locator('.cost-basis');
+    await expect(basis, 'ZRD-08: fallback is announced').toContainText('(fallback rate)');
+    await expect(basis, 'ZRD-08: …and the live source is not claimed').not.toContainText('TEST-FX');
+    await expect(basis).not.toContainText('live rate');
+  });
+
+  test('ZRD-09 a live cost-rate answer replaces the fallback FX rate and egress price on the cost line', async ({ page }) => {
+    mode.costRates = 'live';
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    const basis = page.locator('.cost-basis');
+    await expect(basis, 'ZRD-09: the server\'s USD→INR rate').toContainText('₹88.25/$', { timeout: 30_000 });
+    await expect(basis, 'ZRD-09: the server\'s egress price').toContainText('$0.08/GB');
+    await expect(basis, 'ZRD-09: marked live, with the rate date').toContainText('(live rate, Oct 5)');
+    await expect(basis).not.toContainText('(fallback rate)');
   });
 });
