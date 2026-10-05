@@ -14,8 +14,8 @@
 // that differ only by doc id, so exactly one trash button is the falsifiable outcome (CN-41).
 import { test, expect } from '@playwright/test';
 import {
-  analyticsDupProfile, analyticsUserTypeText, clearAnalyticsUserTypes, installContentStubs,
-  loginAsContentAdmin, resetAnalyticsDuplicates, seedAnalyticsUserTypes,
+  analyticsDupProfile, analyticsUserTypeText, analyticsVideoNames, clearAnalyticsUserTypes,
+  installContentStubs, loginAsContentAdmin, resetAnalyticsDuplicates, seedAnalyticsUserTypes,
 } from './support/content';
 import { readFileSync } from 'fs';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -254,5 +254,75 @@ test.describe('Content — /contentanalytics new-user rule + export columns', ()
       expect(line.split(',').length, `CN-48: row has ${columns.length} cells. Row="${line}"`)
         .toBe(columns.length);
     }
+  });
+
+  // =============================================================================================
+  // CN-49 — the Video Name dropdown's typeahead
+  //
+  // The second assertion is the one with teeth. The dropdown is `multiple`, and MatSelect's
+  // _initializeSelection() → _setSelectionByValue() clears the selection model on every options
+  // change and re-selects only the options CURRENTLY RENDERED; _propagateChanges() then writes back
+  // `selected.map(o => o.value)`. So a chosen video hidden behind a search term would leave the
+  // model, and the user's next click would silently emit a value array without it — losing a choice
+  // they had already made. The engine keeps selected options rendered to prevent exactly that, and
+  // this case is what holds that in place.
+  // =============================================================================================
+  test('CN-49 the Video Name dropdown searches its options, and never hides one already chosen', async ({ page }) => {
+    expect(analyticsVideoNames.prefix, 'CN-49: the video name prefix resolves').toBeTruthy();
+    expect(analyticsVideoNames.one, 'CN-49: the first video name resolves').toBeTruthy();
+
+    await loginAsContentAdmin(page);
+    await page.goto('/contentanalytics', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('table').first(), 'CN-49: the analytics table renders').toBeVisible({ timeout: 60_000 });
+
+    const rows = page.locator('tr', { hasText: analyticsUserTypeText.existingName });
+    await expect(rows, 'CN-49: the seeded logs are loaded, so their video names are options')
+      .toHaveCount(1, { timeout: 60_000 });
+
+    const options = page.getByTestId('ca-videoname-option');
+    await page.getByTestId('ca-msel-009').click();
+    await expect(options.first(), 'CN-49: the dropdown lists its options').toBeVisible({ timeout: 30_000 });
+    const allCount = await options.count();
+    expect(allCount, 'CN-49: at least the three seeded video names are offered').toBeGreaterThanOrEqual(3);
+
+    // ngx-mat-select-search renders a hidden helper <input> beside the visible one, so address the
+    // visible one by its placeholder. It also marks its host <mat-option> aria-disabled while keeping
+    // pointer-events:all — a person types there fine, but Playwright's actionability check refuses to
+    // fill inside an aria-disabled ancestor. Click with the check bypassed and type real keys.
+    const search = page.getByTestId('ca-videoname-search').getByPlaceholder('Search video names');
+    await search.click({ force: true });
+    await page.keyboard.type(analyticsVideoNames.prefix);
+
+    // [ASSERT] the term narrows the OPTIONS to the three seeded names...
+    await expect(options, 'CN-49: the search narrows the options to the seeded three')
+      .toHaveCount(3, { timeout: 15_000 });
+    for (const name of [analyticsVideoNames.one, analyticsVideoNames.two, analyticsVideoNames.three]) {
+      await expect(options.filter({ hasText: name }), `CN-49: "${name}" is offered`).toHaveCount(1);
+    }
+    // ...and does NOT filter the table behind it — the typeahead picks options, nothing else.
+    await expect(rows, 'CN-49: typing in the option search does not filter the table').toHaveCount(1);
+
+    // Choose one, then search for a term that excludes it.
+    await options.filter({ hasText: analyticsVideoNames.one }).click();
+    await search.click({ force: true });
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.type(analyticsVideoNames.three);
+
+    // [ASSERT] the chosen video is STILL offered although the term excludes it, and is still ticked.
+    // Without the keep-selected rule it would vanish here, and the next click would drop it.
+    const chosen = options.filter({ hasText: analyticsVideoNames.one });
+    await expect(chosen, 'CN-49: an already-chosen name stays rendered under a term that excludes it')
+      .toHaveCount(1, { timeout: 15_000 });
+    await expect(chosen, 'CN-49: and is still selected').toHaveAttribute('aria-selected', 'true');
+    // The matching one is there too; the one matching neither is gone.
+    await expect(options.filter({ hasText: analyticsVideoNames.three }), 'CN-49: the matching name is offered').toHaveCount(1);
+    await expect(options.filter({ hasText: analyticsVideoNames.two }), 'CN-49: an unmatched, unchosen name is not').toHaveCount(0);
+
+    // [ASSERT] clearing the term brings every option back.
+    await search.click({ force: true });
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
+    await expect(options, 'CN-49: clearing the search restores every option')
+      .toHaveCount(allCount, { timeout: 15_000 });
   });
 });

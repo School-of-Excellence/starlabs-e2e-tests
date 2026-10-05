@@ -462,6 +462,17 @@ export const analyticsUserTypeText = {
 };
 
 /** The one `content analytics` log each of them owns. */
+/**
+ * Video names on the three seeded logs. Run-scoped so CN-49 can type a term that matches exactly
+ * these three out of whatever else the shared emulator holds in the window.
+ */
+export const analyticsVideoNames = {
+  prefix: `TEST_VID_UT_${RUN}`,
+  one: `TEST_VID_UT_${RUN}_ONE`,
+  two: `TEST_VID_UT_${RUN}_TWO`,
+  three: `TEST_VID_UT_${RUN}_THREE`,
+};
+
 export const analyticsUserTypeLogIds = {
   stillNew: `${RUN}_ca_log_nu_new`,
   movedToExist: `${RUN}_ca_log_nu_moved`,
@@ -504,9 +515,10 @@ export async function seedAnalyticsUserTypes(): Promise<void> {
     name: analyticsUserTypeText.existingName, email: analyticsUserTypeText.existingEmail, ...tag,
   });
 
+  const videoNames = [analyticsVideoNames.one, analyticsVideoNames.two, analyticsVideoNames.three];
   const log = (id: string, profileid: string, n: number) => db.collection('content analytics').doc(id).set({
     docid: id, profileid, type: 'eiflixcontent', platform_name: 'Eiflix',
-    videoid: `${RUN}_vid_usertype_${n}`, videoname: `TEST_VID_USERTYPE_${n}`,
+    videoid: `${RUN}_vid_usertype_${n}`, videoname: videoNames[n - 1],
     totaltimespend: 1100 + n, totalruntime: 1300 + n, status: 'incomplete',
     lastwatchedtime: '00:05', logdate: recent(), ...tag,
   });
