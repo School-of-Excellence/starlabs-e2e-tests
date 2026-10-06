@@ -75,3 +75,43 @@ on p1 for 11b). The seeded uids are `${RUN}_u_p0/p1` (roster). WDC-11: card "2" 
 shows "No login yet" → add p0 → Firestore `members` == [p0 uid] (the app's write) → panel/card follow → Add
 all disabled. WDC-11b: both addable → Add all → members has both → the card hides at zero. Everything is
 removed in `finally`, so WS-07/11/12 and the rest of the suite never see a group.
+
+## WDC-12 — All Assignments: typed answer expands its own card (2026-09-21)
+
+`stampParticipantWorkshopP0TextAssignment()` adds a completed question/text assignment (long answer,
+`END-OF-ANSWER` marker) to p0's progress document; the spec asserts the app's clamp → expand (one card
+only) → collapse. `resetParticipantWorkshopP0` in `finally` restores the two-video seed.
+
+## WDC-13 — Challenge Progress Overview rules (2026-09-21)
+
+The app's engine rule changed: the four challenge-level buckets are now EXCLUSIVE ("Ready to Start" no
+longer counted inside "Not Started"), the first real challenge has no Ready bucket, and zoom-call rows show
+no chips (the Zoom Call Action button is parked). `setupOverviewShape()` gives W_DASH three challenges
+(Module One, Module Two, a zoom call) with p0 done on One and p1 untouched; the spec asserts row 1 has no
+Ready chip and "1 Not Started", row 2 reads "1 Ready to Start · 1 Not Started", row 3 has neither chips
+nor the action button, and the "Not Started" panel on row 2 lists only the blocked person.
+`teardownOverviewShape()` restores the seed.
+WDC-13 also covers the sub-challenge rows (same day): 2.1 reads "1 Ready to Start · 1 Not Started · 0
+Completed" (no In Progress chip on a step); 1.1 (the first step) shows no Ready chip.
+
+## WS-31 — EiFlix Mobile App Logs on /eiflixoperationsdashboard (2026-09-21)
+
+`seedLoginLogs()` writes six `loginlog` documents (today ×2 EiFlix + one other app; 3 days; 20 days;
+40 days) with `date` as a Timestamp; `clearLoginLogs()` removes them. WS-31 asserts Today/7D/30D
+membership, that the other-app row never shows, CF-owned names mapped from profileid, the name and OS
+filters (options = people/OS in range), search, version sort both ways, and the pager label/buttons.
+
+## First CI run of WDC-13 / WS-31 (branch suites 35584288173) — two spec-side fixes
+
+- WDC-13 read "0 Not Started" on row 1: the overview counts only enrollees with status `enrolled`
+  (`rebuildProgressFromMap`), and the seed's p1 is `enrollednotstarted`. `setupOverviewShape()` now
+  promotes p1 to `enrolled` for the shape and the teardown restores it (WS-07's Total-Enrolled-only case
+  still holds afterwards).
+- WS-31 hit a strict-mode violation on the name search: `ngx-mat-select-search` renders a hidden helper
+  `<input>` next to the visible one, so `locator('input')` matched two. The spec addresses the visible
+  input by its placeholder.
+- Second run (35586941612): WS-31 waited the full timeout on `fill` — "element is not enabled".
+  `ngx-mat-select-search` marks its host `<mat-option>` disabled (`aria-disabled=true`, so it can never be
+  selected) while keeping it usable with `pointer-events:all`; Playwright's actionability check refuses to
+  fill under an aria-disabled ancestor. The spec now clicks the input with `force: true` and types via
+  the keyboard, which drives the component's real keyup handler.

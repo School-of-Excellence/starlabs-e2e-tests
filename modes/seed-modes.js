@@ -61,6 +61,7 @@ const ID = {
   // request). Every doc below hangs off one of the two logs above, or is a NEGATIVE CONTROL that
   // must be filtered OUT — without those a green test cannot tell "the filter ran" from "no data".
   IRL_NOTSTARTED: `${TESTRUNID}_irl_notstarted`, // p1's 2nd log: no status, reports[] EMPTY → "Not started"
+  IRL_CANCELLED: `${TESTRUNID}_irl_cancelled`,   // p1's 3rd log: status 'cancelled' → the dashboard drops it
   XOVER_IRD: `${TESTRUNID}_xover_ird`,           // interim crossover for IRL_COMPLETED (p0 only)
   EVO_IRD: `${TESTRUNID}_evo_ird`,               // interim evolutionprogress for IRL_COMPLETED
   LL_IRD: `${TESTRUNID}_ll_ird`,                 // love letter for IRL_COMPLETED, every tag false
@@ -306,8 +307,17 @@ async function seedModes() {
   //        p1 · IRL_ONGOING    ongoing   · ask AH only, NO crossover  → proves the Crossover Meter
   //                                        counts only participants who have a crossover record
   //        p1 · IRL_NOTSTARTED not started (reports[] empty)
+  //        p1 · IRL_CANCELLED  status 'cancelled' → excluded from every dashboard number (IRD-18)
   await db.collection('interimreport log').doc(ID.IRL_NOTSTARTED).set({
     docid: ID.IRL_NOTSTARTED, profileid: PF.p1, status: null, reports: [],
+    lastupdate: T.now(), createdon: T.now(), ...tag,
+  });
+  //      NEGATIVE CONTROL for the operator's 2026-09-27 rule "a cancelled report is not part of any
+  //      dashboard number": a THIRD p1 log, in range and with steps saved — everything an Ongoing log has
+  //      — differing only by status 'cancelled'. IRD-01's exact "p1 has two" and IRD-18 both fail if the
+  //      dashboard ever counts it. The Log tab (tab 2) still streams it; only the dashboard drops it.
+  await db.collection('interimreport log').doc(ID.IRL_CANCELLED).set({
+    docid: ID.IRL_CANCELLED, profileid: PF.p1, status: 'cancelled', reports: ['askah', 'loveletter'],
     lastupdate: T.now(), createdon: T.now(), ...tag,
   });
 

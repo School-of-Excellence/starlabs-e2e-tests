@@ -112,6 +112,14 @@ const ID = {
   // reusing it here would make the two suites fight over the same doc).
   EPR7: `${TESTRUNID}_epr_7`,              // event participation request, status:'approved' (p7)
   ETICKET_P7: `${TESTRUNID}_eticket_p7`,   // arena e-ticket (active:true, eligible P1) for p7
+  ELIG_J: `${TESTRUNID}_elig_journey`,          // journey with a `journey` label (UED-ELIG-01)
+  ELIG_MAR_LIVE: `${TESTRUNID}_elig_mar_live`,  // big marathon status 'live' → its cohort is offered
+  ELIG_MAR_OLD: `${TESTRUNID}_elig_mar_old`,    // big marathon status 'completed' → its cohort is NOT offered
+  ELIG_COH_LIVE: `${TESTRUNID}_elig_coh_live`,
+  ELIG_COH_OLD: `${TESTRUNID}_elig_coh_old`,
+  BK_EVENT: `${TESTRUNID}_bk_event`,            // event collection for the eligibility-bucket world (EPC-ELIG-01)
+  BK_PRODUCT: `${TESTRUNID}_bk_product`,
+  BK_ARENA: `${TESTRUNID}_bk_arena`,            // arena events with an `eligibility` block
 };
 
 const STAGE_A = 'Stage A';                 // EVT-15/16 single seeded queue stage
@@ -303,6 +311,78 @@ async function seedEvents() {
   await db.collection('journey').doc(ID.JOURNEY1).set({
     docid: ID.JOURNEY1, name: `TEST Journey ${TESTRUNID}`, ...tag,
   });
+
+  // 9d) EVENT ELIGIBILITY (UED-ELIG-01, app 0e8f5685 surya) — the per-product eligibility block on the
+  //     event editor lists journeys from the WHOLE `journey` collection (label = `journey` field) and
+  //     cohorts only from `big cohorts` whose marathonref is a `big marathon` with status 'live'.
+  //     The OLD marathon + its cohort are the negative control: that cohort must never be offered.
+  await db.collection('journey').doc(ID.ELIG_J).set({
+    docid: ID.ELIG_J, journey: `EVL Elig Journey ${TESTRUNID}`, name: `EVL Elig Journey ${TESTRUNID}`, ...tag,
+  });
+  for (const [mar, coh, status, label] of [
+    [ID.ELIG_MAR_LIVE, ID.ELIG_COH_LIVE, 'live', 'Live'], [ID.ELIG_MAR_OLD, ID.ELIG_COH_OLD, 'completed', 'Old'],
+  ]) {
+    await db.collection('big marathon').doc(mar).set({ docid: mar, title: `EVL ${label} Marathon ${TESTRUNID}`, status, ...tag });
+    await db.collection('big cohorts').doc(coh).set({
+      docid: coh, name: `EVL ${label} Cohort ${TESTRUNID}`, marathonref: db.collection('big marathon').doc(mar),
+      participantidlist: [], ...tag,
+    });
+  }
+
+  // 9e) EVENT CTA CONFIG (ECTA-01/02, app 7b5b6c14 surya) — the Configure CTA dialog prefills from, and
+  //     setDoc()s (whole-doc overwrite), the two singleton config docs classify/eventcta +
+  //     classify/eventstatusmessage. Seeded with run-unique strings so the prefill is provably read.
+  const cta = (k) => ({ button: `${k} btn ${TESTRUNID}`, description: `${k} desc ${TESTRUNID}` });
+  await db.collection('classify').doc('eventcta').set({
+    confirmparticipation: cta('Confirm'), addon: cta('Addon'), upgrade: cta('Upgrade'),
+    continuity: cta('Continuity'), nocta: cta('NoCta'), ...tag,
+  });
+  await db.collection('classify').doc('eventstatusmessage').set({
+    requested: { message: `Requested msg ${TESTRUNID}` }, confirmationmessage: { message: `Confirmed msg ${TESTRUNID}` }, ...tag,
+  });
+
+  // 9f) ELIGIBILITY BUCKETS (EPC-ELIG-01, app 7835cb21 surya) — the confirmations overview splits an arena
+  //     event's REQUESTED participants into Eligible / Upgrade / Addon / Continuity / Not eligible from the
+  //     arena's `eligibility` (here: journey ELIG_J, customer status ['active'], no cohort/consumption rule),
+  //     the requester's participant metadata (customerstatus + activejourney) and product ownership
+  //     (participantsproduct on the arena product with status null). One requester per bucket, plus an
+  //     APPROVED one that must land in no bucket. Own event + product, so EPC-01/02's counts are untouched.
+  const BK_START = T.fromMillis(Date.now() - 86400e3), BK_END = T.fromMillis(Date.now() + 10 * 86400e3);
+  await db.collection('event collection').doc(ID.BK_EVENT).set({
+    docid: ID.BK_EVENT, name: `EVL Bucket Event ${TESTRUNID}`, start_date: BK_START, end_date: BK_END,
+    startdate: BK_START, enddate: BK_END, delete: false, ...tag,
+  });
+  await productRef(ID.BK_PRODUCT).set({ id: ID.BK_PRODUCT, docid: ID.BK_PRODUCT, product: `EVL Bucket Product ${TESTRUNID}`, atcmodel: null, ...tag });
+  await db.collection('arena events').doc(ID.BK_ARENA).set({
+    docid: ID.BK_ARENA, eventref: db.collection('event collection').doc(ID.BK_EVENT), productref: productRef(ID.BK_PRODUCT),
+    title: `EVL Bucket Arena ${TESTRUNID}`, startdate: BK_START, enddate: BK_END, delete: false,
+    eligibility: { journeyid: [ID.ELIG_J], cohortid: [], customerstatus: ['active'], productconsumption: [] }, ...tag,
+  });
+  //   key        customerstatus  activejourney        owns product  EPR        → bucket
+  const BUCKETS = [
+    ['ELIG',  'active',       ID.ELIG_J,             true,  'requested'],  // → eligible
+    ['UPG',   'active',       `${TESTRUNID}_jr_x`,   true,  'requested'],  // journey mismatch → upgrade
+    ['ADD',   'active',       ID.ELIG_J,             false, 'requested'],  // not an owner → addon
+    ['CONT',  'non active',   ID.ELIG_J,             true,  'requested'],  // non active, journey matches → continuity
+    ['NE',    'discontinued', ID.ELIG_J,             true,  'requested'],  // neither status → not eligible
+    ['APPR',  'active',       ID.ELIG_J,             true,  'approved'],   // approved → counted Approved, in NO bucket
+  ];
+  for (const [k, cs, jr, owns, st] of BUCKETS) {
+    const pf = `${TESTRUNID}_pf_bk_${k.toLowerCase()}`;
+    await db.collection('participant metadata').doc(pf).set({
+      profileid: pf, name: `EVL Bucket ${k} ${TESTRUNID}`, email: `${pf}@example.com`,
+      customerstatus: cs, activejourney: jr, consumedproducts: [], ...tag,
+    });
+    await db.collection('event participation request').doc(`${TESTRUNID}_epr_bk_${k.toLowerCase()}`).set({
+      profileid: pf, arenaeventid: ID.BK_ARENA, eventref: db.collection('event collection').doc(ID.BK_EVENT),
+      productref: productRef(ID.BK_PRODUCT), status: st, ...tag,
+    });
+    if (owns) {
+      await db.collection('participantsproduct').doc(`${TESTRUNID}_pp_bk_${k.toLowerCase()}`).set({
+        profileid: pf, productref: productRef(ID.BK_PRODUCT), status: null, sequenceorder: 0, ...tag,
+      });
+    }
+  }
 
   // 9c) PARTICIPANT METADATA — events-stage-data (ESD-01) does a per-profile getDoc for every row it
   //     builds; without this doc every row renders metaMissing:true (blank name/email/journey/customer
@@ -550,6 +630,10 @@ const SEEDED = [
   // them by natural key (see support/events.ts); teardown still sweeps the testrunid-tagged ones.
   'events_profiles', 'arena e-ticket', 'arenaspace', 'stage opportunity count',
   'participant tag logs', 'participant metadata', 'journey', 'locationlogs',
+  // event eligibility (big marathon / big cohorts) + CTA config singletons (classify/eventcta,
+  // classify/eventstatusmessage — seeded with the run tag; ECTA-02's app write drops the tag, and the
+  // spec's afterAll re-seeds them so teardown can sweep them)
+  'big marathon', 'big cohorts', 'classify',
   // auth-chain + dashboard (shared shape; testrunid-scoped so the queue 'run1' seed is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];

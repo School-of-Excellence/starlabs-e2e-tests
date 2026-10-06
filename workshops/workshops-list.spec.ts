@@ -14,6 +14,7 @@
 import { test, expect } from '@playwright/test';
 import {
   wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, resetWorkshopInactive,
+  clearPopupBanner, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -161,5 +162,136 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       { label: 'WS-05: detailpage.title === typed title', timeoutMs: 30_000 },
     );
     expect((after as any)!.detailpage.title, 'WS-05: the app persisted the typed title').toBe(newTitle);
+  });
+});
+
+// =============================================================================================
+// WS-46 — Popup banner: `classify/eiflixpopupbanner` now stores a `popupbanner` ARRAY OF MAPS.
+//
+// Anti-circularity: the case drives the real dialog and then reads the document back with the
+// Admin SDK, asserting the shape the APP wrote — never a value the test put there.
+//
+// Two things are load-bearing and neither is obvious:
+//   • MIGRATION. The seed plants the PRE-ARRAY flat banner, which is what production holds today.
+//     The dialog must adopt it as the first entry; if it read only the new array it would show an
+//     empty editor whose first save replaced a live banner with nothing.
+//   • The legacy flat fields must SURVIVE the save. The Flutter app that renders the popup reads
+//     them (popup_banner_model.dart fromMap: m['enable'], m['desktop'], m['header'] …) and knows
+//     nothing about `popupbanner`, so clearing them would take the live banner down on first save.
+// =============================================================================================
+
+test.describe('Workshops — popup banner stores an array of banners', () => {
+  test.beforeEach(async () => { await seedLegacyPopupBanner(); });
+  test.afterEach(async () => { await clearPopupBanner(); });
+
+  test('WS-46 the dialog adopts the pre-array banner, adds a second, and saves both as an array', async ({ page }) => {
+    // [PRECONDITION] the document is in the pre-array state the migration must handle.
+    expect(await popupBannerArray(), 'WS-46: no popupbanner array before the first save').toBeNull();
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-open-popup-banner-dialog-1').click();
+
+    // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
+    const picks = page.getByTestId('pb-select-banner-10');
+    await expect(picks, 'WS-46: the pre-array banner is adopted as the only entry').toHaveCount(1, { timeout: 30_000 });
+    await expect(picks.first(), 'WS-46: and is labelled by its title').toContainText(`WS Legacy Banner ${RUN}`);
+
+    // Add a second banner and save both.
+    await page.getByTestId('pb-add-banner-9').click();
+    await expect(picks, 'WS-46: a second banner is added to the list').toHaveCount(2, { timeout: 15_000 });
+    await page.getByTestId('pb-save-8').click();
+
+    // [ASSERT] the APP wrote an array of maps under `popupbanner`.
+    const arr = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 2,
+      { label: 'WS-46: the app writes a two-entry popupbanner array', timeoutMs: 30_000 },
+    );
+    expect(Array.isArray(arr), 'WS-46: popupbanner is an array').toBe(true);
+    expect(arr!.length, 'WS-46: one map per banner').toBe(2);
+    expect(typeof arr![0], 'WS-46: each entry is a map').toBe('object');
+    // The adopted banner kept its content through the migration — this is the value the APP carried
+    // across from the flat fields, not one the test wrote into the array.
+    expect(arr![0]['title'], 'WS-46: the adopted banner keeps its title').toBe(wsPopupBannerLegacy.title);
+    expect(arr![0]['button1link'], 'WS-46: and its link').toBe(wsPopupBannerLegacy.button1link);
+    expect(arr![0]['enable'], 'WS-46: and its switch').toBe(true);
+    // A new banner starts empty and OFF, so adding one can never put something live by accident.
+    expect(arr![1]['enable'], 'WS-46: the added banner starts switched off').toBe(false);
+    expect(arr![1]['title'], 'WS-46: and empty').toBe('');
+
+    // [ASSERT] the legacy flat fields are STILL on the document. The app that renders the popup reads
+    // them and knows nothing about the array, so dropping them would take the live banner down.
+    const docAfter = await popupBannerDoc();
+    expect(docAfter['title'], 'WS-46: the legacy flat title survives the save').toBe(wsPopupBannerLegacy.title);
+    expect(docAfter['enable'], 'WS-46: and the legacy flat switch').toBe(true);
+  });
+
+  // ===========================================================================================
+  // WS-47 — the master-detail behaviour, which is where the risk in this change actually sits.
+  //
+  // One set of six ProseMirror editors is shared across every banner, so the form is only ever a
+  // working copy of the SELECTED one. commitForm() writes it back before any selection change; get
+  // that wrong and switching banners silently discards whatever was just typed. WS-46 proves the
+  // stored SHAPE — this proves nothing is lost on the way there.
+  //
+  // The edit is made in `button1link`, a plain <input>. The other per-banner fields are ngx-editor
+  // (ProseMirror) contenteditables, which no spec in this hub drives — eiflix-discover-page.spec.ts
+  // avoids them for the same reason. A plain input proves the same rule without the flake.
+  // ===========================================================================================
+  test('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-open-popup-banner-dialog-1').click();
+
+    const picks = page.getByTestId('pb-select-banner-10');
+    const link = page.getByTestId('pb-button1link-12');
+    await expect(picks, 'WS-47: the adopted banner is the only one to start with').toHaveCount(1, { timeout: 30_000 });
+    await expect(link, 'WS-47: banner 1 shows the adopted link').toHaveValue(wsPopupBannerLegacy.button1link, { timeout: 15_000 });
+
+    // Add a second banner; it becomes the selected one and starts empty.
+    await page.getByTestId('pb-add-banner-9').click();
+    await expect(picks, 'WS-47: two banners now').toHaveCount(2, { timeout: 15_000 });
+    await expect(link, 'WS-47: a new banner starts empty').toHaveValue('');
+
+    const second = `https://example.com/second-${RUN}`;
+    await link.fill(second);
+    // Each banner has its own switch; turn the new one on.
+    await page.getByTestId('pb-toggle-enable-3').click();
+
+    // [ASSERT] switching away shows banner 1's OWN value, not the one just typed...
+    await picks.nth(0).click();
+    await expect(link, 'WS-47: banner 1 still shows its own link').toHaveValue(wsPopupBannerLegacy.button1link, { timeout: 15_000 });
+
+    // ...and switching back restores banner 2's edit. This is the assertion that fails if
+    // commitForm() does not run before a selection change, or patchForm() does not refill the form.
+    await picks.nth(1).click();
+    await expect(link, 'WS-47: banner 2 kept the edit made before switching away').toHaveValue(second, { timeout: 15_000 });
+
+    await page.getByTestId('pb-save-8').click();
+
+    // [ASSERT] both banners are stored, each with its own link and its own switch.
+    const arr = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 2,
+      { label: 'WS-47: two banners saved', timeoutMs: 30_000 },
+    );
+    expect(arr![0]['button1link'], 'WS-47: banner 1 keeps the adopted link').toBe(wsPopupBannerLegacy.button1link);
+    expect(arr![1]['button1link'], 'WS-47: banner 2 keeps the typed link').toBe(second);
+    expect(arr![0]['enable'], 'WS-47: banner 1 stays as it was').toBe(true);
+    expect(arr![1]['enable'], 'WS-47: banner 2 was switched on independently').toBe(true);
+
+    // [ASSERT] removing one drops ONLY it. window.confirm guards the remove, so answer it first.
+    page.once('dialog', d => d.accept());
+    await page.getByTestId('pb-remove-banner-11').nth(1).click();
+    await expect(picks, 'WS-47: back to one banner').toHaveCount(1, { timeout: 15_000 });
+    await page.getByTestId('pb-save-8').click();
+
+    const after = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 1,
+      { label: 'WS-47: one banner left after the remove', timeoutMs: 30_000 },
+    );
+    expect(after![0]['button1link'], 'WS-47: the one left is the one not removed').toBe(wsPopupBannerLegacy.button1link);
   });
 });

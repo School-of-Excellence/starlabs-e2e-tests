@@ -25,6 +25,7 @@ export const wsProductNames = [
 export const wsActors = {
   admin: `admin+${RUN}@example.com`,        // roles {admin, ah} — super-role (list/config/dashboard)
   mover: `mover+${RUN}@example.com`,        // profileid is the hardcoded move-next id (WS-12)
+  limited: `limited+${RUN}@example.com`,    // same roles/routes as admin — only Dashboard Access differs
   participant0: `participant0+${RUN}@example.com`,
   participant1: `participant1+${RUN}@example.com`,
   participant2: `participant2+${RUN}@example.com`,
@@ -46,6 +47,12 @@ export const wsMetaNames = {
   p0: wsActors.participant0,
   p1: wsActors.participant1,
   p2: wsActors.participant2,
+  // The staff actors have profile_data too, so the same CF rewrites THEIR metadata name to their email.
+  // The Dashboard Access pickers list people from `participant metadata`, so these are the labels those
+  // pickers actually render — never the seed's "WS Admin <run>".
+  admin: wsActors.admin,
+  mover: wsActors.mover,
+  limited: wsActors.limited,
 };
 
 /**
@@ -58,6 +65,8 @@ export async function alignWorkshopMetadataNames(): Promise<void> {
   const db = admin.firestore();
   const pairs: [string, string][] = [
     [wsProfileIds.p0, wsMetaNames.p0], [wsProfileIds.p1, wsMetaNames.p1], [wsProfileIds.p2, wsMetaNames.p2],
+    [wsProfileIds.admin, wsMetaNames.admin], [wsProfileIds.mover, wsMetaNames.mover],
+    [wsProfileIds.limited, wsMetaNames.limited],
   ];
   for (const [pf, email] of pairs) {
     await db.collection('participant metadata').doc(pf).set({ name: email, email: email.toLowerCase() }, { merge: true });
@@ -67,7 +76,8 @@ export async function alignWorkshopMetadataNames(): Promise<void> {
 /** Seeded profileids (for asserting app-written refs / progress rows). */
 export const wsProfileIds = {
   admin: `${RUN}_pf_admin`,
-  mover: '3LVxKXuyxldYoRDEpx5s', // == seed-workshops MOVER_PID (hardcoded dashboard allow-list id)
+  mover: '3LVxKXuyxldYoRDEpx5s', // == seed-workshops MOVER_PID (a plain opaque id since 2026-09-23)
+  limited: `${RUN}_pf_limited`,
   p0: `${RUN}_pf_p0`,
   p1: `${RUN}_pf_p1`,
   p2: `${RUN}_pf_p2`,
@@ -100,6 +110,9 @@ export const wsAddIds = {
   HW_CS_NOORDER: `${RUN}_hw_cs3`,
   HW_ADS: `${RUN}_hw_ads`,
   HS_A: `${RUN}_hs_a`,
+  EP_HS: `${RUN}_ep_hs`,
+  JRN_AUD: `${RUN}_jrn_aud`,
+  TIER_AUD: `${RUN}_tier_aud`,
   NUT_SEGMENT: `${RUN}_nut_seg`,
   NUT_CAL_A: `${RUN}_nut_cal_a`,
   NUT_CAL_B: `${RUN}_nut_cal_b`,
@@ -261,6 +274,15 @@ export async function loginAsWshopMover(page: Page): Promise<void> {
 }
 
 /**
+ * Log in as the seeded LIMITED admin — identical roles and route grants to `admin`, but named in no
+ * global access list and granted exactly two dashboard actions on W_DASH. Anything this actor cannot
+ * reach is the Dashboard Access gate, never the route guard.
+ */
+export async function loginAsWshopLimited(page: Page): Promise<void> {
+  await loginAs(page, wsActors.limited, PASSWORD);
+}
+
+/**
  * Log in as a seeded PARTICIPANT — roles ['participant'], and deliberately NOT granted any workshop
  * route (none of the ROUTES entries in seed-workshops.js set `participant: true`, so the participant
  * appears in neither the route's roles[] nor its profileid[]). This is the actor the route-guard cases
@@ -382,6 +404,124 @@ export async function chatGroupMembers(): Promise<string[]> {
   return Array.isArray(m) ? m.map(String) : [];
 }
 
+/** The typed answer WDC-12 puts on p0's assignment — long enough to be clamped at three lines. */
+export const wsP0AssignmentAnswer =
+  `Answer line one for ${RUN}. ` + 'This sentence is repeated to push the answer well past the three-line clamp. '.repeat(6) + 'END-OF-ANSWER';
+
+/**
+ * PRECONDITION for All Assignments: give p0 a COMPLETED question/text assignment as a second
+ * sub-challenge of Module One (the seed's two videos stay), so the dashboard's All Assignments section
+ * lists one assignment with one text submission. The spec asserts the APP's expand/collapse; restored
+ * by resetParticipantWorkshopP0 afterwards.
+ */
+export async function stampParticipantWorkshopP0TextAssignment(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('participant workshop').doc(wsIds.PW_A).set({
+    challenges: [
+      {
+        type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations',
+        challenges: [
+          { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: 'completed' },
+          { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: '' },
+          { type: 'assignment', assignmenttype: 'question', submissionformat: 'text',
+            challengeid: `${RUN}_ch0_s2`, name: `Reflection ${RUN}`, heading: `Reflection ${RUN}`,
+            status: 'completed', completed: T.fromDate(wsP0CompletedAt), result: wsP0AssignmentAnswer },
+        ],
+      },
+    ],
+  }, { merge: true });
+}
+
+/**
+ * PRECONDITION for the Challenge Progress Overview rules (WDC-13): W_DASH gets THREE challenges —
+ * Module One, Module Two, and a zoom call — and the two enrollees get matching progress rows:
+ *   p0: Module One COMPLETED, Module Two untouched → on Module Two p0 is "Ready to Start"
+ *   p1: Module One UNTOUCHED, Module Two untouched → on Module One p1 is simply "Not Started" (the old
+ *       rule also showed them as "Ready to Start"); on Module Two p1 is "Not Started" (blocked)
+ * so the expected chips are: row 1 → 1 Completed · 0 In Progress · 1 Not Started (no Ready chip);
+ * row 2 → 1 Ready to Start · 1 Not Started (not 2); row 3 (zoom) → no chips, no action button.
+ * The spec asserts what the APP counted; this only sets the inputs. Undone by teardownOverviewShape().
+ */
+export async function setupOverviewShape(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const one = (statuses: string[], status?: string) => ({
+    type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations', ...(status ? { status } : {}),
+    challenges: [
+      { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: statuses[0] },
+      { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: statuses[1] },
+    ],
+  });
+  const two = () => ({
+    type: 'challenge', challengeid: `${RUN}_ch1`, heading: 'Module Two', subheading: 'Momentum',
+    challenges: [{ type: 'video', challengeid: `${RUN}_ch1_s0`, heading: 'Next Video', status: '' }],
+  });
+  const zoom = () => ({ type: 'zoomcall', challengeid: `${RUN}_zoom`, heading: 'Live Call', subheading: 'with EIS', status: 'pending' });
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_A).set({ challenges: [one(['completed', 'completed'], 'completed'), two(), zoom()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [one(['', '']), two(), zoom()] }, { merge: true });
+  // The overview counts only enrollees whose enrolment status is 'enrolled' (rebuildProgressFromMap);
+  // the seed leaves p1 as 'enrollednotstarted' (a Total Enrolled-only case for WS-07). Promote p1 for
+  // this shape so both people are in the statistics — restored by teardownOverviewShape().
+  await db.collection('workshop participant enrolled').doc(wsIds.ENR_B).set({ status: 'enrolled' }, { merge: true });
+}
+
+/** Back to the seed: one challenge on W_DASH, p0 1-of-2 complete, p1 untouched. */
+export async function teardownOverviewShape(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const base = () => ({
+    type: 'challenge', challengeid: `${RUN}_ch0`, heading: 'Module One', subheading: 'Foundations',
+    challenges: [
+      { type: 'video', challengeid: `${RUN}_ch0_s0`, heading: 'Intro Video', status: '' },
+      { type: 'video', challengeid: `${RUN}_ch0_s1`, heading: 'Deep Dive', status: '' },
+    ],
+  });
+  await db.collection('workshopconfiguration').doc(wsIds.W_DASH).set({ challenges: [base()] }, { merge: true });
+  await db.collection('participant workshop').doc(wsIds.PW_B).set({ challenges: [base()] }, { merge: true });
+  await db.collection('workshop participant enrolled').doc(wsIds.ENR_B).set({ status: 'enrollednotstarted' }, { merge: true });
+  await resetParticipantWorkshopP0();
+}
+
+/** The `loginlog` rows WS-31 seeds (ids run-scoped; removed by clearLoginLogs()). */
+export const wsLoginLogIds = {
+  todayP0: `${RUN}_ll_today_p0`, todayP1: `${RUN}_ll_today_p1`, weekP0: `${RUN}_ll_week_p0`,
+  monthP2: `${RUN}_ll_month_p2`, oldP0: `${RUN}_ll_old_p0`, otherApp: `${RUN}_ll_other`,
+};
+
+/**
+ * PRECONDITION for the EiFlix Mobile App Logs table: six `loginlog` documents —
+ *   today  : p0 (android 2.3.1), p1 (ios 2.3.0), and one for a DIFFERENT app (negative control)
+ *   3 days : p0 (android 2.2.9)           → in 7D and 30D, not Today
+ *   20 days: p2 (ios 2.3.1)               → in 30D only
+ *   40 days: p0 (android 2.0.0)           → never (outside 30D)
+ * `date` is a Timestamp — the field the dashboard's range query bounds. The spec asserts the APP's
+ * range/app filtering, name mapping, sorting and paging over these known inputs.
+ */
+export async function seedLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const ago = (days: number, h = 10) => { const d = new Date(); d.setDate(d.getDate() - days); if (days) d.setHours(h, 0, 0, 0); return T.fromDate(d); };
+  const put = (id: string, data: any) => db.collection('loginlog').doc(id).set({ docid: id, ...data, testrunid: RUN, _testdata: true });
+  await Promise.all([
+    put(wsLoginLogIds.todayP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(0), device_os: 'android', current_version: '2.3.1' }),
+    put(wsLoginLogIds.todayP1, { app: 'EiFlix', profileid: wsProfileIds.p1, date: ago(0), device_os: 'ios', current_version: '2.3.0' }),
+    put(wsLoginLogIds.otherApp, { app: 'SolarVoice', profileid: wsProfileIds.p0, date: ago(0), device_os: 'android', current_version: '9.9.9' }),
+    put(wsLoginLogIds.weekP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(3), device_os: 'android', current_version: '2.2.9' }),
+    put(wsLoginLogIds.monthP2, { app: 'EiFlix', profileid: wsProfileIds.p2, date: ago(20), device_os: 'ios', current_version: '2.3.1' }),
+    put(wsLoginLogIds.oldP0, { app: 'EiFlix', profileid: wsProfileIds.p0, date: ago(40), device_os: 'android', current_version: '2.0.0' }),
+  ]);
+}
+
+export async function clearLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsLoginLogIds).map(id => db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}
+
 /**
  * Reset the INACTIVE workshop's challenges to a KNOWN single-curriculum array (WS-06 asserts the app
  * grew the array by exactly 1 after adding a curriculum in the UI). Also clears triggerFunction so the
@@ -439,4 +579,317 @@ export async function cleanDuplicateWorkshops(title: string): Promise<void> {
     const isDup = !!data.detailpage && data.detailpage.title === title && !seededIds.has(d.id);
     if (isDup) await d.ref.delete();
   }
+}
+
+// =================================================================================================
+// 2026-09-23 — Dashboard Access. The workshop screens deny by default: a profileid can do nothing
+// unless "static meta data"/"Workshop Admin" or workshopsettings/{workshop id} names it. Helpers
+// below read those two documents with the admin SDK, so a spec can assert what the APP wrote rather
+// than what the test set up, and restore the seeded shape afterwards.
+// =================================================================================================
+
+/** The eleven per-workshop actions, in the order the editor lists them. */
+export const wsAccessKeys = [
+  'sendcommunication', 'qanda', 'diagnose', 'clear', 'enroll', 'export',
+  'extend', 'participantprogress', 'allassignments', 'allforms', 'allvideoask',
+] as const;
+
+/** What the seed grants `limited` on W_DASH — and nothing else, anywhere. */
+export const wsLimitedGrants = ['qanda', 'export'];
+
+/** The three shared lists, as the app stores them. */
+export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[] }> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('static meta data').doc('Workshop Admin').get();
+  const d: any = snap.exists ? (snap.data() || {}) : {};
+  const list = (v: any) => (Array.isArray(v) ? v.map(String) : []);
+  return {
+    dashboardAdmins: list(d.workshopdashboardadmin),
+    editAccess: list(d.workshopeditaccess),
+    newUsersAccess: list(d.workshopnewusersaccess),
+  };
+}
+
+/** One workshop's grants: profileid -> the actions ticked for them. */
+export async function workshopDashboardAccess(workshopId: string): Promise<Record<string, string[]>> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshopsettings').doc(workshopId).get();
+  const raw: any = snap.exists ? (snap.data() || {})['dashboardaccess'] : null;
+  const out: Record<string, string[]> = {};
+  if (raw && typeof raw === 'object') {
+    for (const k of Object.keys(raw)) out[k] = Array.isArray(raw[k]) ? raw[k].map(String) : [];
+  }
+  return out;
+}
+
+/**
+ * Put W_DASH's grants back to the seeded shape. The access spec SAVES through the app (that write is
+ * the oracle), so without this a second run would start from the first run's leftovers. PRECONDITION
+ * write only — no assertion ever reads this value back.
+ */
+export async function resetDashboardAccess(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopsettings').doc(wsIds.W_DASH).set({
+    workshopid: wsIds.W_DASH,
+    dashboardaccess: { [wsProfileIds.limited]: [...wsLimitedGrants] },
+    testrunid: RUN,
+    _testdata: true,
+  });
+}
+
+/** Put the three shared lists back to the seeded shape (same reason as resetDashboardAccess). */
+export async function resetWorkshopAdminLists(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('static meta data').doc('Workshop Admin').set({
+    docid: 'Workshop Admin',
+    workshopdashboardadmin: [wsProfileIds.admin, wsProfileIds.mover],
+    workshopeditaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    workshopnewusersaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    testrunid: RUN,
+    _testdata: true,
+  });
+}
+
+// =================================================================================================
+// 2026-09-24 — Cost is optional on an upcoming workshop (eiflixhomeconfig).
+// =================================================================================================
+
+/** The title WS-34 types, so the doc the APP creates can be found and cleaned up by it. */
+export const wsUpcomingCostTitle = `WS Cost Unset ${RUN}`;
+
+/**
+ * Delete any `eiflixhomewidgets` doc carrying WS-34's title. The app generates the id and writes no
+ * testrunid, so the run-scoped sweep cannot see it — the title is the only handle. PRECONDITION and
+ * teardown only; the case never asserts on this.
+ */
+export async function cleanUpcomingCostWidget(): Promise<void> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('eiflixhomewidgets')
+    .where('title', '==', wsUpcomingCostTitle).get().catch(() => ({ docs: [] as any[] }));
+  for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
+
+// =================================================================================================
+// 2026-09-29 — series-level fields on the Add Home Series dialog (eiflixhomeconfig, Home Series tab).
+// =================================================================================================
+
+/** The episode WS-39 picks — the dialog refuses to save with none selected. */
+export const wsHomeSeriesEpisodeTitle = `WS HS Episode ${RUN}`;
+
+/** The series title WS-39 types, and the handle its cleanup uses. */
+export const wsHomeSeriesTitle = `WS HS Fields ${RUN}`;
+
+/** Exactly what WS-39 types and toggles, so the spec asserts app output against known input. */
+export const wsHomeSeriesFields = {
+  pickoftheweek: true,
+  heading: `HS Heading ${RUN}`,
+  headleft: `HS Left ${RUN}`,
+  headright: `HS Right ${RUN}`,
+  subtitle: `HS Subtitle ${RUN}`,
+  buttontext: `HS Button ${RUN}`,
+};
+
+/**
+ * Delete any `eiflixhomeseries` doc carrying WS-39's title. The app generates the id and writes no
+ * testrunid, so the run-scoped sweep cannot see it — the title is the only handle. PRECONDITION and
+ * teardown only; the case never asserts on this.
+ */
+export async function cleanHomeSeriesFieldsDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('eiflixhomeseries')
+    .where('title', '==', wsHomeSeriesTitle).get().catch(() => ({ docs: [] as any[] }));
+  for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
+
+// =================================================================================================
+// 2026-09-29 — audience (Journey OR Tier) on a Create / Assign EiFlix Home row.
+// =================================================================================================
+
+/** The names the audience dropdowns render; the DOCUMENT IDS are what get stored. */
+export const wsAudienceNames = {
+  journey: `WS Audience Journey ${RUN}`,
+  tier: `WS Audience Tier ${RUN}`,
+};
+
+/** The one home-config document the EiFlix Home tab reads and writes. */
+export async function eiflixHomeConfig(): Promise<any[]> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('classify').doc('eiflixwebapp').get();
+  const v = snap.exists ? (snap.data() || {})['homeconfig'] : null;
+  return Array.isArray(v) ? v : [];
+}
+
+/**
+ * Clear the home-config array. `classify/eiflixwebapp` is a fixed-id document shared with the live
+ * EiFlix home surface, so this NEVER deletes it — it empties only the one field the tab owns, and
+ * only on the disposable test project (initAdmin hard-aborts anywhere else). PRECONDITION and
+ * teardown only; no assertion reads this back.
+ */
+export async function resetEiflixHomeConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('classify').doc('eiflixwebapp')
+    .set({ homeconfig: [], testrunid: RUN, _testdata: true }, { merge: true });
+}
+
+// =================================================================================================
+// 2026-10-01 — Participant Progress Details: Email column, email in search, text "New" tag.
+// =================================================================================================
+
+/**
+ * p0's stored email, read straight from Firestore — the INDEPENDENT oracle for the Email column.
+ *
+ * Never hard-code the expected address: `participant metadata`.email is CF-OWNED (see wsMetaNames
+ * above), so whichever of the seed or the trigger wrote last is the value the dashboard renders.
+ * Reading it back makes the assertion correct in both orders without the test choosing the value.
+ */
+export async function p0MetadataEmail(): Promise<string> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0).get();
+  return String((snap.data() || {})['email'] || '');
+}
+
+/**
+ * PRECONDITION: give p0 a display name that shares NO substring with their email, so a search for the
+ * email can only match through the email. Without this the two are identical (the CF sets
+ * metadata.name := profile_data.name, which seedAuthChain sets to the actor's EMAIL), and a passing
+ * search would prove nothing — the name path would satisfy it.
+ *
+ * Restore with alignWorkshopMetadataNames(), which puts the CF's terminal name back.
+ */
+export const wsP0SearchName = `ZZ Searchable ${RUN}`;
+export async function stampP0DistinctName(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0)
+    .set({ name: wsP0SearchName }, { merge: true });
+}
+
+/**
+ * PRECONDITION: flip p0's `workshoponly` flag — the condition the dashboard renders the "New" tag on.
+ * Not a CF-owned field (the trigger merges only name/email/countrycode/phonenumber), so this write
+ * stands. Pass false to remove it again; the suite runs with workers:1, so the stamp is not racing
+ * another case.
+ */
+export async function stampP0Workshoponly(on: boolean): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('participant metadata').doc(wsProfileIds.p0)
+    .set({ workshoponly: on ? true : FV.delete() }, { merge: true });
+}
+
+// =================================================================================================
+// 2026-10-02 — New users / Existing users filter on the EiFlix Mobile App Logs.
+// =================================================================================================
+
+/**
+ * Extra `loginlog` rows for the user-type filter, kept SEPARATE from seedLoginLogs() on purpose.
+ *
+ * WS-31 asserts exact tallies off that seed ("2 of 2 unique people", four rows in 30D, three name
+ * options). Adding people to it would have rewritten every one of those numbers. These rows exist
+ * only for the duration of the user-type case's own describe.
+ */
+export const wsLogUserTypeIds = {
+  newUserRow: `${RUN}_ll_today_nu_new`,
+  paidUserRow: `${RUN}_ll_today_nu_paid`,
+};
+
+/**
+ * PRECONDITION for the user-type filter: two more EiFlix logins today, one from each side of the
+ * rule the dashboard's own cards use.
+ *
+ *   NU_A — a `new_user_data` record with no `movedtoexist`  → still a NEW user
+ *   NU_C — the same, flipped to `movedtoexist: true`        → counts as EXISTING
+ *
+ * NU_C is the doc this suite already treats as mutable (resetNewUserTags), and flipping a field
+ * changes no document COUNT, so WS-30's floor over `new_user_data` is untouched. Restored by
+ * clearUserTypeLoginLogs().
+ *
+ * Neither NU person has a `participant metadata` row, so the table shows their new_user_data name
+ * ("NU Alpha <run>" / "NU Charlie <run>") — the CF that rewrites metadata names never touches them.
+ */
+export async function seedUserTypeLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const today = T.fromDate(new Date());
+  await db.collection('new_user_data').doc(wsAddIds.NU_C).set({ movedtoexist: true }, { merge: true });
+  await Promise.all([
+    db.collection('loginlog').doc(wsLogUserTypeIds.newUserRow).set({
+      docid: wsLogUserTypeIds.newUserRow, app: 'EiFlix', profileid: wsAddIds.NU_A,
+      date: today, device_os: 'android', current_version: '3.0.0', testrunid: RUN, _testdata: true,
+    }),
+    db.collection('loginlog').doc(wsLogUserTypeIds.paidUserRow).set({
+      docid: wsLogUserTypeIds.paidUserRow, app: 'EiFlix', profileid: wsAddIds.NU_C,
+      date: today, device_os: 'ios', current_version: '3.0.1', testrunid: RUN, _testdata: true,
+    }),
+  ]);
+}
+
+/** Undo seedUserTypeLoginLogs: drop the two rows and put NU_C back to "not moved". */
+export async function clearUserTypeLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  await db.collection('new_user_data').doc(wsAddIds.NU_C).set({ movedtoexist: FV.delete() }, { merge: true });
+  await Promise.all(Object.values(wsLogUserTypeIds).map(id =>
+    db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}
+
+// =================================================================================================
+// 2026-10-06 — popup banner: `classify/eiflixpopupbanner` moves to a `popupbanner` array of maps.
+// =================================================================================================
+
+/** The fixed-id document the Popup banner dialog on /workshops owns. */
+export const wsPopupBannerDoc = { col: 'classify', id: 'eiflixpopupbanner' };
+
+/** The legacy flat banner the seed plants — the shape live in production before the array. */
+export const wsPopupBannerLegacy = {
+  title: `<p>WS Legacy Banner ${RUN}</p>`,
+  header: `<p>WS Legacy Eyebrow ${RUN}</p>`,
+  button1link: `https://example.com/${RUN}`,
+};
+
+/**
+ * PRECONDITION: put the document back to the PRE-ARRAY shape — flat fields, no `popupbanner`.
+ *
+ * This is the state the migration has to cope with, and the one that matters: the banner already
+ * live is held in those flat fields, so an editor that read only the new array would show nothing
+ * and its first save would replace a live banner with an empty list.
+ *
+ * `classify` is a shared collection this suite does not own outright (same as eiflixdiscoverpage),
+ * so the write is run-tagged and the teardown only removes what still carries our tag.
+ */
+export async function seedLegacyPopupBanner(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).set({
+    docid: wsPopupBannerDoc.id,
+    ...wsPopupBannerLegacy,
+    description: '', button1text: '', button2text: '', footer: '',
+    desktop: '', tablet: '', mobile: '', enable: true,
+    popupbanner: FV.delete(),
+    testrunid: RUN, _testdata: true,
+  }, { merge: true });
+}
+
+/** The `popupbanner` array as the APP wrote it, or null when the field is absent. */
+export async function popupBannerArray(): Promise<any[] | null> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).get();
+  const v = snap.exists ? (snap.data() || {})['popupbanner'] : undefined;
+  return Array.isArray(v) ? v : null;
+}
+
+/** The whole document, for asserting the legacy flat fields survived the save. */
+export async function popupBannerDoc(): Promise<any> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).get();
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+/** Drop the run-tagged popup banner document (teardown only). */
+export async function clearPopupBanner(): Promise<void> {
+  const admin = seed.initAdmin();
+  const ref = admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id);
+  const snap = await ref.get().catch(() => ({ exists: false, data: () => ({}) } as any));
+  if (snap.exists && (snap.data() || {})['testrunid'] === RUN) await ref.delete().catch(() => undefined);
 }

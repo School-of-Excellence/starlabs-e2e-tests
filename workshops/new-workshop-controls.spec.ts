@@ -333,7 +333,9 @@ test.describe('New-Workshop — routed screens: interactive controls are address
     expect(page.getByTestId('wd-export-participants-to-csv-35').first(), 'wd-export-participants-to-csv-35 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
     expect(page.getByTestId('wd-clear-table-filters-36').first(), 'wd-clear-table-filters-36 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
     expect(page.getByTestId('wd-move-participant-to-next-37').first(), 'wd-move-participant-to-next-37 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
-    expect(page.getByTestId('wd-review-assignment-38').first(), 'wd-review-assignment-38 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
+    // wd-review-assignment-38 — PARKED 2026-10-01 with the Assignment column (the hook no longer exists
+    // in workshop-dashboard.component.html, so registering it here would claim coverage of nothing).
+    // WS-42 asserts its absence; restore this line if the column is uncommented.
     expect(page.getByTestId('wd-on-participant-click-39').first(), 'wd-on-participant-click-39 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
     expect(page.getByTestId('wd-clear-selected-participant-40').first(), 'wd-clear-selected-participant-40 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)
     expect(page.getByTestId('wd-view-quiz-41').first(), 'wd-view-quiz-41 should be addressable').toBeTruthy(); // reference-only (screen renders on seed data / may crash on thin data)

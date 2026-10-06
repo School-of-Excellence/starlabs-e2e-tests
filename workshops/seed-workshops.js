@@ -14,7 +14,15 @@
  * production profileids (workshop-dashboard.component.ts:1688), so the move-next actor must carry one):
  *   admin+wshop@example.com   roles {admin, ah}                 — list/config/dashboard render (super-role)
  *   mover+wshop@example.com   roles {admin, ah}, pid 3LVxK…     — drives the manual move-next write (WS-12)
+ *   limited+wshop@example.com roles {admin, ah}                 — NEGATIVE CONTROL for Dashboard Access
  *   participant0..2+wshop@example.com roles {participant}        — enrolled into the dashboard workshop
+ *
+ * DASHBOARD ACCESS (2026-09-23). The workshop screens now deny by default: a profileid gets nothing
+ * unless it is named in `static meta data/Workshop Admin` or in `workshopsettings/{workshop id}`. There
+ * is NO hard-coded bypass any more — so without the two access documents below EVERY workshop spec in
+ * this suite would be blocked. `admin` and `mover` are seeded as full dashboard admins with editing and
+ * new-users rights; `limited` is seeded with exactly two per-workshop actions on W_DASH and nothing
+ * else, which is the pivot the access spec asserts against.
  *
  * Usage:  node e2e/workshops/seed-workshops.js --seed | --teardown
  */
@@ -55,6 +63,7 @@ const ID = {
   HW_CS_NOORDER: `${TESTRUNID}_hw_cs3`,    // eiflixhomewidgets comingsoon, NO order → sorts last (WS-19)
   HW_ADS: `${TESTRUNID}_hw_ads`,           // eiflixhomewidgets widgettype:'ads' — NEGATIVE CONTROL (WS-18) + delete target (WS-20)
   HS_A: `${TESTRUNID}_hs_a`,               // eiflixhomeseries row (tab 3)
+  EP_HS: `${TESTRUNID}_ep_hs`,             // one `episodes` doc — the Add Home Series dialog cannot save without one
   NUT_SEGMENT: `${TESTRUNID}_nut_seg`,     // newusertags type:'newusersegments' (WS-22/23 + campaign segment join)
   NUT_CAL_A: `${TESTRUNID}_nut_cal_a`,     // newusertags type:'wccalendar'
   NUT_CAL_B: `${TESTRUNID}_nut_cal_b`,     // newusertags type:'wccalendar'
@@ -66,6 +75,8 @@ const ID = {
   EVT_BIG: `${TESTRUNID}_evt_big`,         // event collection atcmodel:'B!G'      (WS-28)
   EVT_NONBIG: `${TESTRUNID}_evt_nonbig`,   // event collection NOT B!G — NEGATIVE CONTROL (WS-28)
   JRN_BIG: `${TESTRUNID}_jrn_big`,         // journey atcmodel:'B!G' — keeps the `in` filter non-empty (Risk #12)
+  JRN_AUD: `${TESTRUNID}_jrn_aud`,         // journey with a `journey` NAME — the audience picker reads that field
+  TIER_AUD: `${TESTRUNID}_tier_aud`,       // tier with a `tier` NAME — same picker, the other choice
   // The bigeventmentor doc id MUST EQUAL the event id: onEventChange() does a direct
   // getDoc(doc(db,'bigeventmentor', eventId)) (bigeventmentor.component.ts:201) and createBigEventMentor()
   // writes it under the event's own id (ts:289). A separately-named doc is simply never found, and the
@@ -88,6 +99,7 @@ const CAL_STACK_IDS = [1, 2, 3, 4, 5].map((n) => `${TESTRUNID}_cal_stack${n}`);
 const PF = {
   admin: `${TESTRUNID}_pf_admin`,
   mover: MOVER_PID,
+  limited: `${TESTRUNID}_pf_limited`,
   p0: `${TESTRUNID}_pf_p0`,
   p1: `${TESTRUNID}_pf_p1`,
   p2: `${TESTRUNID}_pf_p2`,
@@ -95,6 +107,7 @@ const PF = {
 const EMAIL = {
   admin: `admin+${TESTRUNID}@example.com`,
   mover: `mover+${TESTRUNID}@example.com`,
+  limited: `limited+${TESTRUNID}@example.com`,
   p0: `participant0+${TESTRUNID}@example.com`,
   p1: `participant1+${TESTRUNID}@example.com`,
   p2: `participant2+${TESTRUNID}@example.com`,
@@ -105,6 +118,9 @@ function roster() {
   const staff = [
     mk('admin', ['admin', 'ah'], 'admin'),
     mk('mover', ['admin', 'ah'], 'admin'),
+    // Same roles and the same route grants as `admin` — so anything this actor cannot do is the
+    // Dashboard Access gate talking, never the route guard. That is what makes it a clean control.
+    mk('limited', ['admin', 'ah'], 'admin'),
   ];
   const participants = [
     mk('p0', ['participant'], 'participant'),
@@ -121,6 +137,10 @@ const ROUTES = [
   { route: '/workshops', label: 'Workshops' },
   { route: '/create-workshop', label: 'Create Workshop' },
   { route: '/workshopconfig', label: 'Workshop Configuration' },
+  // The older editor on its own URL. It is a second way onto the same workshop document, so the
+  // access spec drives it — and authGuard denies any route with no entry here (auth.guard.ts:48),
+  // which would block the case before the screen's own gate could answer.
+  { route: '/workshopconfigold', label: 'Workshop Configuration (legacy)' },
   { route: '/workshop_dashboard', label: 'Workshop Dashboard' },
   { route: '/engagementdashboard', label: 'Engagement Dashboard' },
   { route: '/bigengagementdashboard', label: 'Capacity / BIG Engagement Dashboard' },
@@ -219,6 +239,14 @@ async function seedAddendum(db, T, tag, at) {
     title: `HC AdOnly ${TESTRUNID}`, subtitle: 'seeded ad', description: 'ads-tab only',
     footer: 'footer', buttonname: 'Go', navigationlink: 'https://example.com/ad', show: true, ...tag,
   });
+  // The Add Home Series dialog lists `episodes` in its multi-select and refuses to save with none
+  // picked (homeseries.component.ts:188), so WS-39 needs exactly one real episode to choose. Fields
+  // mirror the content seeder's episode shape — no new keys, the episodes schema is frozen.
+  await db.collection('episodes').doc(ID.EP_HS).set({
+    docid: ID.EP_HS, title: `WS HS Episode ${TESTRUNID}`, description: 'seed episode for home series',
+    videoUrl: 'https://example.com/test.mp4', imageUrl: 'https://example.com/test.jpg',
+    convertedtohls: true, series: [], ...tag,
+  });
   await db.collection('eiflixhomeseries').doc(ID.HS_A).set({
     docid: ID.HS_A, title: `HC Series ${TESTRUNID}`, created: at(-2),
     homeseries: [{ title: 'Ep 1' }, { title: 'Ep 2' }, { title: 'Ep 3' }], ...tag,
@@ -279,6 +307,16 @@ async function seedAddendum(db, T, tag, at) {
   // raw profileid (`mapparticipant[id] || id`, bigeventmentor.html:137). `bigjourney` is built from the
   // journey DOC IDS (ts:163), so activejourney must be the journey doc id, not its name.
   await db.collection('participant metadata').doc(PF.p0).set({ activejourney: ID.JRN_BIG }, { merge: true });
+
+  // Audience options for the EiFlix Home config rows (WS-40). The picker shows `journey.journey`
+  // and `tier.tier` and stores the DOCUMENT ID, so the name and the id must differ visibly —
+  // otherwise a test asserting the stored id could pass while the app stored the label.
+  await db.collection('journey').doc(ID.JRN_AUD).set({
+    docid: ID.JRN_AUD, journey: `WS Audience Journey ${TESTRUNID}`, ...tag,
+  });
+  await db.collection('tier').doc(ID.TIER_AUD).set({
+    docid: ID.TIER_AUD, tier: `WS Audience Tier ${TESTRUNID}`, ...tag,
+  });
   // p0 starts in `registered` and is ABSENT from `reached` — WS-29 drives the real move and asserts the
   // app wrote BOTH arrays (added to one, removed from the other).
   await db.collection('bigeventmentor').doc(ID.BEM).set({
@@ -385,6 +423,11 @@ async function seedWorkshops() {
   await meta(PF.p0, `WS Alpha ${TESTRUNID}`);
   await meta(PF.p1, `WS Bravo ${TESTRUNID}`);
   await meta(PF.p2, `WS Charlie ${TESTRUNID}`);
+  // The Dashboard Access pickers offer people from `participant metadata` ONLY (never new_user_data),
+  // so the staff actors need a row there to be pickable at all — and the access spec picks one by name.
+  await meta(PF.admin, `WS Admin ${TESTRUNID}`);
+  await meta(PF.mover, `WS Mover ${TESTRUNID}`);
+  await meta(PF.limited, `WS Limited ${TESTRUNID}`);
 
   // 4) WORKSHOP CONFIG DOCS. Every app doc stores its own id as `docid` (app-wide convention) — the
   //    workshops list toggles/duplicates key off workshop.docid (workshops.component.ts:198,241), NOT
@@ -513,12 +556,37 @@ async function seedWorkshops() {
     ...tag,
   });
 
+  // 6c) DASHBOARD ACCESS — the two documents the workshop screens now read before rendering anything.
+  //
+  //  `static meta data/Workshop Admin` is a SINGLE fixed-id document shared by every workshop (the app
+  //  says so on screen). It does not exist on the test project, and no other suite writes it, so we own
+  //  it: seed it run-tagged and delete it in teardown under the same tag guard as `Product Page`.
+  //  Without it, deny-by-default blocks every other workshop spec — admin and mover would not even be
+  //  able to open /workshops, /workshopconfig or a dashboard.
+  await db.collection('static meta data').doc('Workshop Admin').set({
+    docid: 'Workshop Admin',
+    workshopdashboardadmin: [PF.admin, PF.mover],
+    workshopeditaccess: [PF.admin, PF.mover],
+    workshopnewusersaccess: [PF.admin, PF.mover],
+    ...tag,
+  });
+  //  `workshopsettings/{workshop id}` — one document per workshop, carrying the workshop's own id.
+  //  `limited` gets EXACTLY two of the eleven actions on the dashboard workshop and nothing anywhere
+  //  else, so the access spec can prove both halves: what a grant switches on, and what its absence
+  //  switches off. W_ACTIVE deliberately gets NO access document at all — that is the "blocked from the
+  //  whole dashboard" pivot.
+  await db.collection('workshopsettings').doc(ID.W_DASH).set({
+    workshopid: ID.W_DASH,
+    dashboardaccess: { [PF.limited]: ['qanda', 'export'] },
+    ...tag,
+  });
+
   // 7) 2026-09-04 addendum — the nine previously-uncovered routes (WS-16..WS-33).
   const addendum = await seedAddendum(db, T, tag, at);
 
   return {
     TESTRUNID, ID, PF, EMAIL,
-    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 3, products: 2, emailTemplates: 1, ...addendum },
+    counts: { workshops: 3, enrolled: 2, participantWorkshops: 2, participantMeta: 6, products: 2, emailTemplates: 1, accessDocs: 2, ...addendum },
   };
 }
 
@@ -527,14 +595,20 @@ async function seedWorkshops() {
 const SEEDED = [
   'workshopconfiguration', 'workshop participant enrolled', 'participant workshop', 'participant metadata',
   'static meta data',
+  // Dashboard Access (2026-09-23). Run-tagged; one doc per workshop, keyed by the workshop's own id.
+  'workshopsettings',
   // WS-09/WS-14 composer precondition. Run-tagged, so the sweep leaves any other run's templates alone.
   'email templates',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
   // 2026-09-04 addendum (WS-16..WS-33). All run-tagged, so the sweep is scoped to THIS run.
   'eiflix workshop', 'eiflixhomewidgets', 'eiflixhomeseries', 'newusertags', 'new_user_data',
+  // WS-39 precondition: one episode for the Add Home Series multi-select. Run-tagged.
+  'episodes',
   'classify', 'event collection', 'journey', 'bigeventmentor', 'bigeventparticipantsplan',
   'delivery forms', 'eiflixcampaign', 'workshopcampaigncalendar',
+  // WS-40 audience options. Run-tagged, so other runs' tiers are untouched.
+  'tier',
 ];
 
 async function teardownWorkshops() {
@@ -547,6 +621,16 @@ async function teardownWorkshops() {
   const pp = await db.collection('static meta data').doc('Product Page').get();
   if (pp.exists && (pp.data() || {}).testrunid === TESTRUNID) {
     await db.collection('static meta data').doc('Product Page').delete().catch(() => {});
+  }
+  // Same guard for the Dashboard Access document — another fixed-id doc we own on the test project.
+  // The access spec SAVES this document through the app, and the app's write carries no testrunid, so
+  // check for our marker field instead of relying on the tag surviving an app save.
+  const wa = await db.collection('static meta data').doc('Workshop Admin').get();
+  if (wa.exists) {
+    const d = wa.data() || {};
+    const ours = d.testrunid === TESTRUNID
+      || (Array.isArray(d.workshopdashboardadmin) && d.workshopdashboardadmin.includes(PF.admin));
+    if (ours) await db.collection('static meta data').doc('Workshop Admin').delete().catch(() => {});
   }
   // Clean any enrollment docs the WS-08 enroll test created (app-written → NO testrunid; key by the
   // dashboard workshopref + the p2 profile that only the enroll test ever enrolls).

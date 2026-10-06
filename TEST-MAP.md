@@ -150,24 +150,24 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 
 | Group | Config | pass | fixme | skip | Covers |
 |---|---|---:|---:|---:|---|
-| **queue** | `playwright.queue.config.ts` | ~188 | 2 | meta | Queue Manager: staging, stage-log, assignment, dashboards |
+| **queue** | `playwright.queue.config.ts` | ~191 | 3 | meta | Queue Manager: staging, stage-log, assignment, dashboards; B!G leaderboard (BLD-01..03) |
 | **appointments** | `playwright.appointments.config.ts` | 18 | 1 | 0 | Booking join-chain, slots, roster, team-hours, studio |
-| **events** | `playwright.events.config.ts` | 15 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones |
-| **modes** | `playwright.modes.config.ts` | 34 +16 engine | 0 | 2 | Mode rollup/arc engine, wishlist, app-engagement (incl. the interim-report dashboard) |
-| **content** | `playwright.content.config.ts` | 11 | 4 | 4 | Series/episodes, tier access, playlists, HLS |
+| **events** | `playwright.events.config.ts` | 21 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones, event-editor eligibility (UED-ELIG-01), Configure CTA (ECTA-01..03), eligibility buckets (EPC-ELIG-01/02) |
+| **modes** | `playwright.modes.config.ts` | 72 +8 engine | 3 | 2 | Mode rollup/arc engine, wishlist, app-engagement; the interim-report dashboard carries IRD-01..18 (counts, per-ATC-model crossover, filters, tagging/resolve, export, multi-select → composers, kept filters, in-dialog send bar, cancelled excluded) |
+| **content** | `playwright.content.config.ts` | 11 | 4 | 4 | Series/episodes, tier access, playlists, HLS, content-analytics-v2 hooks (fixme — not routed) |
 | **workshops** | `playwright.workshops.config.ts` | 14 | 4 | 0 | Workshop authoring, scheduling, attendance |
 | **comms** | `playwright.comms.config.ts` | 10 | 2 | 7 | Notifications, templates, broadcasts |
 | **support** | `playwright.support.config.ts` | 12 | 3 | 3 | Tickets, support chat, blocked messages |
-| **profiles** | `playwright.profiles.config.ts` | 22 | 1 | 0 | Profile data, analytics, `*_to_pmd` CF effects |
+| **profiles** | `playwright.profiles.config.ts` | 85 | 11 | 0 | Profile data, analytics, `*_to_pmd` CF effects, bulk-add-products, view-participants-form filters, participant-intelligence (emulator 2026-09-25; PA-CF-* need the functions emulator) |
 | **evomap** | `playwright.evomap.config.ts` | 13 | 1 | 0 | Evolution mapping authoring + render |
 | **authroles** | `playwright.authroles.config.ts` | 18 | 1 | 2 | Login gate, data-driven authGuard, nav visibility |
-| **journey** | `playwright.journey.config.ts` | 16 | 0 | 0 | Purchase/onboard, sales-lead, product-delivery* |
+| **journey** | `playwright.journey.config.ts` | 87 | 28 | 0 | Purchase/onboard, sales-lead, product-delivery*, JC health, FTO / team-evolution dashboard (JTED), delivery-dashboard stuck cases (DDC-STK), JE Assured Sales journey fallback (JCD-04), delivery-dashboard All tab + filters (DDC-FLT), FTO initiated ordering (JTED-09) |
 | **business** | `playwright.business.config.ts` | 20 | 1 | 0 | Expense planner, zones, HPC, quizzes, touchpoints |
 
 \* the journey product-delivery cases (JP-PD/JP-EDIT) **validate two real production source fixes** end-to-end
 (`delivery-sequence.component.ts` null-guard `16b578a`; `product-delivery.component.ts` fresh-per-emit view-model).
 
-**Totals:** ~219 component-group cases (incl. the modes 16-case engine) + ~188 queue ≈ **~407 passing**, with **20 fixme** + **~18 CF-skip** documented in-file.
+**Totals:** ~249 component-group cases (incl. the modes 8-case engine) + ~188 queue ≈ **~437 passing**, with **23 fixme** + **~18 CF-skip** documented in-file.
 
 ### Legend
 

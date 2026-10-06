@@ -36,6 +36,7 @@ const ID = {
   // zoom recordings backup rows (CN-10 render / CN-11 status filter).
   ZOOM_DONE: `${TESTRUNID}_zoom_completed`,
   ZOOM_FAIL: `${TESTRUNID}_zoom_failed`,
+  ZOOM_VERIFIED: `${TESTRUNID}_zoom_verified`,   // completed + verified + still in Zoom (ZRD-*)
   // supportchat group (CN-08 send / CN-09 sidebar render / CN-17 chatxadmin gate).
   CHAT_GROUP: `${TESTRUNID}_chat_group`,
   // supportchat channel (oneway broadcast precondition — render-only here).
@@ -192,6 +193,15 @@ async function seedComms() {
   await db.collection('zoom recordings backup').doc(ID.ZOOM_FAIL).set(
     zoomRow(ID.ZOOM_FAIL, `Failed Meeting ${TESTRUNID}`, 'failed', 0, 3),
   );
+  //    ZRD-* (zoom backup reliability, 2026-10-05): a completed backup the server already VERIFIED and whose
+  //    recording is still in Zoom (the spec's stubbed /api/zoom/recordings lists its meetinguid) — the only row
+  //    "Move to Zoom trash" may act on. ZOOM_DONE (completed, never verified) and ZOOM_FAIL (failed) are the
+  //    controls that must stay blocked, each with its own reason.
+  await db.collection('zoom recordings backup').doc(ID.ZOOM_VERIFIED).set({
+    ...zoomRow(ID.ZOOM_VERIFIED, `Verified Meeting ${TESTRUNID}`, 'completed', 2, 0),
+    meetinguid: `${TESTRUNID}_uuid_verified`,
+    verification: { ok: true, checkedAt: new Date().toISOString(), folderExists: true, zoomPresent: true, files: {}, zoomMissing: [] },
+  });
 
   // 5) SUPPORTCHAT GROUP — CN-08 (send) / CN-09 (sidebar render) / CN-17 (chatxadmin gate). The admin/
   //    chatxadmin active-chat query is where(isdelete==false) orderBy(last_modification desc)

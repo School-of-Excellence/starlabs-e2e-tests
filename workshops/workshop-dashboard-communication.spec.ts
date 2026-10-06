@@ -21,7 +21,8 @@
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
   wsIds, wsAddIds, wsMetaNames, wsUids, installWshopStubs, loginAsWshopAdmin, alignWorkshopMetadataNames,
-  resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed,
+  resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed, stampParticipantWorkshopP0TextAssignment, wsP0AssignmentAnswer,
+  setupOverviewShape, teardownOverviewShape,
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -515,6 +516,110 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
   });
 
   // ===========================================================================================
+  // WDC-12 — All Assignments: clicking a typed answer expands THAT card only, to the complete text
+  // ===========================================================================================
+  test('WDC-12 a text assignment card expands to the complete answer on click, and collapses again', async ({ page }) => {
+    await stampParticipantWorkshopP0TextAssignment();
+    try {
+      await openDashboard(page);
+      // The assignment group header (one per assignment) — open it.
+      const group = page.locator('.arc-card').filter({ hasText: `Reflection ${RUN}` });
+      await expect(group, 'WDC-12: the seeded assignment is listed under All Assignments').toBeVisible({ timeout: 60_000 });
+      await group.locator('.arc-card-hd').click();
+      const card = group.locator('.arc-pcard').filter({ hasText: wsMetaNames.p0 });
+      await expect(card, 'WDC-12: p0 has a submission card').toBeVisible({ timeout: 15_000 });
+
+      // [ASSERT] clamped first: the text element carries the clamp class and is visually cut.
+      const text = card.getByTestId('wdash-arc-text');
+      await expect(text).toHaveClass(/arc-text-clamp/);
+      const clampedHeight = await text.evaluate((el) => el.getBoundingClientRect().height);
+      const fullHeight = await text.evaluate((el) => el.scrollHeight);
+      expect(fullHeight, 'WDC-12: the answer is longer than the clamp').toBeGreaterThan(clampedHeight);
+      const toggle = card.getByTestId('wdash-arc-text-toggle');
+      await expect(toggle).toContainText('View complete answer');
+
+      // [REAL-UI] click the card → that card expands; the complete text (ending with the marker) is shown.
+      await card.click();
+      await expect(text, 'WDC-12: the clamp is removed').not.toHaveClass(/arc-text-clamp/);
+      await expect(card).toHaveClass(/arc-expanded/);
+      await expect(text).toContainText('END-OF-ANSWER');
+      const openHeight = await text.evaluate((el) => el.getBoundingClientRect().height);
+      expect(openHeight, 'WDC-12: the card grew to fit the whole answer').toBeGreaterThan(clampedHeight);
+      await expect(toggle).toContainText('Show less');
+      // Only this card: the assignment group and other cards are unaffected.
+      await expect(page.locator('.arc-pcard.arc-expanded')).toHaveCount(1);
+
+      // Collapse through the explicit toggle.
+      await toggle.click();
+      await expect(text).toHaveClass(/arc-text-clamp/);
+      await expect(card).not.toHaveClass(/arc-expanded/);
+    } finally {
+      await resetParticipantWorkshopP0();
+    }
+  });
+
+  // ===========================================================================================
+  // WDC-13 — Challenge Progress Overview: exclusive counts, first-row rule, nothing on a zoom row
+  // ===========================================================================================
+  test('WDC-13 overview chips are exclusive, the first challenge has no Ready chip, zoom rows show none', async ({ page }) => {
+    await setupOverviewShape();
+    try {
+      await openDashboard(page);
+      const rows = page.locator('.cpo-card');
+      await expect(rows, 'WDC-13: three overview rows').toHaveCount(3, { timeout: 60_000 });
+      const chips = (row: ReturnType<Page['locator']>) => row.locator('.cpo-hd-chips .cpo-chip');
+
+      // Row 1 (first challenge): p0 completed, p1 untouched. The old rule also listed p1 as "Ready to
+      // Start" (same person twice); now the first challenge shows only Not Started.
+      const row1 = rows.nth(0);
+      await expect(row1).toContainText('Module One');
+      await expect(chips(row1).filter({ hasText: 'Completed' }), 'WDC-13: p0 completed Module One').toHaveText(/^\s*1 Completed\s*$/, { timeout: 30_000 });
+      await expect(chips(row1).filter({ hasText: 'In Progress' })).toHaveText(/^\s*0 In Progress\s*$/);
+      await expect(chips(row1).filter({ hasText: 'Ready to Start' }), 'WDC-13: the first challenge never shows Ready to Start').toHaveCount(0);
+      await expect(chips(row1).filter({ hasText: /\bNot Started/ })).toHaveText(/^\s*1 Not Started\s*$/);
+
+      // Row 2: p0 ready (Module One done), p1 blocked (Module One untouched) → 1 + 1, not 2 Not Started.
+      const row2 = rows.nth(1);
+      await expect(row2).toContainText('Module Two');
+      await expect(chips(row2).filter({ hasText: 'Ready to Start' }), 'WDC-13: p0 is ready').toHaveText(/^\s*1 Ready to Start\s*$/);
+      await expect(chips(row2).filter({ hasText: /\bNot Started/ }), 'WDC-13: Not Started excludes the ready one').toHaveText(/^\s*1 Not Started\s*$/);
+
+      // Row 3 (zoom call): no status chips, and the Zoom Call Action button is parked.
+      const row3 = rows.nth(2);
+      await expect(row3).toContainText('Live Call');
+      await expect(chips(row3), 'WDC-13: a zoom row carries no status chips').toHaveCount(0);
+      await row3.locator('.cpo-card-hd').click();
+      await expect(row3.locator('.cpo-actions .cpo-chip'), 'WDC-13: no status buttons when expanded either').toHaveCount(0);
+      await expect(row3.getByTestId('wd-open-zoom-dialog-32'), 'WDC-13: Zoom Call Action is parked').toHaveCount(0);
+
+      // Sub-challenge rows: expand row 2 — its step 2.1 shows p0 as Ready to Start (Module One done) and
+      // p1 as Not Started (blocked), split not merged. A step has no In Progress chip (done or not).
+      await rows.nth(1).locator('.cpo-card-hd').click();
+      const sub21 = rows.nth(1).locator('.cpo-subrow').first();
+      const subChips = sub21.locator('.cpo-dots .cpo-chip');
+      await expect(subChips.filter({ hasText: 'Ready to Start' }), 'WDC-13: 2.1 shows the ready person').toHaveText(/^\s*1 Ready to Start\s*$/, { timeout: 15_000 });
+      await expect(subChips.filter({ hasText: /\bNot Started/ }), 'WDC-13: 2.1 Not Started excludes the ready one').toHaveText(/^\s*1 Not Started\s*$/);
+      await expect(subChips.filter({ hasText: 'In Progress' }), 'WDC-13: no In Progress chip on a step').toHaveCount(0);
+      await expect(subChips.filter({ hasText: 'Completed' })).toHaveText(/^\s*0 Completed\s*$/);
+      // Row 1, step 1.1 — the very first step of the workshop — never shows Ready to Start.
+      await rows.nth(0).locator('.cpo-card-hd').click();
+      const sub11 = rows.nth(0).locator('.cpo-subrow').first();
+      await expect(sub11.locator('.cpo-dots .cpo-chip').filter({ hasText: 'Ready to Start' }), 'WDC-13: no Ready on the first step').toHaveCount(0);
+      await expect(sub11.locator('.cpo-dots .cpo-chip').filter({ hasText: /\bNot Started/ })).toHaveText(/^\s*1 Not Started\s*$/);
+      await rows.nth(0).locator('.cpo-card-hd').click();   // collapse row 1 again
+
+      // The panel behind "Not Started" on row 2 lists only the blocked person — the same set the chip counted.
+      await rows.nth(1).getByTestId('wd-on-challenge-main-status-click-31').click();
+      const panel = page.locator('.participant-panel.panel-visible');
+      await expect(panel.locator('mat-card.participant-card'), 'WDC-13: one blocked participant').toHaveCount(1, { timeout: 30_000 });
+      await expect(panel.locator('mat-card.participant-card').first()).toContainText(wsMetaNames.p1);
+      await page.getByTestId('wd-close-participant-panel-61').click();
+    } finally {
+      await teardownOverviewShape();
+    }
+  });
+
+  // ===========================================================================================
   // Addressable — every hook this feature added, as a literal reference (console readiness gate).
   // ===========================================================================================
   test('workshop-dashboard + communication-dialog — controls addressable', async ({ page }) => {
@@ -525,6 +630,7 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
       'wdash-exist-clear-filters-btn', 'wdash-comm-open-btn', 'wdash-sub-platform', 'wdash-pd-platform',
       'wdash-platform-section', 'wdash-platform-enroll-card', 'wdash-platform-enroll-row', 'wdash-platform-steps-card', 'wdash-platform-step-row',
       'wdash-chat-card', 'wdash-chat-count', 'wdash-chat-add-all-btn', 'wdash-chat-add-btn', 'wdash-chat-no-uid',
+      'wdash-arc-text', 'wdash-arc-text-toggle',
     ]) expect(page.getByTestId(id)).toBeTruthy();
     expect(page.getByTestId('wdash-comm-close-btn')).toBeTruthy();
     expect(page.getByTestId('wdash-comm-audience-all')).toBeTruthy();

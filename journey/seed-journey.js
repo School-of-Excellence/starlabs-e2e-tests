@@ -84,6 +84,8 @@ const ID = {
   PJP_ONB: `${TESTRUNID}_PJP_ONB`,  // participantjourneyproduct (journeyref J1, initiated, paymentplan set, NOT onboarded) — JP-08 + JP-09 (the single deterministic onboard target for p1)
   SL1: `${TESTRUNID}_SL1`,          // salesleads doc (status null) — JP-10 reject (test-project-only, no Watson)
   SL2: `${TESTRUNID}_SL2`,          // salesleads doc (pending, initial payment APPROVED) — JP-27..32 approve
+  SLP: `${TESTRUNID}_SLP`,          // salesleads doc — ASSURED, product-only (journey '') — JCD-04
+  SLJ: `${TESTRUNID}_SLJ`,          // salesleads doc — ASSURED, journey + product (negative control) — JCD-04
   DF1: `${TESTRUNID}_DF1`,          // delivery forms doc with a formarray — formtemplate render (JP-16) + a deliverysequence-authoring activity option (JP-AUTH)
   APT1: `${TESTRUNID}_APT1`,        // appointmenttype doc — a second deliverysequence-authoring activity option
   EMT1: `${TESTRUNID}_EMT1`,        // email templates doc (active:true) — JP-09 onboarding email template
@@ -351,6 +353,21 @@ async function seedJourney() {
     ...tag,
   });
 
+  //    JCD-04 (app d86af3ea, sashong 2026-09-29): two ASSURED sales leads (paymentplan set, purchased in the
+  //    current month) for the JE dashboard's Assured Sales table. SLP is a product-only sale — `journey` is
+  //    empty, `productref` → P1 — so the Journey cell must fall back to the product's name. SLJ is the
+  //    negative control: it carries BOTH a journey and a productref, and must show the journey, not the
+  //    product. status 'approved' keeps both out of the /salesleads pending queue JP-10/27..32 drive.
+  for (const [id, journey, label] of [[ID.SLP, '', 'Product Only'], [ID.SLJ, ID.J1, 'With Journey']]) {
+    await db.collection('salesleads').doc(id).set({
+      docid: id, profileid: `${TESTRUNID}_pf_${id.slice(-3).toLowerCase()}`, name: `JCD Assured ${label} ${TESTRUNID}`,
+      email: `${id.toLowerCase()}@example.com`, journey, productref: productRef(ID.P1), journeytype: 'new',
+      status: 'approved', paymentplan: 'monthly', paymentplanassureddate: T.fromMillis(Date.now() - 60e3),
+      date: T.fromMillis(Date.now() - 60e3), purchasedate: T.fromMillis(Date.now() - 60e3),
+      totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, salespersonname: 'E2E Seeder', ...tag,
+    });
+  }
+
   //    delivery forms doc with a formarray — formtemplate route (?id=DF1) builds the form from this
   //    (JP-16 render), and it is also a "Form" delivery activity option in the deliverysequence
   //    authoring screen (JP-AUTH). The formarray carries one short-text field whose label the
@@ -381,6 +398,101 @@ async function seedJourney() {
     attachments: [], servername: null, postmarktemplateid: null, templateid: `test_onboarding_${TESTRUNID}`, ...tag,
   });
 
+  // 6) JC HEALTH world (journey/coach-health.spec.ts, JCH-*) =====================================
+  //    Six participants on the seeded journeycoach's base + one off-base control. The journeycoach logs in,
+  //    so the dashboard opens scoped to THIS coach (full mode, never the shared All view) and every number
+  //    it shows comes from these docs alone. Each rule gets something it must EXCLUDE:
+  //      A active  · 'Defaulted' (capital D — the finance filter must ignore case) · unresolved critical LL
+  //      B active  · 'late' (Missed)            · unresolved tagged Ask A&H  → Needs attention via A&H ONLY
+  //      C active  · 'locked'                   · critical LL but RESOLVED   → no A&H chip; NA via locked
+  //      D DISCONTINUED · 'defaulted'           → excluded from the Defaulted tile by the Active lifecycle default
+  //      E active  · regular · critical LL 200 days old (outside 180d) + a 'liked' LL → no chip, not NA
+  //      F active  · 'late', nothing else       → Missed, but late alone is NOT needs-attention
+  //      X OFF-BASE (coached by admin) · 'defaulted' + critical LL → must never reach this coach's numbers
+  //    Subscriptions end +200d: not lapsed, not in the 90-day renewal window, so neither drives any count.
+  const coachRef = (pf) => db.collection('profile_data').doc(pf);
+  const days = (n) => T.fromMillis(Date.now() + n * 86400e3);
+  const HC = {
+    A: { pf: `${TESTRUNID}_pf_hc_a`, name: `JCH Alpha ${TESTRUNID}`, status: 'active', fin: 'Defaulted', coach: PF.journeycoach },
+    B: { pf: `${TESTRUNID}_pf_hc_b`, name: `JCH Bravo ${TESTRUNID}`, status: 'active', fin: 'late', coach: PF.journeycoach },
+    C: { pf: `${TESTRUNID}_pf_hc_c`, name: `JCH Charlie ${TESTRUNID}`, status: 'active', fin: 'locked', coach: PF.journeycoach },
+    D: { pf: `${TESTRUNID}_pf_hc_d`, name: `JCH Delta ${TESTRUNID}`, status: 'discontinued', fin: 'defaulted', coach: PF.journeycoach },
+    E: { pf: `${TESTRUNID}_pf_hc_e`, name: `JCH Echo ${TESTRUNID}`, status: 'active', fin: 'regular', coach: PF.journeycoach },
+    F: { pf: `${TESTRUNID}_pf_hc_f`, name: `JCH Foxtrot ${TESTRUNID}`, status: 'active', fin: 'late', coach: PF.journeycoach },
+    X: { pf: `${TESTRUNID}_pf_hc_x`, name: `JCH Xray ${TESTRUNID}`, status: 'active', fin: 'defaulted', coach: PF.admin },
+  };
+  for (const p of Object.values(HC)) {
+    await db.collection('participant metadata').doc(p.pf).set({
+      docid: p.pf, profileid: p.pf, name: p.name, email: `${p.pf}@example.com`,
+      coachedby: [coachRef(p.coach)], customerstatus: p.status, financialstatus: p.fin,
+      subscriptionend: days(200),
+      // X is the ONLY participant with open tickets (JCD-01, the journeycoach-dashboard health board);
+      // everyone else sits at 0 so a green tickets tile cannot come from "nobody has tickets". X is on
+      // the ADMIN's base, so this cannot move any coach-scoped JC-Health number (JCH-01..12).
+      customersupporttickets: p.pf === `${TESTRUNID}_pf_hc_x` ? 2 : 0,
+      activejourney: ID.J1,
+      pp_totalpaid: '0', pp_totalpurchasevalue: '0', ...tag,
+    });
+  }
+
+  //    A&H feedback. `loveletter` is the text field Dynamic Studio renders; `created` is a Timestamp.
+  const ll = (id, pf, extra) => db.collection('love letter').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, profileid: pf, created: days(-10), resolved: false, ...extra, ...tag,
+  });
+  await ll('LL_A', HC.A.pf, { critical: true, loveletter: `JCH critical letter ${TESTRUNID}` });
+  await ll('LL_C', HC.C.pf, { critical: true, resolved: true, loveletter: `JCH resolved letter ${TESTRUNID}` });
+  await ll('LL_E_OLD', HC.E.pf, { critical: true, created: days(-200), loveletter: `JCH stale letter ${TESTRUNID}` });
+  await ll('LL_E_HAPPY', HC.E.pf, { liked: true, created: days(-5), loveletter: `JCH happy letter ${TESTRUNID}` });
+  await ll('LL_X', HC.X.pf, { critical: true, loveletter: `JCH offbase letter ${TESTRUNID}` });
+  //    No flags at all — the Unflagged tile on the A&H analytics card would otherwise read 0 whether or
+  //    not the app's `!liked && !tagged && !opportunity && !critical` rule ran.
+  await ll('LL_F_PLAIN', HC.F.pf, { loveletter: `JCH plain letter ${TESTRUNID}` });
+  await db.collection('ask AH').doc(`${TESTRUNID}_AH_B`).set({
+    docid: `${TESTRUNID}_AH_B`, profileid: HC.B.pf, source: 'ask AH', tagged: true, resolved: false,
+    created: days(-3), message: `JCH ask question ${TESTRUNID}`, ...tag,
+  });
+
+  //    Journey-coach appointments for the Schedule split (JCH-07). Tomorrow noon lands in "Next 7 days",
+  //    yesterday noon in "Overdue". The cancelled one and the attended one must NOT reach the schedule.
+  const noon = (dayOffset) => { const d = new Date(); d.setDate(d.getDate() + dayOffset); d.setHours(12, 0, 0, 0); return T.fromDate(d); };
+  //    `endtime` is REQUIRED, not decoration: /JourneycoachDashboard-new streams EVERY journeycoach
+  //    appointment and sorts on b.endtime.toDate() unguarded (journeycoach-dashboard.component.ts:688) —
+  //    without it that screen throws "reading 'toDate'" and fails onboarding-controls/dashboards.spec.ts jcd.
+  //    Real appointments always carry it; one hour after starttime.
+  const appt = (id, pf, extra) => db.collection('appointments').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, journeycoach: true, profileid: pf, bookedby: coachRef(pf),
+    hosts: [coachRef(PF.journeycoach)], attended: false, cancelled: false, onboarding: false, ...extra,
+    endtime: T.fromMillis(extra.starttime.toMillis() + 3600e3), ...tag,
+  });
+  await appt('APT_JC_TMR', HC.A.pf, { starttime: noon(1) });
+  await appt('APT_OB_TMR', HC.B.pf, { starttime: noon(1), onboarding: true });
+  await appt('APT_JC_OVD', HC.C.pf, { starttime: noon(-1) });
+  await appt('APT_CANC', HC.A.pf, { starttime: noon(1), cancelled: true });
+  await appt('APT_DONE', HC.B.pf, { starttime: noon(-1), attended: true });
+  //    Support tickets for the JE dashboard's Participant Health board (JCD-01). X gets ONE OPEN ticket
+  //    and ONE CLOSED one: the closed doc is the negative control for "open only" (fix 5, 2026-09-23 —
+  //    the tile counts via getCountFromServer with status.status == 'open').
+  //    WHY ONE open doc and not two: the app falls back to counting PEOPLE from participant metadata
+  //    when the (clientid + status.status) composite index is absent. With exactly one open ticket on
+  //    one participant BOTH paths yield 1, so the case asserts the same number either way and can never
+  //    go green on the fallback while the real query is broken in a different direction.
+  const issue = (id, pf, status) => db.collection('clientissue').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, clientid: pf, status: { status }, title: `JCH ${status} ticket ${TESTRUNID}`,
+    created: T.fromMillis(Date.now() - 2 * 86400e3), ...tag,
+  });
+  await issue('CI_OPEN_X', HC.X.pf, 'open');
+  await issue('CI_CLOSED_X', HC.X.pf, 'closed');
+
+  //    An ATTENDED ONBOARDING call. Without it "JC done" reads the same whether or not the pipeline
+  //    excludes onboarding (fix 2026-09-23) — this is the doc that must be left OUT of the count.
+  await appt('APT_OB_DONE', HC.A.pf, { starttime: noon(-1), attended: true, onboarding: true });
+
+  // 7) FTO / TEAM EVOLUTION world (journey/team-evolution.spec.ts, JTED-*) ==========================
+  await seedFto(db, T);
+
+  // 8) DELIVERY DASHBOARD STUCK CASES world (journey/delivery-dashboard-stuck.spec.ts, DDC-STK-*) ======
+  await seedDdcStuck(db, T);
+
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
     names: {
@@ -393,6 +505,207 @@ async function seedJourney() {
     counts: { journey: 2, products: 2, journeyToProduct: 1, participantjourneyproduct: 3 },
   };
 }
+
+// ---- FTO / Team Evolution world ------------------------------------------------------------------
+// /team-evolution-dashboard reads: users_roles(ahmember==true).profile_ref → 'participant metadata'
+// (profileid in …) → per chosen DFU product: participantsproduct (status ongoing|initiated) +
+// participantdeliverysequence → deliverables.deliveryref → appointmenttype / delivery forms.
+//
+// OWN RUN TAG (`<run>_fto`), not the suite's: catalog.spec JP-03 asserts EXACTLY 2 `products` for the
+// suite tag, and coach-health counts `participant metadata` by it. A separate tag keeps both untouched
+// and gets its own teardown pass below.
+//
+// Every rule has something it must EXCLUDE:
+//   ONG      AH · active on FTO · PP ongoing · 3 steps
+//   NS       AH · active on FTO · diagnostics step READY → Not started
+//   DIAGDONE AH · active on FTO · diagnostics step COMPLETED, next step ready → NOT Not started
+//   DONE     AH · PP ongoing + a COMPLETED PP → active + CONSUMED → Completed; the completed PP must
+//            not render as a product row (query keeps ongoing|initiated)
+//   NOSTEPS  AH · active on FTO · PP ongoing, no delivery-sequence doc → "No delivery steps yet."
+//   OTHER    AH · active on a NON-DFU product only → not in the FTO list; still an A&H card
+//   NOTAH    NOT an AH member (no users_roles) · active on FTO → must never render
+//   ROLEOFF  users_roles with ahmember:FALSE · active on FTO → must never render (flag, not doc, decides)
+//   P_NDFU   products type 'NDFU' → must never reach the DFU picker
+//
+// CF-CONSISTENT (2026-09-25): in CI the functions emulator runs productsdata_to_pmd on every
+// participantsproduct write and REBUILDS activeproduct / consumedproducts from the rows, via a query with
+// orderBy('sequenceorder') — rows without `sequenceorder` are dropped, which emptied everyone's
+// activeproduct in the first CI run. So every PP carries `sequenceorder` (real rows always do), and the
+// metadata below is exactly what the CF would derive from those rows: the world is the same whether or not
+// Functions run. Products carry an `id` field like the real create dialog writes — delivery-dashboard-clone
+// calls doc('products', data.id) on every DFU product and threw on an id-less one.
+const FTO_RUN = `${TESTRUNID}_fto`;
+const FTO = {
+  P_DFU: `${FTO_RUN}_P_DFU`, P_NDFU: `${FTO_RUN}_P_NDFU`,
+  AT_DIAG: `${FTO_RUN}_AT_DIAG`, AT_SESSION: `${FTO_RUN}_AT_SESSION`, DF: `${FTO_RUN}_DF`,
+  names: {
+    product: `FTO Product ${TESTRUNID}`, nonDfu: `FTO Non-DFU ${TESTRUNID}`,
+    session: `FTO Session ${TESTRUNID}`, form: `FTO Intake ${TESTRUNID}`,
+  },
+  people: ['ONG', 'NS', 'DIAGDONE', 'DONE', 'NOSTEPS', 'OTHER', 'NOTAH', 'ROLEOFF'],
+};
+const ftoPf = (k) => `${FTO_RUN}_pf_${k.toLowerCase()}`;
+const ftoName = (k) => `FTO ${k[0]}${k.slice(1).toLowerCase()} ${TESTRUNID}`;
+
+async function seedFto(db, T) {
+  const tag = TAG(FTO_RUN);
+  const product = (id) => db.collection('products').doc(id);
+  const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
+
+  await set('products', FTO.P_DFU, { id: FTO.P_DFU, product: FTO.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+  await set('products', FTO.P_NDFU, { id: FTO.P_NDFU, product: FTO.names.nonDfu, type: 'NDFU', atcmodel: null, mode: 'online' });
+  // 'EI Diagnostics' is one of the component's literal diagnosticsArray names — the Not-started rule keys on it.
+  await set('appointmenttype', FTO.AT_DIAG, { appointmenttype: 'EI Diagnostics' });
+  await set('appointmenttype', FTO.AT_SESSION, { appointmenttype: FTO.names.session });
+  await set('delivery forms', FTO.DF, { formname: FTO.names.form, formarray: [] });
+
+  // A&H membership. ROLEOFF has the doc with the flag FALSE; NOTAH has none at all.
+  for (const k of ['ONG', 'NS', 'DIAGDONE', 'DONE', 'NOSTEPS', 'OTHER', 'ROLEOFF']) {
+    await set('users_roles', `${FTO_RUN}_role_${k.toLowerCase()}`, {
+      id: `${FTO_RUN}_role_${k.toLowerCase()}`, name: ftoName(k), participant: false,
+      ahmember: k !== 'ROLEOFF', profile_ref: db.collection('profile_data').doc(ftoPf(k)),
+    });
+  }
+
+  const meta = (k, activeproduct, consumedproducts = []) => set('participant metadata', ftoPf(k), {
+    profileid: ftoPf(k), name: ftoName(k), email: `${ftoPf(k)}@example.com`,
+    activeproduct, consumedproducts, customerstatus: 'active',
+  });
+  await meta('ONG', [FTO.P_DFU]);
+  await meta('NS', [FTO.P_DFU]);
+  await meta('DIAGDONE', [FTO.P_DFU]);
+  await meta('DONE', [FTO.P_DFU], [FTO.P_DFU]);
+  await meta('NOSTEPS', [FTO.P_DFU]);
+  await meta('OTHER', [FTO.P_NDFU]);
+  await meta('NOTAH', [FTO.P_DFU]);
+  await meta('ROLEOFF', [FTO.P_DFU]);
+
+  // Metadata above == what productsdata_to_pmd derives from these rows (see CF-CONSISTENT note).
+  // JTED-09 (app dfdb6b57): the Overview list is ordered by each member's earliest `statusdate.initiated`,
+  // oldest first; a member with no initiated date goes last. Distinct ages per member make the order provable:
+  // ONG 40d → DIAGDONE 30d → NOSTEPS 25d → NS 20d → DONE (no initiated date).
+  const INITIATED_DAYS = { ONG: 40, DIAGDONE: 30, NOSTEPS: 25, NS: 20 };
+  const pp = (id, k, status, seq = 0, prod = FTO.P_DFU) => set('participantsproduct', id, {
+    profileid: ftoPf(k), productref: product(prod), status, sequenceorder: seq,
+    statusdate: {
+      [status]: T.fromMillis(Date.now() - 20 * 86400e3),
+      ...(INITIATED_DAYS[k] && prod === FTO.P_DFU && status !== 'completed' ? { initiated: T.fromMillis(Date.now() - INITIATED_DAYS[k] * 86400e3) } : {}),
+    },
+  });
+  await pp(`${FTO_RUN}_PP_ONG`, 'ONG', 'ongoing');
+  await pp(`${FTO_RUN}_PP_NS`, 'NS', 'initiated');
+  await pp(`${FTO_RUN}_PP_DIAGDONE`, 'DIAGDONE', 'ongoing');
+  await pp(`${FTO_RUN}_PP_DONE`, 'DONE', 'ongoing');
+  await pp(`${FTO_RUN}_PP_DONE_OLD`, 'DONE', 'completed', 1);   // → consumed; status filter must drop the row
+  await pp(`${FTO_RUN}_PP_NOSTEPS`, 'NOSTEPS', 'ongoing');
+  await pp(`${FTO_RUN}_PP_OTHER`, 'OTHER', 'ongoing', 0, FTO.P_NDFU);
+  await pp(`${FTO_RUN}_PP_NOTAH`, 'NOTAH', 'ongoing');
+  await pp(`${FTO_RUN}_PP_ROLEOFF`, 'ROLEOFF', 'ongoing');
+
+  // deliverables — the real shape participant-delivery-sequence writes: {type, deliveryref → activity doc}.
+  const deliverable = async (id, type, activity) => {
+    const target = type === 'form' ? db.collection('delivery forms').doc(activity) : db.collection('appointmenttype').doc(activity);
+    await set('deliverables', id, { type, deliveryref: target });
+    return db.collection('deliverables').doc(id);
+  };
+  const seq = (k, ppId, delivery) => set('participantdeliverysequence', ftoPf(k), {
+    profileid: ftoPf(k), products: [{ participantproductid: ppId, productref: product(FTO.P_DFU), delivery }],
+  });
+  await seq('ONG', `${FTO_RUN}_PP_ONG`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_1`, 'appointment', FTO.AT_SESSION), status: 'completed' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_2`, 'form', FTO.DF), status: 'ready' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_ONG_3`, 'appointment', FTO.AT_SESSION), status: null },
+  ]);
+  await seq('NS', `${FTO_RUN}_PP_NS`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_NS_1`, 'appointment', FTO.AT_DIAG), status: 'ready' },
+  ]);
+  await seq('DIAGDONE', `${FTO_RUN}_PP_DIAGDONE`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_DD_1`, 'appointment', FTO.AT_DIAG), status: 'completed' },
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_DD_2`, 'appointment', FTO.AT_SESSION), status: 'ready' },
+  ]);
+  // NOTAH gets a Not-started-shaped sequence too, so leaking it would move the Not-started tile.
+  await seq('NOTAH', `${FTO_RUN}_PP_NOTAH`, [
+    { sequenceref: await deliverable(`${FTO_RUN}_DV_NOTAH_1`, 'appointment', FTO.AT_DIAG), status: 'ready' },
+  ]);
+}
+
+const FTO_SEEDED = [
+  'products', 'appointmenttype', 'delivery forms', 'deliverables', 'users_roles',
+  'participant metadata', 'participantsproduct', 'participantdeliverysequence',
+];
+
+// ── DELIVERY DASHBOARD — STUCK CASES (DDC-STK-*) ─────────────────────────────────────────────────────
+// Rule under test (app bb5bca74, mahalakshmi 2026-09-29): an initiated|ongoing participantsproduct is a
+// Stuck Case when its most recent ATTENDED appointment (appointments.participantproductid == the PP's
+// docid, attended == true, newest endtime) ended >= 15 days ago. Before bb5bca74 it was "15 days since
+// statusdate" — so EVERY PP here carries a 20-day-old statusdate: under the old rule all five would be
+// stuck, and the four controls below are what prove the new rule ran.
+//   STALE   ongoing   · attended appt ended 18d ago + a NEWER UNattended appt (2d) → STUCK, DAYS "18";
+//                       carries subscriptionstart/end so the two new columns have something to render
+//   RECENT  initiated · attended appt ended 3d ago                                → not stuck
+//   NOAPPT  ongoing   · no appointment at all                                    → not stuck (dropped)
+//   UNATT   ongoing   · only an UNattended appt 30d ago                          → not stuck
+//   DONE    completed · attended appt ended 40d ago                              → not stuck (status)
+// Own run tag + own product, so the FTO world's JTED counts are untouched. CF-consistent like seedFto:
+// every PP has sequenceorder + statusdate; metadata.activeproduct is what productsdata_to_pmd derives.
+const DDC_RUN = `${TESTRUNID}_ddc`;
+const DDC = {
+  P: `${DDC_RUN}_P_DFU`,
+  P2: `${DDC_RUN}_P_PARALLEL`,
+  names: { product: `DDC Stuck Product ${TESTRUNID}`, parallel: `DDC Parallel Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
+  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE'],
+  subStart: Date.UTC(2026, 0, 15, 12), subEnd: Date.UTC(2027, 0, 14, 12),
+};
+const ddcPf = (k) => `${DDC_RUN}_pf_${k.toLowerCase()}`;
+const ddcPp = (k) => `${DDC_RUN}_PP_${k}`;
+const ddcName = (k) => `${DDC.names.tag} ${k[0]}${k.slice(1).toLowerCase()}`;
+
+async function seedDdcStuck(db, T) {
+  const tag = TAG(DDC_RUN);
+  const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
+  const ago = (d) => T.fromMillis(Date.now() - d * 86400e3 - 2 * 3600e3);   // +2h: clear of the floor() edge
+
+  await set('products', DDC.P, { id: DDC.P, product: DDC.names.product, type: 'DFU', atcmodel: null, mode: 'online' });
+  // DDC-FLT (app dfdb6b57): a NON-DFU second product STALE also holds → the dashboard shows it as STALE's
+  // "parallel product" (activeproduct minus the row's product). NDFU so it never becomes a dashboard row itself.
+  await set('products', DDC.P2, { id: DDC.P2, product: DDC.names.parallel, type: 'NDFU', atcmodel: null, mode: 'online' });
+
+  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed' };
+  // DDC-FLT filter axes: STALE = active · regular · has a parallel product; RECENT = non active · defaulted · none.
+  // (RECENT is the "Initiated – Not Consuming" row, STALE the "Stuck" row — the two rows the All tab shows.)
+  const custStatus = { RECENT: 'non active' };
+  const finStatus = { STALE: 'regular', RECENT: 'defaulted' };
+  for (const k of DDC.people) {
+    await set('participant metadata', ddcPf(k), {
+      profileid: ddcPf(k), name: ddcName(k), email: `${ddcPf(k)}@example.com`, customerstatus: custStatus[k] || 'active',
+      ...(finStatus[k] ? { financialstatus: finStatus[k] } : {}),
+      activeproduct: k === 'DONE' ? [] : (k === 'STALE' ? [DDC.P, DDC.P2] : [DDC.P]), consumedproducts: k === 'DONE' ? [DDC.P] : [],
+    });
+    await set('participantsproduct', ddcPp(k), {
+      profileid: ddcPf(k), productref: db.collection('products').doc(DDC.P), status: status[k], sequenceorder: 0,
+      statusdate: { [status[k]]: ago(20) },
+      ...(k === 'STALE' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
+    });
+  }
+
+  // STALE's parallel-product row (CF-consistent: productsdata_to_pmd derives activeproduct [P, P2] from it)
+  await set('participantsproduct', `${DDC_RUN}_PP_STALE_P2`, {
+    profileid: ddcPf('STALE'), productref: db.collection('products').doc(DDC.P2), status: 'ongoing', sequenceorder: 1,
+    statusdate: { ongoing: ago(20) },
+  });
+
+  const appt = (id, k, endDaysAgo, attended) => set('appointments', `${DDC_RUN}_${id}`, {
+    participantproductid: ddcPp(k), profileid: ddcPf(k), attended, cancelled: false,
+    starttime: ago(endDaysAgo), endtime: ago(endDaysAgo),
+  });
+  await appt('APT_STALE_DONE', 'STALE', 18, true);   // 18 ≠ the 20d statusdate, so DAYS ≠ DAYS STUCK
+  await appt('APT_STALE_NOSHOW', 'STALE', 2, false);   // newer, but unattended — must not reset the clock
+  await appt('APT_RECENT', 'RECENT', 3, true);
+  await appt('APT_UNATT', 'UNATT', 30, false);
+  await appt('APT_DONE', 'DONE', 40, true);
+}
+
+const DDC_SEEDED = ['products', 'participant metadata', 'participantsproduct', 'appointments'];
 
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
 const SEEDED = [
@@ -407,6 +720,9 @@ const SEEDED = [
   'participant metadata', 'participantjourneyproduct', 'participantsproduct', 'participantdeliverysequence',
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',
+  // JC Health world (JCH-*): A&H feedback + journey-coach appointments
+  // clientissue: the JE dashboard's Participant Health tickets tile (JCD-01)
+  'love letter', 'ask AH', 'appointments', 'clientissue',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
@@ -419,7 +735,9 @@ const APP_WRITE_PROFILEIDS = [PF.p0, PF.p1];
 async function teardownJourney() {
   const admin = initAdminAuto();
   const db = admin.firestore();
-  const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
+  const n = await seed.teardownCollections(db, SEEDED, TESTRUNID)
+    + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN)
+    + await seed.teardownCollections(db, DDC_SEEDED, DDC_RUN);
 
   // APP-written docs (no testrunid) — delete by their natural key (profileid). Covers JP-06's new
   // journeyproductpurchase / participant purchase logs and JP-09's email archive doc.
@@ -441,7 +759,7 @@ async function teardownJourney() {
   return n + appDeleted;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, seedJourney, teardownJourney };
+module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, DDC_RUN, DDC, seedJourney, teardownJourney };
 
 if (require.main === module) {
   const mode = process.argv[2];

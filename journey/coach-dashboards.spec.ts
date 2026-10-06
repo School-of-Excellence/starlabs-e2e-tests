@@ -13,9 +13,11 @@
 // participantjourneyproduct document, and the test derives the same number independently through the Admin
 // SDK. Two readers of the same data, and the test writes neither the tally nor the view.
 import { test, expect } from '@playwright/test';
-import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin } from './support/journey';
+import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin, journeyNames, jcdAssuredLeads } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
+
+const RUN = process.env.JNY_RUNID || 'jny';
 
 let guard: ConsoleGuard;
 
@@ -118,5 +120,91 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
       host.getByText(/Loading Dashboard/i),
       'JP-21: the loading panel must clear once the app\'s own reads resolve',
     ).toHaveCount(0, { timeout: 60_000 });
+  });
+
+  // ===========================================================================================
+  // JCD-01..03 — the redesigned Participant Health board (app c67aae29 + the 6 fixes in c5477756)
+  // ===========================================================================================
+  //
+  // The board is derived in loadCoachHealthAnalytics(): every `participant metadata` doc is the roster,
+  // then healthtracker_healthstate / healthtracker_touchpoint / appointments / clientissue are read
+  // scoped to those ids. The 2026-09-23 fixes changed three things these cases pin down: tickets are
+  // now an OPEN-only server-side count, the Health board link opens in a NEW TAB, and the Outreach rows
+  // carry priority.engine's reason string instead of a hand-rolled status line.
+  //
+  // ANTI-CIRCULARITY: the seed writes raw clientissue / metadata docs; every number and string asserted
+  // is the app's own derivation, re-derived here from the same docs.
+  test('JCD-01 the Participant Health tickets tile counts OPEN tickets only', async ({ page }) => {
+    const issues = (await queryWhere('clientissue', [['testrunid', '==', RUN]])) as any[];
+    const open = issues.filter((i) => (i.status?.status ?? '').toLowerCase() === 'open');
+    expect([open.length, issues.length],
+      'oracle sanity: one OPEN ticket seeded, plus a CLOSED one that must be excluded').toEqual([1, 2]);
+
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard'), 'JCD-01: the dashboard must mount').toBeAttached({ timeout: 30_000 });
+
+    await expect(
+      page.getByTestId('jcd-ph-tickets').locator('.v'),
+      `JCD-01: the Tickets tile counts OPEN clientissue docs (${open.length}) — the closed one must not count`,
+    ).toHaveText(String(open.length), { timeout: 60_000 });
+  });
+
+  test('JCD-02 the Health board link opens the JC-Health screen in a NEW TAB', async ({ page, context }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    const before = context.pages().length;
+    const [popup] = await Promise.all([
+      context.waitForEvent('page', { timeout: 30_000 }),
+      page.getByTestId('jcd-ph-healthboard').click(),
+    ]);
+    expect(popup.url(), 'JCD-02: the new tab lands on the JC-Health dashboard').toContain('/journey-coach-health');
+    expect(context.pages().length, 'JCD-02: a tab was ADDED — the dashboard is not navigated away from').toBe(before + 1);
+    await expect(page.locator('app-journeycoach-dashboard'), 'JCD-02: the JE dashboard is still mounted in the original tab').toBeAttached();
+    await popup.close();
+  });
+
+  test('JCD-03 an Outreach row states WHY, using the shared priority reason', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    // priority.engine builds "<driver> + <driver> -> <action>"; the hand-rolled status line it replaced
+    // (e.g. "2 open tickets") never carried the arrow, so the arrow is what proves the swap.
+    const row = page.getByTestId('jcd-ph-needsattn-row').first();
+    await expect(row, 'JCD-03: at least one participant needs outreach in the seeded base').toBeVisible({ timeout: 60_000 });
+    await expect(row, 'JCD-03: the row carries priority.engine\'s reason, not a bare status line').toContainText('→');
+  });
+
+  // JCD-04 — Assured Sales: an empty Journey cell falls back to the sale's product (app d86af3ea)
+  //
+  // formatCellValue() returned '-' for an empty `journey` on the sales tables; it now resolves the row's
+  // productref through the dashboard's own products map. SEEDED: SLP (journey '', productref → P1) and the
+  // control SLJ (journey J1 AND productref → P1), both assured (paymentplan set) this month.
+  // ANTI-CIRCULARITY: the test writes ids only; both cell texts are names the app looks up itself — the
+  // product name from `products`, the journey name from `journey`. SLJ proves the fallback fires ONLY on
+  // an empty journey (otherwise its cell would read the product too).
+  test('JCD-04 Assured Sales shows the product name when a sale has no journey — and the journey when it has one', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    await page.getByTestId('jcd-lnk-assured-table').click();
+    const table = page.locator('table.jcd-table');
+    // header text is "Journey" + the sort icon (⇅), so match the leading word
+    const journeyCol = table.locator('th').filter({ hasText: /^\s*Journey\b/ });
+    await expect(journeyCol, 'JCD-04: the Assured Sales table opens with a Journey column').toHaveCount(1, { timeout: 30_000 });
+    // the column's position among the header cells (S.No is index 0 — it is a th too)
+    const ths = await table.locator('thead th').allTextContents();
+    const jIdx = ths.findIndex((t) => /^\s*Journey\b/.test(t));
+    const journeyCell = (name: string) => table.locator('tr.jcd-tr').filter({ hasText: name }).locator('td').nth(jIdx);
+
+    await page.getByTestId('jcd-inp-133').fill(`JCD Assured`);
+    await expect(journeyCell(jcdAssuredLeads.productOnly), 'JCD-04: a product-only sale shows its PRODUCT in the Journey cell')
+      .toHaveText(journeyNames.product1, { timeout: 60_000 });
+    await expect(journeyCell(jcdAssuredLeads.withJourney), 'JCD-04: a sale with a journey keeps showing the JOURNEY')
+      .toHaveText(journeyNames.journey1);
   });
 });

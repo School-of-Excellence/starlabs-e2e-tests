@@ -25,7 +25,7 @@ import { test, expect, Page } from '@playwright/test';
 import {
   evtActors, evtProfileIds, evtIds, evtNames, installEvtStubs, loginAsEvtAdmin,
   resetQrEticketForP0, deleteQrLog, getEticketP0Active, resetInitiateCohort,
-  cleanArenaSpaceForSummary, resetVideoAskTags, cleanStageOpportunity, refTo,
+  cleanArenaSpaceForSummary, resetVideoAskTags, cleanStageOpportunity, refTo, evtEligibility,
 } from './support/events';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { openMatSelect } from '../_shared/mat-select';
@@ -234,7 +234,8 @@ test.describe('Events DEEP — create-event dialog (EVT-02)', () => {
     // Add one Arena Event row, fill its title + pick the Installation product + its date range. The
     // arena sub-event is only persisted when the product is "Installation Event Mode" with a delivery
     // sequence carrying a `delivery events` activity (seeded P_INST + PTDS_INST).
-    await dialog.getByRole('button', { name: /Add New Arena Events/i }).click();
+    // (2026-10-02: the restyle renamed the button "Add New Arena Event" — drive it by its hook instead.)
+    await page.getByTestId('ued-add-arena-event').click();
     await dialog.getByLabel('Event Display Name').fill(`TEST Arena Sub ${RUN}`);
     await pickMatOption(page, /Eligible Product/i, evtNames.installProduct);
     const arenaStart = dialog.locator('input[formcontrolname="startdate"]').nth(1);
@@ -242,6 +243,15 @@ test.describe('Events DEEP — create-event dialog (EVT-02)', () => {
     await arenaStart.fill(fmt(today));
     await arenaEnd.fill(fmt(end));
     await arenaEnd.blur();
+
+    // Eligible Journey is REQUIRED on every arena product since surya 0e8f5685 (eligibility block). Pick the
+    // seeded EVL journey: open from the keyboard (the dialog's sticky header overlaps a scrolled-to select)
+    // and type into the auto-focused search box.
+    await page.getByTestId('ued-product-journey').last().focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.type(evtEligibility.journey);
+    await page.getByRole('option', { name: evtEligibility.journey }).click();
+    await page.keyboard.press('Escape');
 
     // Submit. saveEventDetail batch-sets event collection + arena events, then closes the dialog and
     // shows an "Event Updated Successfully" snackbar.

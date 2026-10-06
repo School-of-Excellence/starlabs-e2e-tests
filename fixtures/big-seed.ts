@@ -206,6 +206,7 @@ export async function seedBigWorld(opts: BigSeedOptions = {}): Promise<BigSeedRe
     { route: '/bigactivitymonitor', label: 'BIG Activity Monitor' },
     { route: '/bigactivitylog', label: 'BIG Activity Log' },
     { route: '/zoommeeting_bigparticipants', label: 'Zoom Meeting (BIG)' },
+    { route: '/big-leaderboard', label: 'BIG Leaderboard' },   // big-ladder.spec.ts (BLD-*)
   ];
   const grantRoles = ['admin', 'eventcoordinator', 'mentor'];
   for (const r of BIG_ROUTES) {

@@ -123,6 +123,57 @@ export async function loginAsJourneyAdmin(page: Page): Promise<void> {
   await loginAs(page, journeyActors.admin, PASSWORD);
 }
 
+/** Log in as the seeded journeycoach — /journey-coach-health then opens scoped to THIS coach's base. */
+export async function loginAsJourneyCoach(page: Page): Promise<void> {
+  await loginAs(page, journeyActors.journeycoach, PASSWORD);
+}
+
+/** JC Health world (seed-journey.js step 6). A–F are on the journeycoach's base; X is off-base. */
+export const jchParticipants = {
+  A: { pf: `${RUN}_pf_hc_a`, name: `JCH Alpha ${RUN}` },
+  B: { pf: `${RUN}_pf_hc_b`, name: `JCH Bravo ${RUN}` },
+  C: { pf: `${RUN}_pf_hc_c`, name: `JCH Charlie ${RUN}` },
+  D: { pf: `${RUN}_pf_hc_d`, name: `JCH Delta ${RUN}` },
+  E: { pf: `${RUN}_pf_hc_e`, name: `JCH Echo ${RUN}` },
+  F: { pf: `${RUN}_pf_hc_f`, name: `JCH Foxtrot ${RUN}` },
+  X: { pf: `${RUN}_pf_hc_x`, name: `JCH Xray ${RUN}` },
+};
+/** FTO / Team Evolution world (seed-journey.js step 7) — its own run tag, see seedFto(). */
+const FTO_RUN = `${RUN}_fto`;
+const ftoPerson = (k: string) => ({ pf: `${FTO_RUN}_pf_${k.toLowerCase()}`, name: `FTO ${k[0]}${k.slice(1).toLowerCase()} ${RUN}` });
+export const ftoWorld = {
+  RUN: FTO_RUN,
+  P_DFU: `${FTO_RUN}_P_DFU`,
+  names: { product: `FTO Product ${RUN}`, nonDfu: `FTO Non-DFU ${RUN}`, session: `FTO Session ${RUN}`, form: `FTO Intake ${RUN}` },
+  people: {
+    ONG: ftoPerson('ONG'), NS: ftoPerson('NS'), DIAGDONE: ftoPerson('DIAGDONE'), DONE: ftoPerson('DONE'),
+    NOSTEPS: ftoPerson('NOSTEPS'), OTHER: ftoPerson('OTHER'), NOTAH: ftoPerson('NOTAH'), ROLEOFF: ftoPerson('ROLEOFF'),
+  },
+};
+
+/** Delivery-dashboard Stuck Cases world (seed-journey.js step 8) — its own run tag, see seedDdcStuck(). */
+const DDC_TAG = `DDCSTK-${RUN}`;
+export const ddcStuckWorld = {
+  RUN: `${RUN}_ddc`,
+  tag: DDC_TAG,
+  product: `DDC Stuck Product ${RUN}`,
+  parallel: `DDC Parallel Product ${RUN}`,
+  names: { STALE: `${DDC_TAG} Stale`, RECENT: `${DDC_TAG} Recent`, NOAPPT: `${DDC_TAG} Noappt`, UNATT: `${DDC_TAG} Unatt`, DONE: `${DDC_TAG} Done` },
+  // seedDdcStuck writes these as UTC noon, so the app's 'MMM dd, yyyy' renders the same day in any TZ.
+  subscription: { start: 'Jan 15, 2026', end: 'Jan 14, 2027' },
+};
+
+/** JE dashboard Assured Sales leads (seed-journey.js, JCD-04). */
+export const jcdAssuredLeads = {
+  productOnly: `JCD Assured Product Only ${RUN}`,
+  withJourney: `JCD Assured With Journey ${RUN}`,
+};
+
+export const jchTexts = {
+  criticalLetter: `JCH critical letter ${RUN}`,
+  askQuestion: `JCH ask question ${RUN}`,
+};
+
 // CommonJS — reuse the allowlist-guarded admin init (only ever the test project).
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const seed = require('../../fixtures/seed-test-project');
