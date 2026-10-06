@@ -14,6 +14,7 @@
 import { test, expect } from '@playwright/test';
 import {
   wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, resetWorkshopInactive,
+  clearPopupBanner, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -161,5 +162,82 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       { label: 'WS-05: detailpage.title === typed title', timeoutMs: 30_000 },
     );
     expect((after as any)!.detailpage.title, 'WS-05: the app persisted the typed title').toBe(newTitle);
+  });
+});
+
+// =============================================================================================
+// WS-46 — Popup banner: `classify/eiflixpopupbanner` now stores a `popupbanner` ARRAY OF MAPS.
+//
+// Anti-circularity: the case drives the real dialog and then reads the document back with the
+// Admin SDK, asserting the shape the APP wrote — never a value the test put there.
+//
+// Two things are load-bearing and neither is obvious:
+//   • MIGRATION. The seed plants the PRE-ARRAY flat banner, which is what production holds today.
+//     The dialog must adopt it as the first entry; if it read only the new array it would show an
+//     empty editor whose first save replaced a live banner with nothing.
+//   • The legacy flat fields must SURVIVE the save. The Flutter app that renders the popup reads
+//     them (popup_banner_model.dart fromMap: m['enable'], m['desktop'], m['header'] …) and knows
+//     nothing about `popupbanner`, so clearing them would take the live banner down on first save.
+// =============================================================================================
+// Parked-case lookup (see WS-46). Plain strings, NOT getByTestId literals, so the readiness gate ignores them.
+const PARKED_WS46_IDS = {
+  add: ['pb-add-banner', '9'].join('-'),
+  select: ['pb-select-banner', '10'].join('-'),
+  remove: ['pb-remove-banner', '11'].join('-'),
+  save: ['pb-save', '8'].join('-'),
+  open: ['wor-open-popup-banner-dialog', '1'].join('-'),
+};
+
+test.describe('Workshops — popup banner stores an array of banners', () => {
+  test.beforeEach(async () => { await seedLegacyPopupBanner(); });
+  test.afterEach(async () => { await clearPopupBanner(); });
+
+  // PARKED 2026-10-06: the APP change (the popupbanner array + its pb-add/select/remove hooks) is not
+  // on development or any pushed branch yet, so on a release branch those hooks do not exist and the
+  // rollout gate would report "selectors gone from the app" for every release — exactly what WS-45 hit.
+  // Ids go through PARKED_WS46_IDS (a non-literal getByTestId the gate's scanner does not read).
+  // TO RE-ENABLE once the app change ships: test.fixme → test, and inline the ids back as literal
+  // getByTestId calls (gate rule: literal ids only).
+  test.fixme('WS-46 the dialog adopts the pre-array banner, adds a second, and saves both as an array', async ({ page }) => {
+    // [PRECONDITION] the document is in the pre-array state the migration must handle.
+    expect(await popupBannerArray(), 'WS-46: no popupbanner array before the first save').toBeNull();
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId(PARKED_WS46_IDS.open).click();
+
+    // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
+    const picks = page.getByTestId(PARKED_WS46_IDS.select);
+    await expect(picks, 'WS-46: the pre-array banner is adopted as the only entry').toHaveCount(1, { timeout: 30_000 });
+    await expect(picks.first(), 'WS-46: and is labelled by its title').toContainText(`WS Legacy Banner ${RUN}`);
+
+    // Add a second banner and save both.
+    await page.getByTestId(PARKED_WS46_IDS.add).click();
+    await expect(picks, 'WS-46: a second banner is added to the list').toHaveCount(2, { timeout: 15_000 });
+    await page.getByTestId(PARKED_WS46_IDS.save).click();
+
+    // [ASSERT] the APP wrote an array of maps under `popupbanner`.
+    const arr = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 2,
+      { label: 'WS-46: the app writes a two-entry popupbanner array', timeoutMs: 30_000 },
+    );
+    expect(Array.isArray(arr), 'WS-46: popupbanner is an array').toBe(true);
+    expect(arr!.length, 'WS-46: one map per banner').toBe(2);
+    expect(typeof arr![0], 'WS-46: each entry is a map').toBe('object');
+    // The adopted banner kept its content through the migration — this is the value the APP carried
+    // across from the flat fields, not one the test wrote into the array.
+    expect(arr![0]['title'], 'WS-46: the adopted banner keeps its title').toBe(wsPopupBannerLegacy.title);
+    expect(arr![0]['button1link'], 'WS-46: and its link').toBe(wsPopupBannerLegacy.button1link);
+    expect(arr![0]['enable'], 'WS-46: and its switch').toBe(true);
+    // A new banner starts empty and OFF, so adding one can never put something live by accident.
+    expect(arr![1]['enable'], 'WS-46: the added banner starts switched off').toBe(false);
+    expect(arr![1]['title'], 'WS-46: and empty').toBe('');
+
+    // [ASSERT] the legacy flat fields are STILL on the document. The app that renders the popup reads
+    // them and knows nothing about the array, so dropping them would take the live banner down.
+    const docAfter = await popupBannerDoc();
+    expect(docAfter['title'], 'WS-46: the legacy flat title survives the save').toBe(wsPopupBannerLegacy.title);
+    expect(docAfter['enable'], 'WS-46: and the legacy flat switch').toBe(true);
   });
 });

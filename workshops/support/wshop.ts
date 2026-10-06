@@ -833,3 +833,63 @@ export async function clearUserTypeLoginLogs(): Promise<void> {
   await Promise.all(Object.values(wsLogUserTypeIds).map(id =>
     db.collection('loginlog').doc(id).delete().catch(() => undefined)));
 }
+
+// =================================================================================================
+// 2026-10-06 — popup banner: `classify/eiflixpopupbanner` moves to a `popupbanner` array of maps.
+// =================================================================================================
+
+/** The fixed-id document the Popup banner dialog on /workshops owns. */
+export const wsPopupBannerDoc = { col: 'classify', id: 'eiflixpopupbanner' };
+
+/** The legacy flat banner the seed plants — the shape live in production before the array. */
+export const wsPopupBannerLegacy = {
+  title: `<p>WS Legacy Banner ${RUN}</p>`,
+  header: `<p>WS Legacy Eyebrow ${RUN}</p>`,
+  button1link: `https://example.com/${RUN}`,
+};
+
+/**
+ * PRECONDITION: put the document back to the PRE-ARRAY shape — flat fields, no `popupbanner`.
+ *
+ * This is the state the migration has to cope with, and the one that matters: the banner already
+ * live is held in those flat fields, so an editor that read only the new array would show nothing
+ * and its first save would replace a live banner with an empty list.
+ *
+ * `classify` is a shared collection this suite does not own outright (same as eiflixdiscoverpage),
+ * so the write is run-tagged and the teardown only removes what still carries our tag.
+ */
+export async function seedLegacyPopupBanner(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).set({
+    docid: wsPopupBannerDoc.id,
+    ...wsPopupBannerLegacy,
+    description: '', button1text: '', button2text: '', footer: '',
+    desktop: '', tablet: '', mobile: '', enable: true,
+    popupbanner: FV.delete(),
+    testrunid: RUN, _testdata: true,
+  }, { merge: true });
+}
+
+/** The `popupbanner` array as the APP wrote it, or null when the field is absent. */
+export async function popupBannerArray(): Promise<any[] | null> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).get();
+  const v = snap.exists ? (snap.data() || {})['popupbanner'] : undefined;
+  return Array.isArray(v) ? v : null;
+}
+
+/** The whole document, for asserting the legacy flat fields survived the save. */
+export async function popupBannerDoc(): Promise<any> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id).get();
+  return snap.exists ? (snap.data() || {}) : {};
+}
+
+/** Drop the run-tagged popup banner document (teardown only). */
+export async function clearPopupBanner(): Promise<void> {
+  const admin = seed.initAdmin();
+  const ref = admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id);
+  const snap = await ref.get().catch(() => ({ exists: false, data: () => ({}) } as any));
+  if (snap.exists && (snap.data() || {})['testrunid'] === RUN) await ref.delete().catch(() => undefined);
+}
