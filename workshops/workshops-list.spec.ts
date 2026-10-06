@@ -179,27 +179,12 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
 //     them (popup_banner_model.dart fromMap: m['enable'], m['desktop'], m['header'] …) and knows
 //     nothing about `popupbanner`, so clearing them would take the live banner down on first save.
 // =============================================================================================
-// Parked-case lookup (see WS-46). Plain strings, NOT getByTestId literals, so the readiness gate ignores them.
-// Only the ids that do NOT yet exist in the app are routed here. pb-save-8, pb-toggle-enable-3 and
-// wor-open-popup-banner-dialog-1 already ship, so they stay literal and keep their gate credit.
-const PARKED_WS46_IDS = {
-  add: ['pb-add-banner', '9'].join('-'),
-  select: ['pb-select-banner', '10'].join('-'),
-  remove: ['pb-remove-banner', '11'].join('-'),
-  link: ['pb-button1link', '12'].join('-'),
-};
 
 test.describe('Workshops — popup banner stores an array of banners', () => {
   test.beforeEach(async () => { await seedLegacyPopupBanner(); });
   test.afterEach(async () => { await clearPopupBanner(); });
 
-  // PARKED 2026-10-06: the APP change (the popupbanner array + its pb-add/select/remove hooks) is not
-  // on development or any pushed branch yet, so on a release branch those hooks do not exist and the
-  // rollout gate would report "selectors gone from the app" for every release — exactly what WS-45 hit.
-  // Ids go through PARKED_WS46_IDS (a non-literal getByTestId the gate's scanner does not read).
-  // TO RE-ENABLE once the app change ships: test.fixme → test, and inline the ids back as literal
-  // getByTestId calls (gate rule: literal ids only).
-  test.fixme('WS-46 the dialog adopts the pre-array banner, adds a second, and saves both as an array', async ({ page }) => {
+  test('WS-46 the dialog adopts the pre-array banner, adds a second, and saves both as an array', async ({ page }) => {
     // [PRECONDITION] the document is in the pre-array state the migration must handle.
     expect(await popupBannerArray(), 'WS-46: no popupbanner array before the first save').toBeNull();
 
@@ -208,12 +193,12 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
-    const picks = page.getByTestId(PARKED_WS46_IDS.select);
+    const picks = page.getByTestId('pb-select-banner-10');
     await expect(picks, 'WS-46: the pre-array banner is adopted as the only entry').toHaveCount(1, { timeout: 30_000 });
     await expect(picks.first(), 'WS-46: and is labelled by its title').toContainText(`WS Legacy Banner ${RUN}`);
 
     // Add a second banner and save both.
-    await page.getByTestId(PARKED_WS46_IDS.add).click();
+    await page.getByTestId('pb-add-banner-9').click();
     await expect(picks, 'WS-46: a second banner is added to the list').toHaveCount(2, { timeout: 15_000 });
     await page.getByTestId('pb-save-8').click();
 
@@ -254,18 +239,18 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
   // (ProseMirror) contenteditables, which no spec in this hub drives — eiflix-discover-page.spec.ts
   // avoids them for the same reason. A plain input proves the same rule without the flake.
   // ===========================================================================================
-  test.fixme('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
+  test('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
-    const picks = page.getByTestId(PARKED_WS46_IDS.select);
-    const link = page.getByTestId(PARKED_WS46_IDS.link);
+    const picks = page.getByTestId('pb-select-banner-10');
+    const link = page.getByTestId('pb-button1link-12');
     await expect(picks, 'WS-47: the adopted banner is the only one to start with').toHaveCount(1, { timeout: 30_000 });
     await expect(link, 'WS-47: banner 1 shows the adopted link').toHaveValue(wsPopupBannerLegacy.button1link, { timeout: 15_000 });
 
     // Add a second banner; it becomes the selected one and starts empty.
-    await page.getByTestId(PARKED_WS46_IDS.add).click();
+    await page.getByTestId('pb-add-banner-9').click();
     await expect(picks, 'WS-47: two banners now').toHaveCount(2, { timeout: 15_000 });
     await expect(link, 'WS-47: a new banner starts empty').toHaveValue('');
 
@@ -298,7 +283,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
 
     // [ASSERT] removing one drops ONLY it. window.confirm guards the remove, so answer it first.
     page.once('dialog', d => d.accept());
-    await page.getByTestId(PARKED_WS46_IDS.remove).nth(1).click();
+    await page.getByTestId('pb-remove-banner-11').nth(1).click();
     await expect(picks, 'WS-47: back to one banner').toHaveCount(1, { timeout: 15_000 });
     await page.getByTestId('pb-save-8').click();
 
