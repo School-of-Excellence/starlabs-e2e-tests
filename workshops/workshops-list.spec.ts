@@ -180,12 +180,13 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
 //     nothing about `popupbanner`, so clearing them would take the live banner down on first save.
 // =============================================================================================
 // Parked-case lookup (see WS-46). Plain strings, NOT getByTestId literals, so the readiness gate ignores them.
+// Only the ids that do NOT yet exist in the app are routed here. pb-save-8, pb-toggle-enable-3 and
+// wor-open-popup-banner-dialog-1 already ship, so they stay literal and keep their gate credit.
 const PARKED_WS46_IDS = {
   add: ['pb-add-banner', '9'].join('-'),
   select: ['pb-select-banner', '10'].join('-'),
   remove: ['pb-remove-banner', '11'].join('-'),
-  save: ['pb-save', '8'].join('-'),
-  open: ['wor-open-popup-banner-dialog', '1'].join('-'),
+  link: ['pb-button1link', '12'].join('-'),
 };
 
 test.describe('Workshops — popup banner stores an array of banners', () => {
@@ -204,7 +205,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
 
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
-    await page.getByTestId(PARKED_WS46_IDS.open).click();
+    await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
     const picks = page.getByTestId(PARKED_WS46_IDS.select);
@@ -214,7 +215,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
     // Add a second banner and save both.
     await page.getByTestId(PARKED_WS46_IDS.add).click();
     await expect(picks, 'WS-46: a second banner is added to the list').toHaveCount(2, { timeout: 15_000 });
-    await page.getByTestId(PARKED_WS46_IDS.save).click();
+    await page.getByTestId('pb-save-8').click();
 
     // [ASSERT] the APP wrote an array of maps under `popupbanner`.
     const arr = await pollUntil(
@@ -239,5 +240,73 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
     const docAfter = await popupBannerDoc();
     expect(docAfter['title'], 'WS-46: the legacy flat title survives the save').toBe(wsPopupBannerLegacy.title);
     expect(docAfter['enable'], 'WS-46: and the legacy flat switch').toBe(true);
+  });
+
+  // ===========================================================================================
+  // WS-47 — the master-detail behaviour, which is where the risk in this change actually sits.
+  //
+  // One set of six ProseMirror editors is shared across every banner, so the form is only ever a
+  // working copy of the SELECTED one. commitForm() writes it back before any selection change; get
+  // that wrong and switching banners silently discards whatever was just typed. WS-46 proves the
+  // stored SHAPE — this proves nothing is lost on the way there.
+  //
+  // The edit is made in `button1link`, a plain <input>. The other per-banner fields are ngx-editor
+  // (ProseMirror) contenteditables, which no spec in this hub drives — eiflix-discover-page.spec.ts
+  // avoids them for the same reason. A plain input proves the same rule without the flake.
+  // ===========================================================================================
+  test.fixme('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-open-popup-banner-dialog-1').click();
+
+    const picks = page.getByTestId(PARKED_WS46_IDS.select);
+    const link = page.getByTestId(PARKED_WS46_IDS.link);
+    await expect(picks, 'WS-47: the adopted banner is the only one to start with').toHaveCount(1, { timeout: 30_000 });
+    await expect(link, 'WS-47: banner 1 shows the adopted link').toHaveValue(wsPopupBannerLegacy.button1link, { timeout: 15_000 });
+
+    // Add a second banner; it becomes the selected one and starts empty.
+    await page.getByTestId(PARKED_WS46_IDS.add).click();
+    await expect(picks, 'WS-47: two banners now').toHaveCount(2, { timeout: 15_000 });
+    await expect(link, 'WS-47: a new banner starts empty').toHaveValue('');
+
+    const second = `https://example.com/second-${RUN}`;
+    await link.fill(second);
+    // Each banner has its own switch; turn the new one on.
+    await page.getByTestId('pb-toggle-enable-3').click();
+
+    // [ASSERT] switching away shows banner 1's OWN value, not the one just typed...
+    await picks.nth(0).click();
+    await expect(link, 'WS-47: banner 1 still shows its own link').toHaveValue(wsPopupBannerLegacy.button1link, { timeout: 15_000 });
+
+    // ...and switching back restores banner 2's edit. This is the assertion that fails if
+    // commitForm() does not run before a selection change, or patchForm() does not refill the form.
+    await picks.nth(1).click();
+    await expect(link, 'WS-47: banner 2 kept the edit made before switching away').toHaveValue(second, { timeout: 15_000 });
+
+    await page.getByTestId('pb-save-8').click();
+
+    // [ASSERT] both banners are stored, each with its own link and its own switch.
+    const arr = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 2,
+      { label: 'WS-47: two banners saved', timeoutMs: 30_000 },
+    );
+    expect(arr![0]['button1link'], 'WS-47: banner 1 keeps the adopted link').toBe(wsPopupBannerLegacy.button1link);
+    expect(arr![1]['button1link'], 'WS-47: banner 2 keeps the typed link').toBe(second);
+    expect(arr![0]['enable'], 'WS-47: banner 1 stays as it was').toBe(true);
+    expect(arr![1]['enable'], 'WS-47: banner 2 was switched on independently').toBe(true);
+
+    // [ASSERT] removing one drops ONLY it. window.confirm guards the remove, so answer it first.
+    page.once('dialog', d => d.accept());
+    await page.getByTestId(PARKED_WS46_IDS.remove).nth(1).click();
+    await expect(picks, 'WS-47: back to one banner').toHaveCount(1, { timeout: 15_000 });
+    await page.getByTestId('pb-save-8').click();
+
+    const after = await pollUntil(
+      () => popupBannerArray(),
+      (a) => Array.isArray(a) && a.length === 1,
+      { label: 'WS-47: one banner left after the remove', timeoutMs: 30_000 },
+    );
+    expect(after![0]['button1link'], 'WS-47: the one left is the one not removed').toBe(wsPopupBannerLegacy.button1link);
   });
 });
