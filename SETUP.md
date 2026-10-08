@@ -86,6 +86,57 @@ denylist hard-blocks `fir-sample-aae4a` et al.
 - The other ~18 `playwright.*.config.ts` are **cloud-integration** suites (seed `slabs-queue-e2e-exdcz`, serve a
   prebuilt `dist/` over the network) — not part of the hermetic local gate.
 
+### 4a. Running one suite locally on macOS (verified 2026-10-08)
+
+**You may already have Java 21 without knowing it.** `java -version` on a stock Mac prints "Unable to
+locate a Java Runtime" even when a JDK is installed, because `/usr/bin/java` is only a stub. Android
+Studio ships a full JDK 21 — check before installing anything:
+
+```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+"$JAVA_HOME/bin/java" -version        # openjdk 21.x → you are done, nothing to install
+export PATH="$JAVA_HOME/bin:$PATH"
+```
+
+Other JDK locations worth checking first: `/Library/Java/JavaVirtualMachines/*/Contents/Home`,
+`~/Library/Java/JavaVirtualMachines/*/Contents/Home`, any `/Applications/*.app/Contents/jbr/…`.
+
+**⚠️ Port :4200 — do not reuse a plain `ng serve`.** §2(f) above says you can reuse your own app with
+`EMU_REUSE_APP=1`. That is only safe when the server on :4200 was started with `npm run start:emulator`.
+A plain `ng s` is wired to the **real Firebase project**, so reusing it runs the whole suite against
+PRODUCTION data. Check what is actually there (`lsof -ti :4200` → `ps -o command= -p <pid>`), and if it
+is not the emulator build, serve the emulator app on another port instead of killing theirs:
+
+```bash
+# in the APP repo — leaves whatever is on :4200 alone
+npx ng serve --configuration emulator --port 4201
+```
+
+Then, from the hub:
+
+```bash
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+export PATH="$JAVA_HOME/bin:$PATH"
+export APP_PATH=/absolute/path/to/starlabs-angular   # `..` is wrong when the repos are SIBLINGS
+export BASE_URL=http://localhost:4201                # tests hit YOUR emulator app…
+export EMU_REUSE_APP=1                               # …and Playwright starts/kills no server
+npx playwright test --config=playwright.workshops.emulator.config.ts -g "WS-48" --reporter=list
+```
+
+Three things the first run will stop on if the workspace is not fully wired — all one-offs:
+
+| Error | Fix |
+|---|---|
+| `environment.emulator.ts path ... does not exist` | `APP_PATH=<app> bash ci/setup-emulator-config.sh` (generates it; gitignored) |
+| `missing .../starlabs-cloud-function/functions/index.emulator.js` | clone `School-of-Excellence/starlabs-cloud-function` and symlink it into the hub root (see §1) |
+| `browserType.launch: Executable doesn't exist` | `npx playwright install chromium` |
+
+**Why this section exists:** on 2026-10-08 several features' specs were written and pushed without ever
+being executed, because `java -version` failed and that was taken to mean the emulator could not run
+here. It could. The first real local run then found a defect no static check would have — a case that
+clicked a metric card while the side panel covered it, which is an interaction a person cannot perform.
+Run the suite before pushing it.
+
 ## 5. Secrets / git hygiene
 
 - **`STARLABS_CICD_SA`** (service-account JSON) → GitHub secret; `setup.sh` materializes it to `./starlabs-cicd-sa.json` (gitignored `*-sa.json`). NEVER commit it.
