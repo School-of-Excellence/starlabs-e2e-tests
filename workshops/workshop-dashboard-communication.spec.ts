@@ -810,6 +810,17 @@ test.describe('Workshop dashboard — side panel name search', () => {
     await search.fill('nosuchperson-zzz');
     await expect(cards, 'WS-50: the panel is filtered to nothing').toHaveCount(0, { timeout: 15_000 });
 
+    // Close the panel before reaching for another card: the open panel covers the metric row, and
+    // Playwright correctly refuses to click a card that is outside the viewport behind it. This is
+    // also the real flow — a person closes one panel and opens the next.
+    //
+    // closeParticipantPanel() deliberately does NOT clear the search (it only drops the panel state),
+    // which makes this stronger: the term genuinely survives the close, and only the next OPEN
+    // clears it. That open-path reset is the thing under test.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await expect(page.locator('.participant-panel.panel-visible'), 'WS-50: the panel has closed')
+      .toHaveCount(0, { timeout: 15_000 });
+
     // Open a DIFFERENT card's panel. Total Enrolled lists everyone enrolled on this workshop.
     await page.getByTestId('wd-on-metric-click-6').click();
 
