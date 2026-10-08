@@ -33,6 +33,7 @@ import {
   wsActors, wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopMover,
   resetParticipantWorkshopP0, alignWorkshopMetadataNames, p0MetadataEmail, stampP0DistinctName,
   stampP0Workshoponly, wsP0SearchName,
+  WS_EVERGREEN_DAYS_LEFT, clearEvergreenExtended, seedEvergreenExtended, wsEvergreenIds, wsMetaNames,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -352,5 +353,69 @@ test.describe('Workshops — route-mount smoke (guard admits super-role admin)',
       if (/\/login/.test(url)) bounced.push(`${route} -> ${url}`);
     }
     expect(bounced, `routes that bounced to /login (missing dashboard grant): ${bounced.join(', ')}`).toHaveLength(0);
+  });
+});
+
+// =============================================================================================
+// WS-49 — Extended Participants dialog: days remaining per profile.
+//
+// Anti-circularity: the seed writes an extension running to 23:59 exactly
+// WS_EVERGREEN_DAYS_LEFT calendar days out, and the case asserts the APP rendered "12 days left".
+// The test supplies the date; the arithmetic is the app's. A second participant's extension is
+// seeded in the past, so the lapsed branch is a real negative control rather than an absence.
+//
+// Nothing else in this suite seeds an evergreen workshop — the dialog's trigger only renders when
+// evergreenWorkshop === true AND evergreenWorkshopMeta.workshopDays > 0.
+// =============================================================================================
+test.describe('Workshop dashboard — evergreen Extended Participants: days remaining', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedEvergreenExtended();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearEvergreenExtended();
+    assertNoFatal(guard, 'evergreen extended timeline: no fatal console errors');
+  });
+
+  test('WS-49 each extended profile shows how many days are left, and a lapsed one reads Expired', async ({ page }) => {
+    expect(WS_EVERGREEN_DAYS_LEFT, 'WS-49: the seeded day count resolves').toBeGreaterThan(1);
+
+    await loginAsWshopAdmin(page);
+    await page.goto(`/workshop_dashboard/${wsEvergreenIds.WORKSHOP}`, { waitUntil: 'domcontentloaded' });
+
+    // The Extended node only renders when the app actually bucketed somebody as extended.
+    const openBtn = page.getByTestId('wd-open-extended-timeline-26');
+    await expect(openBtn, 'WS-49: the Extended node renders for an evergreen workshop').toBeVisible({ timeout: 90_000 });
+    await expect(openBtn, 'WS-49: it counts both extended participants').toContainText('2');
+    await openBtn.click();
+
+    const cards = page.locator('.ext-dialog .ext-card');
+    await expect(cards, 'WS-49: both extended participants are listed').toHaveCount(2, { timeout: 30_000 });
+
+    // [ASSERT] the still-running extension reads the app-computed day count. The name arrives from
+    // the metadata map, which lags on a slow emulator, so wait for the card before reading its pill.
+    const activeCard = cards.filter({ hasText: wsMetaNames.p0 });
+    await expect(activeCard, 'WS-49: the active participant has a card').toHaveCount(1, { timeout: 60_000 });
+    await expect(activeCard.getByTestId('et-days-left-5'), `WS-49: the app computed ${WS_EVERGREEN_DAYS_LEFT} days left`)
+      .toHaveText(`${WS_EVERGREEN_DAYS_LEFT} days left`, { timeout: 30_000 });
+
+    // [ASSERT] the lapsed one reads Expired rather than a negative number of days.
+    const lapsedCard = cards.filter({ hasText: wsMetaNames.p1 });
+    await expect(lapsedCard, 'WS-49: the lapsed participant has a card').toHaveCount(1);
+    await expect(lapsedCard.getByTestId('et-days-left-5'), 'WS-49: a lapsed extension reads Expired')
+      .toHaveText('Expired', { timeout: 30_000 });
+
+    // [ASSERT] the pill is not just text — it is styled differently for the two states, which is
+    // what makes the list scannable. Active is not the expired grey.
+    const activeBg = await activeCard.getByTestId('et-days-left-5')
+      .evaluate(el => getComputedStyle(el).backgroundColor);
+    const lapsedBg = await lapsedCard.getByTestId('et-days-left-5')
+      .evaluate(el => getComputedStyle(el).backgroundColor);
+    expect(activeBg, `WS-49: the two states are told apart visually. active=${activeBg} lapsed=${lapsedBg}`)
+      .not.toBe(lapsedBg);
   });
 });

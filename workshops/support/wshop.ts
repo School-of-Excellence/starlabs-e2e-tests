@@ -893,3 +893,107 @@ export async function clearPopupBanner(): Promise<void> {
   const snap = await ref.get().catch(() => ({ exists: false, data: () => ({}) } as any));
   if (snap.exists && (snap.data() || {})['testrunid'] === RUN) await ref.delete().catch(() => undefined);
 }
+
+// =================================================================================================
+// 2026-10-08 — evergreen "days remaining" in the Extended Participants dialog.
+// =================================================================================================
+
+/** The evergreen world CN/WS-49 needs. Nothing else in the suite seeds an evergreen workshop. */
+export const wsEvergreenIds = {
+  WORKSHOP: `${RUN}_W_evergreen`,
+  ENR_ACTIVE: `${RUN}_ev_enr_active`,
+  ENR_LAPSED: `${RUN}_ev_enr_lapsed`,
+  PW_ACTIVE: `${RUN}_ev_pw_active`,
+  PW_LAPSED: `${RUN}_ev_pw_lapsed`,
+};
+
+/** Days out the seeded extension runs — the number the app must render as "N days left". */
+export const WS_EVERGREEN_DAYS_LEFT = 12;
+
+/**
+ * PRECONDITION for the Extended Participants dialog: an evergreen workshop with two extended
+ * participants — one whose extension is still running, one whose has lapsed.
+ *
+ * `extenduntill` is stored the way the app writes it: 23:59 on the chosen day. The ACTIVE one is set
+ * exactly WS_EVERGREEN_DAYS_LEFT calendar days out, so the rendered "N days left" is the app's own
+ * arithmetic over a known input — the test supplies the date and never the answer.
+ *
+ * The dialog's trigger only renders when `evergreenWorkshop === true` AND
+ * `evergreenWorkshopMeta.workshopDays > 0` (computeEvergreenDayDistribution), so both are set.
+ */
+export async function seedEvergreenExtended(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+
+  // 23:59 local on a day N ahead (negative = in the past), matching confirmExtend().
+  const endOfDay = (daysFromToday: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromToday);
+    return T.fromDate(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 0, 0));
+  };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+
+  const wsRef = db.collection('workshopconfiguration').doc(wsEvergreenIds.WORKSHOP);
+  await wsRef.set({
+    docid: wsEvergreenIds.WORKSHOP, active: true, workshopcompleted: false, categorybased: false,
+    atcmodel: null, created: ago(30),
+    evergreenWorkshop: true,
+    evergreenWorkshopMeta: { workshopDays: 7 },
+    detailpage: {
+      type: 'workshop', title: `Evergreen Workshop ${RUN}`, shortdescription: 'seeded evergreen',
+      workshopStartDate: ago(30), workshopEndDate: ago(1),
+      registrationStartDate: ago(40), registrationEndDate: ago(31),
+    },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_ev_ch0`, heading: 'Evergreen Module', subheading: 'One',
+      challenges: [{ type: 'video', challengeid: `${RUN}_ev_ch0_s0`, heading: 'Evergreen Video', status: '' }],
+    }],
+    ...tag,
+  });
+
+  const pwActive = db.collection('participant workshop').doc(wsEvergreenIds.PW_ACTIVE);
+  const pwLapsed = db.collection('participant workshop').doc(wsEvergreenIds.PW_LAPSED);
+
+  // Both enrolled long enough ago to sit past workshopDays, which is what puts them in the
+  // Completed/Extended reckoning rather than a day bucket.
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_ACTIVE).set({
+    docid: wsEvergreenIds.ENR_ACTIVE, profileid: wsProfileIds.p0, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwActive, enrollmentdate: ago(20), ...tag,
+  });
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_LAPSED).set({
+    docid: wsEvergreenIds.ENR_LAPSED, profileid: wsProfileIds.p1, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwLapsed, enrollmentdate: ago(20), ...tag,
+  });
+
+  const pwBase = {
+    workshopref: wsRef, challenges: [], ...tag,
+  };
+  await pwActive.set({
+    docid: wsEvergreenIds.PW_ACTIVE, profileid: wsProfileIds.p0, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(WS_EVERGREEN_DAYS_LEFT), created: ago(2) }],
+    },
+  });
+  await pwLapsed.set({
+    docid: wsEvergreenIds.PW_LAPSED, profileid: wsProfileIds.p1, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(-3), created: ago(10) }],
+    },
+  });
+}
+
+/** Remove the evergreen world (teardown only). */
+export async function clearEvergreenExtended(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('workshopconfiguration', wsEvergreenIds.WORKSHOP),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_ACTIVE),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_LAPSED),
+    drop('participant workshop', wsEvergreenIds.PW_ACTIVE),
+    drop('participant workshop', wsEvergreenIds.PW_LAPSED),
+  ]);
+}
