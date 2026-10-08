@@ -727,3 +727,58 @@ test.describe('Workshop dashboard — Communication dialog hands off to the side
     await expect(dialogs, 'WDC-07: the dialog closes').toHaveCount(0, { timeout: 15_000 });
   });
 });
+
+// =============================================================================================
+// WS-48 — the side panel's name search.
+//
+// The panel is opened from the Exist Users Enrolled card, which lists p0 and p1. Their metadata
+// names are the actor emails (CF-owned — see wsMetaNames), so "participant0" picks out exactly one.
+//
+// NOTE on typing: this input is bound with [(ngModel)] + (ngModelChange), NOT (keyup). ngModel
+// listens to the `input` event, which fill() dispatches — so fill() is correct here. Do not
+// "fix" it to pressSequentially; that is only needed for the (keyup)-bound boxes on this screen.
+// =============================================================================================
+test.describe('Workshop dashboard — side panel name search', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await installWshopStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'workshop dashboard side panel: no fatal console errors'));
+
+  test('WS-48 the side panel search narrows the list by name, and clearing restores it', async ({ page }) => {
+    expect(wsMetaNames.p0, 'WS-48: the p0 name constant resolves').toBeTruthy();
+    expect(wsMetaNames.p1, 'WS-48: the p1 name constant resolves').toBeTruthy();
+
+    await openDashboard(page);
+    await page.getByTestId('wdash-exist-users-card').click();
+
+    const cards = page.locator('.participant-panel mat-card.participant-card');
+    await expect(cards, 'WS-48: both existing enrollees are listed').toHaveCount(2, { timeout: 30_000 });
+    // The names arrive from a separate metadata query that lags on a slow emulator. Searching before
+    // they render would legitimately match nothing, so wait for the name to actually be on screen.
+    await expect(cards.filter({ hasText: wsMetaNames.p0 }), 'WS-48: p0 name has rendered')
+      .toHaveCount(1, { timeout: 60_000 });
+
+    const search = page.getByTestId('wd-side-search-85');
+    await expect(search, 'WS-48: the search box renders in the panel').toBeVisible({ timeout: 15_000 });
+
+    // [ASSERT] a term unique to one person leaves only that person.
+    await search.fill('participant0');
+    await expect(cards, 'WS-48: only the matching person remains').toHaveCount(1, { timeout: 15_000 });
+    await expect(cards.first(), 'WS-48: and it is the right one').toContainText(wsMetaNames.p0);
+    await expect(cards.filter({ hasText: wsMetaNames.p1 }), 'WS-48: the other is filtered out').toHaveCount(0);
+
+    // [ASSERT] negative control — a term in nobody's name empties the list, so the filter is really
+    // running and the single match above was not just the list sitting still.
+    await search.fill('nosuchperson-zzz');
+    await expect(cards, 'WS-48: a term nobody matches empties the panel').toHaveCount(0, { timeout: 15_000 });
+
+    // [ASSERT] the clear button puts everyone back.
+    await page.getByTestId('wd-side-search-clear-86').click();
+    await expect(cards, 'WS-48: clearing the search restores both').toHaveCount(2, { timeout: 15_000 });
+    await expect(search, 'WS-48: and empties the box').toHaveValue('');
+  });
+});
