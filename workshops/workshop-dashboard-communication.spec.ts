@@ -776,9 +776,47 @@ test.describe('Workshop dashboard — side panel name search', () => {
     await search.fill('nosuchperson-zzz');
     await expect(cards, 'WS-48: a term nobody matches empties the panel').toHaveCount(0, { timeout: 15_000 });
 
+    // [ASSERT] the panel search is the PANEL's — the progress table behind it is untouched, even
+    // with the panel filtered down to nothing. Both lists read the same participants, so a search
+    // wired one level too high would quietly empty the table too.
+    await expect(
+      page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]'),
+      'WS-48: the progress table is not filtered by the panel search',
+    ).toHaveCount(1);
+
     // [ASSERT] the clear button puts everyone back.
     await page.getByTestId('wd-side-search-clear-86').click();
     await expect(cards, 'WS-48: clearing the search restores both').toHaveCount(2, { timeout: 15_000 });
     await expect(search, 'WS-48: and empties the box').toHaveValue('');
+  });
+
+  // ===========================================================================================
+  // WS-50 — the search does not survive into the next card's panel.
+  //
+  // Every path that opens the panel resets the search along with the filter option (15 sites in
+  // workshop-dashboard.component.ts). Without that reset, typing a name, then opening a different
+  // metric card, would show a panel filtered by a term the operator can no longer see any reason
+  // for — a list that looks empty for no visible cause. That is a quiet failure, so it gets a case.
+  // ===========================================================================================
+  test('WS-50 opening another card clears the side panel search rather than carrying it over', async ({ page }) => {
+    await openDashboard(page);
+    await page.getByTestId('wdash-exist-users-card').click();
+
+    const cards = page.locator('.participant-panel mat-card.participant-card');
+    await expect(cards, 'WS-50: the Exist panel lists both enrollees').toHaveCount(2, { timeout: 30_000 });
+
+    // Filter it down to nothing, so carrying the term over would be unmistakable.
+    const search = page.getByTestId('wd-side-search-85');
+    await search.fill('nosuchperson-zzz');
+    await expect(cards, 'WS-50: the panel is filtered to nothing').toHaveCount(0, { timeout: 15_000 });
+
+    // Open a DIFFERENT card's panel. Total Enrolled lists everyone enrolled on this workshop.
+    await page.getByTestId('wd-on-metric-click-6').click();
+
+    // [ASSERT] the box is empty and the new panel shows its people, not an empty list.
+    await expect(page.getByTestId('wd-side-search-85'), 'WS-50: the search box is cleared')
+      .toHaveValue('', { timeout: 15_000 });
+    await expect(cards, 'WS-50: the new panel is not filtered by the previous term')
+      .toHaveCount(2, { timeout: 30_000 });
   });
 });

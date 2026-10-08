@@ -367,6 +367,9 @@ test.describe('Workshops — route-mount smoke (guard admits super-role admin)',
 // Nothing else in this suite seeds an evergreen workshop — the dialog's trigger only renders when
 // evergreenWorkshop === true AND evergreenWorkshopMeta.workshopDays > 0.
 // =============================================================================================
+// KEEP THIS DESCRIBE LAST IN THE FILE. Its seeder adds three run-tagged `workshop participant
+// enrolled` docs, and WS-07 above asserts the run has exactly 2. Serial execution (workers:1) means
+// WS-07 has finished before these exist; the afterEach removes them again.
 test.describe('Workshop dashboard — evergreen Extended Participants: days remaining', () => {
   let guard: ConsoleGuard;
   test.beforeEach(async ({ page }) => {
@@ -390,11 +393,11 @@ test.describe('Workshop dashboard — evergreen Extended Participants: days rema
     // The Extended node only renders when the app actually bucketed somebody as extended.
     const openBtn = page.getByTestId('wd-open-extended-timeline-26');
     await expect(openBtn, 'WS-49: the Extended node renders for an evergreen workshop').toBeVisible({ timeout: 90_000 });
-    await expect(openBtn, 'WS-49: it counts both extended participants').toContainText('2');
+    await expect(openBtn, 'WS-49: it counts all three extended participants').toContainText('3');
     await openBtn.click();
 
     const cards = page.locator('.ext-dialog .ext-card');
-    await expect(cards, 'WS-49: both extended participants are listed').toHaveCount(2, { timeout: 30_000 });
+    await expect(cards, 'WS-49: all three extended participants are listed').toHaveCount(3, { timeout: 30_000 });
 
     // [ASSERT] the still-running extension reads the app-computed day count. The name arrives from
     // the metadata map, which lags on a slow emulator, so wait for the card before reading its pill.
@@ -408,6 +411,14 @@ test.describe('Workshop dashboard — evergreen Extended Participants: days rema
     await expect(lapsedCard, 'WS-49: the lapsed participant has a card').toHaveCount(1);
     await expect(lapsedCard.getByTestId('et-days-left-5'), 'WS-49: a lapsed extension reads Expired')
       .toHaveText('Expired', { timeout: 30_000 });
+
+    // [ASSERT] the boundary: an extension ending TODAY at 23:59 reads "Last day", not "0 days left".
+    // This is the case the whole calendar-day rule exists for — an elapsed-hours count would call
+    // most of someone's final day zero, telling them access had run out while it had not.
+    const lastDayCard = cards.filter({ hasText: wsMetaNames.p2 });
+    await expect(lastDayCard, 'WS-49: the last-day participant has a card').toHaveCount(1);
+    await expect(lastDayCard.getByTestId('et-days-left-5'), 'WS-49: today reads "Last day", never "0 days left"')
+      .toHaveText('Last day', { timeout: 30_000 });
 
     // [ASSERT] the pill is not just text — it is styled differently for the two states, which is
     // what makes the list scannable. Active is not the expired grey.

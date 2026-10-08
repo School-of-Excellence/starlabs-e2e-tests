@@ -903,8 +903,10 @@ export const wsEvergreenIds = {
   WORKSHOP: `${RUN}_W_evergreen`,
   ENR_ACTIVE: `${RUN}_ev_enr_active`,
   ENR_LAPSED: `${RUN}_ev_enr_lapsed`,
+  ENR_LASTDAY: `${RUN}_ev_enr_lastday`,
   PW_ACTIVE: `${RUN}_ev_pw_active`,
   PW_LAPSED: `${RUN}_ev_pw_lapsed`,
+  PW_LASTDAY: `${RUN}_ev_pw_lastday`,
 };
 
 /** Days out the seeded extension runs — the number the app must render as "N days left". */
@@ -920,6 +922,13 @@ export const WS_EVERGREEN_DAYS_LEFT = 12;
  *
  * The dialog's trigger only renders when `evergreenWorkshop === true` AND
  * `evergreenWorkshopMeta.workshopDays > 0` (computeEvergreenDayDistribution), so both are set.
+ *
+ * ORDERING CONSTRAINT — read this before moving the case that calls it. These three run-tagged
+ * `workshop participant enrolled` docs are counted by WS-07's precondition, which asserts the run
+ * has EXACTLY 2 of them. That holds only because the evergreen describe is declared last in
+ * workshop-dashboard.spec.ts and the suite runs serially (workers:1, fullyParallel:false), so WS-07
+ * has already run by the time these exist, and clearEvergreenExtended() removes them afterwards.
+ * Moving the describe above WS-07 would break it with a confusing "expected 2, got 5".
  */
 export async function seedEvergreenExtended(): Promise<void> {
   const admin = seed.initAdmin();
@@ -955,6 +964,7 @@ export async function seedEvergreenExtended(): Promise<void> {
 
   const pwActive = db.collection('participant workshop').doc(wsEvergreenIds.PW_ACTIVE);
   const pwLapsed = db.collection('participant workshop').doc(wsEvergreenIds.PW_LAPSED);
+  const pwLastDay = db.collection('participant workshop').doc(wsEvergreenIds.PW_LASTDAY);
 
   // Both enrolled long enough ago to sit past workshopDays, which is what puts them in the
   // Completed/Extended reckoning rather than a day bucket.
@@ -965,6 +975,10 @@ export async function seedEvergreenExtended(): Promise<void> {
   await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_LAPSED).set({
     docid: wsEvergreenIds.ENR_LAPSED, profileid: wsProfileIds.p1, status: 'enrolled',
     workshopref: wsRef, participantworkshopref: pwLapsed, enrollmentdate: ago(20), ...tag,
+  });
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_LASTDAY).set({
+    docid: wsEvergreenIds.ENR_LASTDAY, profileid: wsProfileIds.p2, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwLastDay, enrollmentdate: ago(20), ...tag,
   });
 
   const pwBase = {
@@ -982,6 +996,14 @@ export async function seedEvergreenExtended(): Promise<void> {
       extendworkshop: [{ extenduntill: endOfDay(-3), created: ago(10) }],
     },
   });
+  // Ends TODAY at 23:59 — the boundary the day count is most likely to get wrong, and the reason
+  // the rule counts calendar days rather than elapsed hours. Must read "Last day", never "0 days".
+  await pwLastDay.set({
+    docid: wsEvergreenIds.PW_LASTDAY, profileid: wsProfileIds.p2, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(0), created: ago(1) }],
+    },
+  });
 }
 
 /** Remove the evergreen world (teardown only). */
@@ -993,7 +1015,9 @@ export async function clearEvergreenExtended(): Promise<void> {
     drop('workshopconfiguration', wsEvergreenIds.WORKSHOP),
     drop('workshop participant enrolled', wsEvergreenIds.ENR_ACTIVE),
     drop('workshop participant enrolled', wsEvergreenIds.ENR_LAPSED),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_LASTDAY),
     drop('participant workshop', wsEvergreenIds.PW_ACTIVE),
     drop('participant workshop', wsEvergreenIds.PW_LAPSED),
+    drop('participant workshop', wsEvergreenIds.PW_LASTDAY),
   ]);
 }
