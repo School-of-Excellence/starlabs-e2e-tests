@@ -528,11 +528,26 @@ test.describe('Workshops — eiflix operations dashboard: Total Content Consumpt
     await expect(section.getByTestId('eif-rep-cons-web-total'),
       'WS-53: with nothing new, the web total equals the existing figure').toHaveText(wsConsumptionText.webExisting);
 
+    // ---- the `from` split: a SECOND cut of the same totals ----
+    // App: one eiflixworkshop row (3661s) and one eiflixcontent row (7322s), so the two rows differ
+    // and a swapped mapping would be obvious. 'EiflixWorkshop' is mixed case on purpose.
+    await expect(section.getByTestId('eif-rep-cons-app-workshop'), 'WS-53: app workshop time')
+      .toHaveText(wsConsumptionText.appWorkshop);
+    await expect(section.getByTestId('eif-rep-cons-app-library'), 'WS-53: app library time')
+      .toHaveText(wsConsumptionText.appLibrary);
+    // Web has only a workshop row, so library must be exactly zero — not simply "some other number".
+    await expect(section.getByTestId('eif-rep-cons-web-workshop'), 'WS-53: web workshop time')
+      .toHaveText(wsConsumptionText.webWorkshop);
+    await expect(section.getByTestId('eif-rep-cons-web-library'), 'WS-53: no web library time today')
+      .toHaveText(wsConsumptionText.webLibrary);
+
     // [ASSERT] another platform's 99999 seconds (27+ hours) leaks into neither surface. If the
     // platform filter were dropped it would dominate both totals and be impossible to miss.
-    for (const tid of ['eif-rep-cons-app-total', 'eif-rep-cons-web-total']) {
-      await expect(section.getByTestId(tid), 'WS-53: another platform never contributes')
-        .not.toContainText('27 hours');
-    }
+    // Its `from` is eiflixworkshop, so it would also poison the workshop rows if the platform
+    // filter were dropped. Literal ids — the gate's scanner cannot read a loop variable.
+    await expect(section.getByTestId('eif-rep-cons-app-total'), 'WS-53: another platform never contributes to the app total').not.toContainText('27 hours');
+    await expect(section.getByTestId('eif-rep-cons-web-total'), 'WS-53: nor to the web total').not.toContainText('27 hours');
+    await expect(section.getByTestId('eif-rep-cons-app-workshop'), 'WS-53: nor to the app workshop row').not.toContainText('27 hours');
+    await expect(section.getByTestId('eif-rep-cons-web-workshop'), 'WS-53: nor to the web workshop row').not.toContainText('27 hours');
   });
 });

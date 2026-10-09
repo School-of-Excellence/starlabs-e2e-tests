@@ -1133,6 +1133,12 @@ export const wsConsumptionText = {
   appTotal: '3 hours 03 minutes 03 seconds',
   webExisting: '1 hours 02 minutes 03 seconds',
   webNew: '0 hours 00 minutes 00 seconds',
+  // `from` split. The app's two rows are eiflixworkshop (3661s) and eiflixcontent (7322s); the
+  // web's single row is eiflixworkshop, so web library must stay at zero.
+  appWorkshop: '1 hours 01 minutes 01 seconds',
+  appLibrary: '2 hours 02 minutes 02 seconds',
+  webWorkshop: '1 hours 02 minutes 03 seconds',
+  webLibrary: '0 hours 00 minutes 00 seconds',
 };
 
 /**
@@ -1153,16 +1159,19 @@ export async function seedConsumption(): Promise<void> {
   const T = admin.firestore.Timestamp;
   const today = T.fromDate(new Date());
   const tag = { testrunid: RUN, _testdata: true };
-  const put = (id: string, platform_name: string, totaltimespend: number, profileid: string) =>
+  const put = (id: string, platform_name: string, totaltimespend: number, profileid: string, from?: string) =>
     db.collection('content analytics').doc(id).set({
       docid: id, platform_name, totaltimespend, profileid, type: 'eiflixcontent',
+      ...(from ? { from } : {}),
       videoid: `${RUN}_vid_cons`, videoname: `TEST_VID_CONS_${RUN}`, logdate: today, ...tag,
     });
   await Promise.all([
-    put(wsConsumptionIds.appExisting, 'eiflixapp', wsConsumptionSeconds.appExisting, wsProfileIds.p0),
-    put(wsConsumptionIds.appNew, 'EiflixApp', wsConsumptionSeconds.appNew, wsAddIds.NU_A),
-    put(wsConsumptionIds.webExisting, 'Eiflixweb', wsConsumptionSeconds.webExisting, wsProfileIds.p0),
-    put(wsConsumptionIds.otherPlatform, 'SolarVoice', 99999, wsProfileIds.p1),
+    // `from` is set so the workshop/library split has distinct, non-equal figures to prove, and
+    // EiflixWorkshop is mixed-case for the same reason EiflixApp is.
+    put(wsConsumptionIds.appExisting, 'eiflixapp', wsConsumptionSeconds.appExisting, wsProfileIds.p0, 'EiflixWorkshop'),
+    put(wsConsumptionIds.appNew, 'EiflixApp', wsConsumptionSeconds.appNew, wsAddIds.NU_A, 'eiflixcontent'),
+    put(wsConsumptionIds.webExisting, 'Eiflixweb', wsConsumptionSeconds.webExisting, wsProfileIds.p0, 'eiflixworkshop'),
+    put(wsConsumptionIds.otherPlatform, 'SolarVoice', 99999, wsProfileIds.p1, 'eiflixworkshop'),
   ]);
 }
 
