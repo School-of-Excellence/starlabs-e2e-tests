@@ -377,6 +377,9 @@ async function seedJourney() {
   //    component adds a FormControl for it). JP-16 asserts the Text field's fieldname renders.
   await db.collection('delivery forms').doc(ID.DF1).set({
     docid: ID.DF1, formname: `Test Delivery Form ${TESTRUNID}`,
+    // JP-33: a TWO-LINE description — the formtemplate must keep the line break (white-space: pre-line,
+    // mahalakshmi 6399b868); with normal white-space the browser collapses it into one line.
+    formdescription: `Description line one ${TESTRUNID}\nDescription line two ${TESTRUNID}`,
     formarray: [
       { type: 'label', fieldname: `Onboarding Questionnaire ${TESTRUNID}`, fielddescription: 'Seeded section.' },
       { type: 'Text', fieldname: `Participant Goal ${TESTRUNID}`, required: false },

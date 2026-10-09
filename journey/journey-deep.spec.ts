@@ -524,4 +524,17 @@ test.describe('Journey DEEP — formtemplate render (form built from delivery-fo
       'JP-16: the app renders the seeded form field label from the delivery-forms formarray')
       .toBeVisible({ timeout: 30_000 });
   });
+
+  // JP-33 — the form description keeps its line breaks and sits left-aligned (mahalakshmi 6399b868, 2026-10-08).
+  // The seed's description holds a newline; the APP decides whether it survives rendering (white-space:
+  // pre-line keeps it in innerText, normal white-space collapses it to a space).
+  test('JP-33 formtemplate shows a multi-line form description with its line break, left-aligned', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto(`/formtemplate?id=${journeyIds.DF1}`, { waitUntil: 'domcontentloaded' });
+    const desc = page.locator('.form-description');
+    await expect(desc, 'JP-33: the seeded description renders').toContainText('Description line one', { timeout: 30_000 });
+    const text = await desc.innerText();
+    expect(text, 'JP-33: the line break survives rendering (not collapsed to a space)').toMatch(/Description line one \S+\nDescription line two/);
+    expect(await desc.evaluate((el) => getComputedStyle(el).textAlign), 'JP-33: left-aligned').toBe('left');
+  });
 });
