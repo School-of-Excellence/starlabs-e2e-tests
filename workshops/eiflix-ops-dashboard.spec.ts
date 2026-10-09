@@ -23,6 +23,7 @@ import {
   seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
   seedReportLoginLogs, clearReportLoginLogs, seedConsumption, clearConsumption, wsConsumptionText,
   seedPurchases, clearPurchases, countNewUserDataInWindow, countCapturedPayments,
+  countWebUsersFromAnalytics,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -395,9 +396,13 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Report', () => 
     await seedWebLoginLogs();
     await seedUserTypeLoginLogs();
     await seedReportLoginLogs();
+    // Web App Users moved to `content analytics` (platform_name 'Eiflixweb') on 2026-10-09, so
+    // this describe needs analytics rows too — loginlog no longer feeds that figure.
+    await seedConsumption();
     await installWshopStubs(page);
   });
   test.afterEach(async () => {
+    await clearConsumption();
     await clearReportLoginLogs();
     await clearUserTypeLoginLogs();
     await clearWebLoginLogs();
@@ -444,11 +449,19 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Report', () => 
     await expect(section.getByTestId('eif-rep-mobile-total-new'), 'WS-52: one new user across mobile').toHaveText('1');
     await expect(section.getByTestId('eif-rep-mobile-total-existing'), 'WS-52: three existing across mobile').toHaveText('3');
 
-    // ---- web is counted on its own ----
-    // p0 is in the Android count AND here. Collapsing the two would hide exactly that overlap.
-    await expect(section.getByTestId('eif-rep-web-total'), 'WS-52: one person used the web today').toHaveText('1');
-    await expect(section.getByTestId('eif-rep-web-existing'), 'WS-52: and they are an existing user').toHaveText('1');
-    await expect(section.getByTestId('eif-rep-web-new'), 'WS-52: no new web users today').toHaveText('0');
+    // ---- web is counted on its own, and now from CONTENT ANALYTICS ----
+    // Changed 2026-10-09: this figure comes from `content analytics` (platform_name 'Eiflixweb'),
+    // not from loginlog's device_os. Asserted against an independent count by the test, because
+    // that collection is shared with other runs — a literal number would be luck.
+    // p0 is in the Android count AND here; collapsing the two would hide exactly that overlap.
+    const webUsers = await countWebUsersFromAnalytics(1);
+    expect(webUsers, 'WS-52: the seeded Eiflixweb row is in the oracle').toBeGreaterThanOrEqual(1);
+    await expect(section.getByTestId('eif-rep-web-total'), 'WS-52: web users match the independent count')
+      .toHaveText(String(webUsers));
+    // The seeded web row belongs to p0, who has participant metadata → existing, never new.
+    await expect(section.getByTestId('eif-rep-web-new'), 'WS-52: no NEW web users today').toHaveText('0');
+    await expect(section.getByTestId('eif-rep-web-existing'), 'WS-52: so all of them are existing')
+      .toHaveText(String(webUsers));
 
     // ---- the range control widens the population ----
     // 7D adds p0's 3-day-old Android row — p0 is already counted today, so Android must NOT grow.

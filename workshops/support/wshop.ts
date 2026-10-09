@@ -1314,3 +1314,27 @@ export async function countCapturedPayments(days: number): Promise<number> {
   });
   return n;
 }
+
+/**
+ * Independent oracle for Web App Users, which moved from `loginlog` to `content analytics`
+ * (platform_name 'Eiflixweb') on 2026-10-09.
+ *
+ * Counted by the TEST over the whole collection, because the shared emulator also holds other
+ * runs' analytics rows — the same reason WS-54 stopped asserting literal counts.
+ */
+export async function countWebUsersFromAnalytics(days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('content analytics').get();
+  const ids = new Set<string>();
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (String(data['platform_name'] ?? '').trim().toLowerCase() !== 'eiflixweb') return;
+    if (!(Number(data['totaltimespend']) > 0)) return;
+    const pid = String(data['profileid'] ?? '').trim();
+    if (!pid) return;
+    const at = asDate(data['logdate']);
+    if (at && at >= start && at <= end) ids.add(pid);
+  });
+  return ids.size;
+}
