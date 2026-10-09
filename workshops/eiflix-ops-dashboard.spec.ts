@@ -20,6 +20,7 @@ import { test, expect } from '@playwright/test';
 import {
   installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
   seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
+  seedReportLoginLogs, clearReportLoginLogs,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -364,5 +365,92 @@ test.describe('Workshops — eiflix operations dashboard: web sign-ins on the ap
     await page.getByTestId('eif-logs-os-option').filter({ hasText: 'web' }).click();
     await expect(rows, 'WS-51: filtering to web leaves exactly the web sign-in').toHaveCount(1, { timeout: 15_000 });
     await expect(rows.first()).toContainText(wsWebLoginVersions.web);
+  });
+});
+
+
+// =============================================================================================
+// WS-52 — EiFlix Report: unique users per surface, split existing/new.
+//
+// Every number here is the APP counting a population the seed arranged; the case asserts the
+// counts, never writes them. The seed is built so each assertion can actually fail:
+//
+//   android      p0, p1, NU_A         → 3   NU_A is the only NEW user (new_user_data, not moved)
+//   ios          p1, NU_C             → 2   NU_C IS in new_user_data but movedtoexist:true → EXISTING
+//   mobile total p0, p1, NU_A, NU_C   → 4   NOT 5 — p1 is on both phones, so the union dedupes
+//   web          p0                   → 1   p0 is on Android AND web, counted in BOTH sections
+//
+// The mobile total is the one that matters: with one surface per person the union and the sum
+// agree and a broken dedup passes, so p1 is deliberately on both.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: EiFlix Report', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedLoginLogs();
+    await seedWebLoginLogs();
+    await seedUserTypeLoginLogs();
+    await seedReportLoginLogs();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearReportLoginLogs();
+    await clearUserTypeLoginLogs();
+    await clearWebLoginLogs();
+    await clearLoginLogs();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-52 the report counts unique people per surface, dedupes the mobile total, and keeps web separate', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-report-section');
+    await expect(section, 'WS-52: the report section renders').toBeVisible({ timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-range-today'), 'WS-52: it opens on Today')
+      .toHaveAttribute('aria-pressed', 'true');
+
+    // ---- mobile, per OS ----
+    await expect(section.getByTestId('eif-rep-android-total'), 'WS-52: three people signed in on Android today')
+      .toHaveText('3', { timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-android-new'), 'WS-52: one of them is a new user').toHaveText('1');
+    await expect(section.getByTestId('eif-rep-android-existing'), 'WS-52: the other two are existing').toHaveText('2');
+
+    await expect(section.getByTestId('eif-rep-ios-total'), 'WS-52: two people signed in on iOS today').toHaveText('2');
+    // NU_C has a new_user_data record but movedtoexist:true, so they are EXISTING — the subtle half
+    // of the rule, and the one a naive "has a new_user_data doc" check would get wrong.
+    await expect(section.getByTestId('eif-rep-ios-new'), 'WS-52: a moved-to-paid user is NOT new').toHaveText('0');
+    await expect(section.getByTestId('eif-rep-ios-existing'), 'WS-52: both iOS people are existing').toHaveText('2');
+
+    // ---- the mobile total dedupes ----
+    // Android 3 + iOS 2 = 5, but p1 used both phones, so the unique total is 4.
+    await expect(section.getByTestId('eif-rep-mobile-total-count'),
+      'WS-52: the mobile total is the UNION (4), not the sum (5)').toHaveText('4');
+    await expect(section.getByTestId('eif-rep-mobile-total-new'), 'WS-52: one new user across mobile').toHaveText('1');
+    await expect(section.getByTestId('eif-rep-mobile-total-existing'), 'WS-52: three existing across mobile').toHaveText('3');
+
+    // ---- web is counted on its own ----
+    // p0 is in the Android count AND here. Collapsing the two would hide exactly that overlap.
+    await expect(section.getByTestId('eif-rep-web-total'), 'WS-52: one person used the web today').toHaveText('1');
+    await expect(section.getByTestId('eif-rep-web-existing'), 'WS-52: and they are an existing user').toHaveText('1');
+    await expect(section.getByTestId('eif-rep-web-new'), 'WS-52: no new web users today').toHaveText('0');
+
+    // ---- the range control widens the population ----
+    // 7D adds p0's 3-day-old Android row — p0 is already counted today, so Android must NOT grow.
+    await section.getByTestId('eif-rep-range-7d').click();
+    await expect(section.getByTestId('eif-rep-android-total'),
+      'WS-52: 7D adds an older row for someone already counted, so the unique count holds at 3')
+      .toHaveText('3', { timeout: 30_000 });
+
+    // 30D adds p2 on iOS (20 days ago) — a person not seen today, so iOS grows by exactly one.
+    await section.getByTestId('eif-rep-range-30d').click();
+    await expect(section.getByTestId('eif-rep-ios-total'), 'WS-52: 30D brings in one more iOS person')
+      .toHaveText('3', { timeout: 30_000 });
+    await expect(section.getByTestId('eif-rep-mobile-total-count'), 'WS-52: and the mobile total follows')
+      .toHaveText('5');
   });
 });

@@ -1070,3 +1070,39 @@ export async function clearWebLoginLogs(): Promise<void> {
   await Promise.all(Object.values(wsWebLoginIds).map(id =>
     db.collection('loginlog').doc(id).delete().catch(() => undefined)));
 }
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: unique users per surface.
+// =================================================================================================
+
+export const wsReportLoginIds = { p1Android: `${RUN}_ll_today_p1_android` };
+
+/**
+ * PRECONDITION for the report's MOBILE TOTAL. The other seeders give each person one surface, so
+ * the union and the sum happen to agree and a broken dedup would pass. This puts p1 — who already
+ * has an iOS sign-in today — on Android as well, so Android + iOS is 5 while the true unique total
+ * is 4. Only correct deduplication produces 4.
+ *
+ * Run alongside seedLoginLogs() + seedWebLoginLogs() + seedUserTypeLoginLogs(); today then holds:
+ *   android      p0, p1, NU_A              → 3  (NU_A is the one NEW user)
+ *   ios          p1, NU_C                  → 2  (NU_C has movedtoexist:true, so it is EXISTING)
+ *   mobile total p0, p1, NU_A, NU_C        → 4  (NOT 5)
+ *   web          p0                        → 1  (p0 is on Android AND web — counted in both)
+ */
+export async function seedReportLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('loginlog').doc(wsReportLoginIds.p1Android).set({
+    docid: wsReportLoginIds.p1Android, app: 'EiFlix', profileid: wsProfileIds.p1,
+    date: T.fromDate(new Date()), device_os: 'android', current_version: '5.0.0',
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** Undo seedReportLoginLogs. */
+export async function clearReportLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('loginlog').doc(wsReportLoginIds.p1Android)
+    .delete().catch(() => undefined);
+}
