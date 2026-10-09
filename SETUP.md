@@ -128,8 +128,27 @@ Three things the first run will stop on if the workspace is not fully wired — 
 | Error | Fix |
 |---|---|
 | `environment.emulator.ts path ... does not exist` | `APP_PATH=<app> bash ci/setup-emulator-config.sh` (generates it; gitignored) |
-| `missing .../starlabs-cloud-function/functions/index.emulator.js` | clone `School-of-Excellence/starlabs-cloud-function` and symlink it into the hub root (see §1) |
+| `missing .../starlabs-cloud-function/functions/index.emulator.js` | clone `School-of-Excellence/starlabs-cloud-function`, symlink it into the hub root (see §1), then do **both** of the two steps below |
 | `browserType.launch: Executable doesn't exist` | `npx playwright install chromium` |
+
+**The cloud-function checkout needs two things a plain clone does not give you**, and the emulator
+only *warns* about them — it boots anyway, with triggers silently not running, so your local result
+can differ from CI without any error:
+
+```bash
+cd <cf repo>
+git fetch --depth 1 origin development && git checkout -B development FETCH_HEAD   # NOT main
+cd functions && npm install        # or: Error parsing triggers: Cannot find module 'firebase-admin'
+```
+
+Watch the boot output for these two lines — if either appears, the triggers are **not** loaded:
+```
+⚠️  CF repo is on 'main' (expected 'development'). Triggers may differ.
+⬢  functions: Failed to load function definition from source: ... Cannot find module 'firebase-admin'
+```
+A clean boot prints neither. (`functions/package.json` gets its `main` swapped to
+`index.emulator.js` during a run and restored on a clean exit; if a run is interrupted, discard that
+one-line diff — the script re-applies it next time.)
 
 **Why this section exists:** on 2026-10-08 several features' specs were written and pushed without ever
 being executed, because `java -version` failed and that was taken to mean the emulator could not run
