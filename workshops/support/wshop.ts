@@ -1021,3 +1021,52 @@ export async function clearEvergreenExtended(): Promise<void> {
     drop('participant workshop', wsEvergreenIds.PW_LASTDAY),
   ]);
 }
+
+// =================================================================================================
+// 2026-10-09 — EiFlix App Logs: web sign-ins (`eiflixweb: true`) join the app sign-ins.
+// =================================================================================================
+
+export const wsWebLoginIds = {
+  webToday: `${RUN}_ll_today_web`,
+  webFlagFalse: `${RUN}_ll_today_webfalse`,
+};
+
+/** The version strings WS-51 identifies its rows by — unique, so no other seed row collides. */
+export const wsWebLoginVersions = { web: '4.0.0', notWeb: '8.8.8' };
+
+/**
+ * PRECONDITION for the web-login rows, kept SEPARATE from seedLoginLogs() because WS-31 asserts
+ * exact tallies off that seed ("2 of 2 unique people", four rows in 30D, "1–4 of 4").
+ *
+ *   webToday     — `eiflixweb: true`, NO `app` field at all (how the web client really writes it),
+ *                  and a `device_os` of 'android' on purpose: the table must still read 'web',
+ *                  because the flag says where the session happened and the other field is stale.
+ *   webFlagFalse — another product WITH `eiflixweb: false`. The sharp negative control for this
+ *                  change: a present-but-false flag must not let a non-EiFlix row onto the table.
+ */
+export async function seedWebLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const now = T.fromDate(new Date());
+  const put = (id: string, data: any) =>
+    db.collection('loginlog').doc(id).set({ docid: id, ...data, testrunid: RUN, _testdata: true });
+  await Promise.all([
+    put(wsWebLoginIds.webToday, {
+      eiflixweb: true, profileid: wsProfileIds.p0, date: now,
+      device_os: 'android', current_version: wsWebLoginVersions.web,
+    }),
+    put(wsWebLoginIds.webFlagFalse, {
+      app: 'SolarVoice', eiflixweb: false, profileid: wsProfileIds.p1, date: now,
+      device_os: 'ios', current_version: wsWebLoginVersions.notWeb,
+    }),
+  ]);
+}
+
+/** Undo seedWebLoginLogs. */
+export async function clearWebLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsWebLoginIds).map(id =>
+    db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}

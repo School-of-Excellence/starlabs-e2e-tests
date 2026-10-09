@@ -19,6 +19,7 @@
 import { test, expect } from '@playwright/test';
 import {
   installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
+  seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -81,11 +82,11 @@ test.describe('Workshops — eiflix operations dashboard (real UI, anti-circular
 });
 
 // =============================================================================================
-// WS-31 — EiFlix Mobile App Logs: `loginlog` by date range, app == 'EiFlix', name/OS filters,
+// WS-31 — EiFlix App Logs: `loginlog` by date range, app == 'EiFlix', name/OS filters,
 // search, sort, paging. Preconditions in seedLoginLogs() (six known documents); every assertion is
 // on what the APP rendered from them. Names are the CF-owned metadata names (actor emails).
 // =============================================================================================
-test.describe('Workshops — eiflix operations dashboard: EiFlix Mobile App Logs', () => {
+test.describe('Workshops — eiflix operations dashboard: EiFlix App Logs', () => {
   test.beforeEach(async ({ page }) => {
     test.setTimeout(180_000);
     await alignWorkshopMetadataNames();
@@ -290,5 +291,78 @@ test.describe('Workshops — eiflix operations dashboard: app log user-type filt
     await expect(rowFor(wsAddNames.nuAlpha), 'WS-45: Clear restores the new user').toHaveCount(1, { timeout: 30_000 });
     await expect(rowFor(wsMetaNames.p0), 'WS-45: Clear restores the participants').toHaveCount(1);
     await expect(section.getByTestId('eif-logs-clear'), 'WS-45: no filters left to clear').toHaveCount(0);
+  });
+});
+
+
+// =============================================================================================
+// WS-51 — EiFlix App Logs now carry WEB sign-ins too.
+//
+// The apps record `app: 'EiFlix'`; the web client records the boolean `eiflixweb: true` and no
+// `app` field at all. Both are EiFlix logins and both belong on this table. Its own describe and
+// seeder: WS-31 asserts exact tallies off seedLoginLogs, so these extra rows must not exist while
+// it runs.
+//
+// The two seeded rows are chosen to be falsifiable rather than merely present:
+//   • the web row carries device_os 'android' — so "reads web" can only pass if the flag WINS
+//     over the stored field, not because the row happened to say web already;
+//   • the control is another product with `eiflixweb: false` — a present-but-false flag, which a
+//     truthy check would wrongly admit.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: web sign-ins on the app logs', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedLoginLogs();
+    await seedWebLoginLogs();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearWebLoginLogs();
+    await clearLoginLogs();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-51 a web sign-in is listed and reads Device OS "web"; a false flag is still excluded', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-logs-section');
+    await expect(section, 'WS-51: the logs section renders').toBeVisible({ timeout: 60_000 });
+
+    // [ASSERT] the section is no longer called "Mobile".
+    await expect(section, 'WS-51: the heading drops "Mobile"').toContainText('EiFlix App Logs');
+    await expect(section, 'WS-51: and does not still say Mobile').not.toContainText('Mobile App Logs');
+
+    const rows = section.getByTestId('eif-logs-row');
+    const webRow = rows.filter({ hasText: wsWebLoginVersions.web });
+    await expect(webRow, 'WS-51: the web sign-in is listed although it has no app field')
+      .toHaveCount(1, { timeout: 60_000 });
+
+    // [ASSERT] the load-bearing one: the row's stored device_os is 'android', so reading 'web'
+    // proves the eiflixweb flag won rather than the field already saying web.
+    await expect(webRow.first(), 'WS-51: a web sign-in reads Device OS "web"').toContainText('web');
+    await expect(webRow.first(), 'WS-51: and not the stale stored device_os').not.toContainText('android');
+
+    // [ASSERT] a present-but-FALSE flag on another product stays out — a truthy check would let
+    // this through, and so would dropping the app check altogether.
+    await expect(
+      rows.filter({ hasText: wsWebLoginVersions.notWeb }),
+      'WS-51: eiflixweb:false on another product is still excluded',
+    ).toHaveCount(0);
+    // The original SolarVoice control (no flag at all) is still excluded too.
+    await expect(rows.filter({ hasText: '9.9.9' }), 'WS-51: a plain other-product row is excluded').toHaveCount(0);
+
+    // [ASSERT] 'web' is offered by the Device OS filter, which is built from the loaded rows.
+    await section.getByTestId('eif-logs-os-filter').click();
+    await expect(page.getByTestId('eif-logs-os-option').filter({ hasText: 'web' }),
+      'WS-51: the OS filter offers web').toHaveCount(1, { timeout: 15_000 });
+    await page.getByTestId('eif-logs-os-option').filter({ hasText: 'web' }).click();
+    await expect(rows, 'WS-51: filtering to web leaves exactly the web sign-in').toHaveCount(1, { timeout: 15_000 });
+    await expect(rows.first()).toContainText(wsWebLoginVersions.web);
   });
 });
