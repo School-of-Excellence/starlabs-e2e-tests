@@ -414,6 +414,15 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Report', () => 
     await expect(section.getByTestId('eif-rep-range-today'), 'WS-52: it opens on Today')
       .toHaveAttribute('aria-pressed', 'true');
 
+    // [ASSERT] the four cells render, each under the right label — nothing else checks that the
+    // Android column is actually labelled Android. Written out one per line, not looped: the
+    // readiness gate's scanner only reads LITERAL getByTestId ids and cannot see a variable.
+    await expect(section.getByTestId('eif-rep-android'), 'WS-52: the Android cell renders')
+      .toContainText('Android', { timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-ios'), 'WS-52: the iOS cell renders').toContainText('iOS');
+    await expect(section.getByTestId('eif-rep-mobile-total'), 'WS-52: the mobile Total cell renders').toContainText('Total');
+    await expect(section.getByTestId('eif-rep-web'), 'WS-52: the Web cell renders').toContainText('Web');
+
     // ---- mobile, per OS ----
     await expect(section.getByTestId('eif-rep-android-total'), 'WS-52: three people signed in on Android today')
       .toHaveText('3', { timeout: 60_000 });
