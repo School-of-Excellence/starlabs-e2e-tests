@@ -17,6 +17,7 @@
 // SIDE EFFECT (recon Risk #14): rendering this screen WRITES an `eiflixdailywatchers` rollup keyed by a
 // shared day id (ts:1227/1247). Nothing here asserts on it; teardown removes what the run created.
 import { test, expect } from '@playwright/test';
+import { readFileSync } from 'fs';
 import {
   installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
   seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
@@ -635,5 +636,54 @@ test.describe('Workshops — eiflix operations dashboard: Purchases & Signups', 
     await expect(section.getByTestId('eif-rep-joined-count'), 'WS-54: 30D signups match')
       .toHaveText(String(monthJoined));
     expect(monthJoined, 'WS-54: a wider window cannot contain fewer signups').toBeGreaterThanOrEqual(todayJoined);
+  });
+});
+
+
+// =============================================================================================
+// WS-55 — the EiFlix Report's Export button produces a real .xlsx.
+//
+// The sheet's GRID is unit-tested in the app repo against the hand-written weekly workbook. What
+// only a browser can prove is that the button is wired, the file actually downloads, and the
+// bytes are a readable workbook rather than an empty or truncated one.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: report export', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await seedConsumption();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearConsumption();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-55 Export downloads an .xlsx whose first cells match the weekly report layout', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-report-section');
+    await expect(section, 'WS-55: the report section renders').toBeVisible({ timeout: 60_000 });
+
+    const btn = section.getByTestId('eif-rep-export');
+    await expect(btn, 'WS-55: the Export button renders in the report header').toBeVisible({ timeout: 30_000 });
+    await expect(btn, 'WS-55: and is labelled').toContainText('Export');
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 60_000 });
+    await btn.click();
+    const download = await downloadPromise;
+
+    // [ASSERT] a real .xlsx lands on disk, named for the report.
+    expect(download.suggestedFilename(), 'WS-55: an .xlsx named for the report').toMatch(/^EiFlix Report .*\.xlsx$/);
+    const path = await download.path();
+    expect(path, 'WS-55: the file is written').toBeTruthy();
+    const bytes = readFileSync(path!);
+    // A .xlsx is a zip: it must start with PK, and be far larger than an empty stub.
+    expect(bytes.subarray(0, 2).toString('binary'), 'WS-55: the bytes are a zip container').toBe('PK');
+    expect(bytes.length, 'WS-55: the workbook has real content').toBeGreaterThan(2000);
   });
 });
