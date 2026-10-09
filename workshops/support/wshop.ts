@@ -1182,3 +1182,135 @@ export async function clearConsumption(): Promise<void> {
   await Promise.all(Object.values(wsConsumptionIds).map(id =>
     db.collection('content analytics').doc(id).delete().catch(() => undefined)));
 }
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: Purchases & Signups.
+// =================================================================================================
+
+export const wsPurchaseIds = {
+  nuJourneyToday: `${RUN}_nu_pur_journey`,
+  nuJoinedToday: `${RUN}_nu_pur_joined`,
+  payCaptured: `${RUN}_wpl_captured`,
+  payCapturedTwo: `${RUN}_wpl_captured2`,
+  payFailed: `${RUN}_wpl_failed`,
+  payOld: `${RUN}_wpl_old`,
+};
+
+/**
+ * PRECONDITION for Journey Purchased / New Users Joined / Masterclass Purchase.
+ *
+ * The two new_user_data rows are deliberately NOT symmetric — each carries the counted field in
+ * the window and the OTHER field far outside it. movedon and created live on the same documents,
+ * so a count that read the wrong field would otherwise still return a plausible number:
+ *
+ *   nuJourneyToday  movedon = today, created = 300 days ago  → Journey Purchased only
+ *   nuJoinedToday   created = today, movedon = 300 days ago  → New Users Joined only
+ *
+ * The payment log has three captured-status cases and two that must not count:
+ *   payCaptured / payCapturedTwo  datetime today, status 'captured'  → both count
+ *   payFailed                     datetime today, status 'failed'    → excluded by the IF
+ *   payOld                        datetime 200 days ago, 'captured'  → excluded by the WHERE
+ */
+export async function seedPurchases(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = T.fromDate(new Date());
+  const longAgo = (days: number) => {
+    const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d);
+  };
+
+  await db.collection('new_user_data').doc(wsPurchaseIds.nuJourneyToday).set({
+    docid: wsPurchaseIds.nuJourneyToday, name: `WS Journey Buyer ${RUN}`,
+    email: `journey.${RUN}@example.com`, movedon: now, created: longAgo(300), ...tag,
+  });
+  await db.collection('new_user_data').doc(wsPurchaseIds.nuJoinedToday).set({
+    docid: wsPurchaseIds.nuJoinedToday, name: `WS Fresh Joiner ${RUN}`,
+    email: `joined.${RUN}@example.com`, created: now, movedon: longAgo(300), ...tag,
+  });
+
+  const pay = (id: string, datetime: any, status: string) =>
+    db.collection('workshoppaymentlog').doc(id).set({
+      docid: id, datetime, status, profileid: wsProfileIds.p0, ...tag,
+    });
+  await Promise.all([
+    pay(wsPurchaseIds.payCaptured, now, 'captured'),
+    pay(wsPurchaseIds.payCapturedTwo, now, 'captured'),
+    pay(wsPurchaseIds.payFailed, now, 'failed'),
+    pay(wsPurchaseIds.payOld, longAgo(200), 'captured'),
+  ]);
+}
+
+/** Undo seedPurchases. */
+export async function clearPurchases(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('new_user_data', wsPurchaseIds.nuJourneyToday),
+    drop('new_user_data', wsPurchaseIds.nuJoinedToday),
+    drop('workshoppaymentlog', wsPurchaseIds.payCaptured),
+    drop('workshoppaymentlog', wsPurchaseIds.payCapturedTwo),
+    drop('workshoppaymentlog', wsPurchaseIds.payFailed),
+    drop('workshoppaymentlog', wsPurchaseIds.payOld),
+  ]);
+}
+
+/**
+ * Independent oracles for the Purchases & Signups counts.
+ *
+ * The report's numbers are over WHOLE collections, and the shared emulator holds other runs'
+ * `new_user_data` and `workshoppaymentlog` rows (the same reason WS-30 uses a floor rather than an
+ * equality). Asserting a literal count would pass or fail on whatever else happens to be seeded.
+ *
+ * So the test computes the same population itself, with the Admin SDK, and requires the app to
+ * agree. Two separate computations over one population — the test never reads the app's own number
+ * back into its expectation.
+ *
+ * The window mirrors the component's: local midnight `days - 1` days back, through end of today.
+ */
+function reportWindow(days: number): { start: Date; end: Date } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+const asDate = (v: any): Date | null => {
+  if (!v) return null;
+  if (typeof v.toDate === 'function') return v.toDate();
+  if (typeof v._seconds === 'number') return new Date(v._seconds * 1000);
+  if (typeof v.seconds === 'number') return new Date(v.seconds * 1000);
+  return null;
+};
+
+/** How many `new_user_data` docs carry `field` inside the window — counted by the TEST. */
+export async function countNewUserDataInWindow(field: 'movedon' | 'created', days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('new_user_data').get();
+  let n = 0;
+  snap.forEach((d: any) => {
+    const at = asDate((d.data() || {})[field]);
+    if (at && at >= start && at <= end) n++;
+  });
+  return n;
+}
+
+/** How many `workshoppaymentlog` docs are captured inside the window — counted by the TEST. */
+export async function countCapturedPayments(days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('workshoppaymentlog').get();
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (String(data['status'] ?? '').trim().toLowerCase() !== 'captured') return;
+    const at = asDate(data['datetime']);
+    if (at && at >= start && at <= end) n++;
+  });
+  return n;
+}

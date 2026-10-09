@@ -21,6 +21,7 @@ import {
   installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
   seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
   seedReportLoginLogs, clearReportLoginLogs, seedConsumption, clearConsumption, wsConsumptionText,
+  seedPurchases, clearPurchases, countNewUserDataInWindow, countCapturedPayments,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -549,5 +550,90 @@ test.describe('Workshops — eiflix operations dashboard: Total Content Consumpt
     await expect(section.getByTestId('eif-rep-cons-web-total'), 'WS-53: nor to the web total').not.toContainText('27 hours');
     await expect(section.getByTestId('eif-rep-cons-app-workshop'), 'WS-53: nor to the app workshop row').not.toContainText('27 hours');
     await expect(section.getByTestId('eif-rep-cons-web-workshop'), 'WS-53: nor to the web workshop row').not.toContainText('27 hours');
+  });
+});
+
+
+// =============================================================================================
+// WS-54 — EiFlix Report: Purchases & Signups.
+//
+//   Journey Purchased         new_user_data.movedon inside the window
+//   New Users Joined in EiFlix new_user_data.created inside the window
+//   Masterclass Purchase      workshoppaymentlog.datetime inside the window AND status 'captured'
+//
+// The two new_user_data rows are deliberately ASYMMETRIC — each carries the counted field today
+// and the OTHER field 300 days ago. Both fields live on the same documents, so a count that read
+// the wrong one would otherwise still return a plausible number and the test would not notice.
+//
+// The payment log separates the two filters that could be confused: a 'failed' row dated today is
+// excluded by the status IF, and a 'captured' row dated 200 days ago is excluded by the datetime
+// WHERE. Only a correct implementation of BOTH yields 2.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: Purchases & Signups', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await seedPurchases();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearPurchases();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-54 journey purchases, new signups and captured masterclass payments are counted for the window', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-report-section');
+    await expect(section, 'WS-54: the report section renders').toBeVisible({ timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-purchases'), 'WS-54: the Purchases & Signups card renders')
+      .toContainText('Purchases', { timeout: 60_000 });
+
+    // [ASSERT] the three cells render under their own labels. Literal ids — the gate's scanner
+    // cannot read one passed through a variable.
+    await expect(section.getByTestId('eif-rep-journey'), 'WS-54: the Journey Purchased cell renders')
+      .toContainText('Journey Purchased');
+    await expect(section.getByTestId('eif-rep-joined'), 'WS-54: the New Users Joined cell renders')
+      .toContainText('New Users Joined in EiFlix');
+    await expect(section.getByTestId('eif-rep-masterclass'), 'WS-54: the Masterclass Purchase cell renders')
+      .toContainText('Masterclass Purchase');
+
+    // [ASSERT] each count equals an INDEPENDENT count of the same population, made by the test with
+    // the Admin SDK. These numbers are over whole collections and the shared emulator holds other
+    // runs' rows, so a literal expectation would pass or fail on unrelated seed data — the first
+    // version of this case asserted "1" and got 4, because the base seed's own new_user_data rows
+    // are 1-3 days old and legitimately enter the 30D window. The app was right; the test was not.
+    const todayJourney = await countNewUserDataInWindow('movedon', 1);
+    const todayJoined = await countNewUserDataInWindow('created', 1);
+    const todayCaptured = await countCapturedPayments(1);
+    // The seed guarantees at least one of each, so these are not vacuously zero.
+    expect(todayJourney, 'WS-54: the seeded journey purchase is in the oracle').toBeGreaterThanOrEqual(1);
+    expect(todayJoined, 'WS-54: the seeded signup is in the oracle').toBeGreaterThanOrEqual(1);
+    expect(todayCaptured, 'WS-54: both seeded captured payments are in the oracle').toBeGreaterThanOrEqual(2);
+
+    await expect(section.getByTestId('eif-rep-journey-count'), 'WS-54: journey purchases match the independent count')
+      .toHaveText(String(todayJourney), { timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-joined-count'), 'WS-54: signups match the independent count')
+      .toHaveText(String(todayJoined));
+    // The 'failed' row dated today and the 'captured' row dated 200 days ago are excluded by two
+    // DIFFERENT mechanisms — the status IF and the datetime WHERE. The oracle applies both, so a
+    // match here means the app applied both too.
+    await expect(section.getByTestId('eif-rep-masterclass-count'), 'WS-54: captured payments match the independent count')
+      .toHaveText(String(todayCaptured));
+
+    // [ASSERT] widening the window agrees with the oracle for 30D as well — and never picks up the
+    // failed payment, which no window can admit.
+    const monthCaptured = await countCapturedPayments(30);
+    await section.getByTestId('eif-rep-range-30d').click();
+    await expect(section.getByTestId('eif-rep-masterclass-count'), 'WS-54: 30D captured payments match')
+      .toHaveText(String(monthCaptured), { timeout: 30_000 });
+    const monthJoined = await countNewUserDataInWindow('created', 30);
+    await expect(section.getByTestId('eif-rep-joined-count'), 'WS-54: 30D signups match')
+      .toHaveText(String(monthJoined));
+    expect(monthJoined, 'WS-54: a wider window cannot contain fewer signups').toBeGreaterThanOrEqual(todayJoined);
   });
 });

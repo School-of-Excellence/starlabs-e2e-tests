@@ -605,6 +605,9 @@ const SEEDED = [
   'eiflix workshop', 'eiflixhomewidgets', 'eiflixhomeseries', 'newusertags', 'new_user_data',
   // WS-39 precondition: one episode for the Add Home Series multi-select. Run-tagged.
   'episodes',
+  // WS-54 seeds run-tagged payment rows as a per-test precondition and clears them itself; this is
+  // the backstop for a run that dies before its afterEach.
+  'workshoppaymentlog',
   'classify', 'event collection', 'journey', 'bigeventmentor', 'bigeventparticipantsplan',
   'delivery forms', 'eiflixcampaign', 'workshopcampaigncalendar',
   // WS-40 audience options. Run-tagged, so other runs' tiers are untouched.
