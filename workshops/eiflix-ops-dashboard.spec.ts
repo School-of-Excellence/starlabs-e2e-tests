@@ -20,7 +20,7 @@ import { test, expect } from '@playwright/test';
 import {
   installWshopStubs, loginAsWshopAdmin, seedLoginLogs, clearLoginLogs, wsMetaNames, wsProfileIds,
   seedWebLoginLogs, clearWebLoginLogs, wsWebLoginVersions,
-  seedReportLoginLogs, clearReportLoginLogs,
+  seedReportLoginLogs, clearReportLoginLogs, seedConsumption, clearConsumption, wsConsumptionText,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -461,5 +461,78 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix Report', () => 
       .toHaveText('3', { timeout: 30_000 });
     await expect(section.getByTestId('eif-rep-mobile-total-count'), 'WS-52: and the mobile total follows')
       .toHaveText('5');
+  });
+});
+
+
+// =============================================================================================
+// WS-53 — EiFlix Report: Total Content Consumption.
+//
+// Sums `totaltimespend` from `content analytics` per `platform_name`, split by cohort, over the
+// report's own Today/7D/30D window.
+//
+// Anti-circular: the seed writes four rows with KNOWN second counts and the case asserts the
+// rendered durations. The TOTAL is never seeded — 3661 + 7322 = 10983s must be summed by the app
+// and formatted as "3 hours 03 minutes 03 seconds".
+//
+// Two rows exist purely to be falsifiable:
+//   • the new-user app row is written as 'EiflixApp' (mixed case) while the existing-user one is
+//     'eiflixapp' — they must land in the SAME bucket, which a case-sensitive match would not do;
+//   • a SolarVoice row of 99999s must appear nowhere.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: Total Content Consumption', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedConsumption();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearConsumption();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-53 consumption sums totaltimespend per platform, splits by cohort, and formats h/m/s', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-report-section');
+    await expect(section, 'WS-53: the report section renders').toBeVisible({ timeout: 60_000 });
+
+    // [ASSERT] both consumption blocks render under their heading. Literal ids, not a loop — the
+    // readiness gate's scanner cannot see an id passed through a variable.
+    await expect(section.getByTestId('eif-rep-cons-app'), 'WS-53: the mobile consumption block renders')
+      .toContainText('Total Content Consumption', { timeout: 60_000 });
+    await expect(section.getByTestId('eif-rep-cons-web'), 'WS-53: the web consumption block renders')
+      .toContainText('Total Content Consumption');
+
+    // ---- mobile (platform_name 'eiflixapp') ----
+    await expect(section.getByTestId('eif-rep-cons-app-existing'),
+      'WS-53: the existing user\'s app watch time').toHaveText(wsConsumptionText.appExisting, { timeout: 60_000 });
+    // Written as 'EiflixApp' in the seed — a case-sensitive match would leave this at zero.
+    await expect(section.getByTestId('eif-rep-cons-app-new'),
+      'WS-53: the new user\'s app watch time, matched case-insensitively').toHaveText(wsConsumptionText.appNew);
+    // [ASSERT] the total is the APP's arithmetic — 3661 + 7322 = 10983s. Never seeded.
+    await expect(section.getByTestId('eif-rep-cons-app-total'),
+      'WS-53: the app total is summed, not seeded').toHaveText(wsConsumptionText.appTotal);
+
+    // ---- web (platform_name 'Eiflixweb') ----
+    await expect(section.getByTestId('eif-rep-cons-web-existing'),
+      'WS-53: the web watch time').toHaveText(wsConsumptionText.webExisting);
+    await expect(section.getByTestId('eif-rep-cons-web-new'),
+      'WS-53: no new-user web time today').toHaveText(wsConsumptionText.webNew);
+    await expect(section.getByTestId('eif-rep-cons-web-total'),
+      'WS-53: with nothing new, the web total equals the existing figure').toHaveText(wsConsumptionText.webExisting);
+
+    // [ASSERT] another platform's 99999 seconds (27+ hours) leaks into neither surface. If the
+    // platform filter were dropped it would dominate both totals and be impossible to miss.
+    for (const tid of ['eif-rep-cons-app-total', 'eif-rep-cons-web-total']) {
+      await expect(section.getByTestId(tid), 'WS-53: another platform never contributes')
+        .not.toContainText('27 hours');
+    }
   });
 });

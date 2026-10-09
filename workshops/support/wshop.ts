@@ -1106,3 +1106,70 @@ export async function clearReportLoginLogs(): Promise<void> {
   await admin.firestore().collection('loginlog').doc(wsReportLoginIds.p1Android)
     .delete().catch(() => undefined);
 }
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: Total Content Consumption.
+// =================================================================================================
+
+export const wsConsumptionIds = {
+  appExisting: `${RUN}_ca_cons_app_existing`,
+  appNew: `${RUN}_ca_cons_app_new`,
+  webExisting: `${RUN}_ca_cons_web_existing`,
+  otherPlatform: `${RUN}_ca_cons_other`,
+};
+
+/**
+ * Seconds chosen so the rendered durations are unmistakable and cannot collide with any other
+ * number on the dashboard:
+ *   app existing  3661s  =  1 hours 01 minutes 01 seconds
+ *   app new       7322s  =  2 hours 02 minutes 02 seconds
+ *   app TOTAL    10983s  =  3 hours 03 minutes 03 seconds   (the sum, which the app must compute)
+ *   web existing  3723s  =  1 hours 02 minutes 03 seconds
+ */
+export const wsConsumptionSeconds = { appExisting: 3661, appNew: 7322, webExisting: 3723 };
+export const wsConsumptionText = {
+  appExisting: '1 hours 01 minutes 01 seconds',
+  appNew: '2 hours 02 minutes 02 seconds',
+  appTotal: '3 hours 03 minutes 03 seconds',
+  webExisting: '1 hours 02 minutes 03 seconds',
+  webNew: '0 hours 00 minutes 00 seconds',
+};
+
+/**
+ * PRECONDITION for Total Content Consumption: `content analytics` rows dated TODAY, one per case.
+ *
+ *   appExisting   platform_name 'eiflixapp',  p0 (participant metadata → existing)
+ *   appNew        platform_name 'EiflixApp',  NU_A (new_user_data, not moved → NEW) — and the MIXED
+ *                 CASE is deliberate: platform matching must be case-insensitive, so this row has
+ *                 to land in the same bucket as the lowercase one.
+ *   webExisting   platform_name 'Eiflixweb',  p0
+ *   otherPlatform platform_name 'SolarVoice', a big number that must NOT appear anywhere.
+ *
+ * Run alongside the base content seed. These ids are run-scoped and swept by the same teardown.
+ */
+export async function seedConsumption(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const today = T.fromDate(new Date());
+  const tag = { testrunid: RUN, _testdata: true };
+  const put = (id: string, platform_name: string, totaltimespend: number, profileid: string) =>
+    db.collection('content analytics').doc(id).set({
+      docid: id, platform_name, totaltimespend, profileid, type: 'eiflixcontent',
+      videoid: `${RUN}_vid_cons`, videoname: `TEST_VID_CONS_${RUN}`, logdate: today, ...tag,
+    });
+  await Promise.all([
+    put(wsConsumptionIds.appExisting, 'eiflixapp', wsConsumptionSeconds.appExisting, wsProfileIds.p0),
+    put(wsConsumptionIds.appNew, 'EiflixApp', wsConsumptionSeconds.appNew, wsAddIds.NU_A),
+    put(wsConsumptionIds.webExisting, 'Eiflixweb', wsConsumptionSeconds.webExisting, wsProfileIds.p0),
+    put(wsConsumptionIds.otherPlatform, 'SolarVoice', 99999, wsProfileIds.p1),
+  ]);
+}
+
+/** Undo seedConsumption. */
+export async function clearConsumption(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsConsumptionIds).map(id =>
+    db.collection('content analytics').doc(id).delete().catch(() => undefined)));
+}
