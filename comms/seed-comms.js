@@ -187,9 +187,12 @@ async function seedComms() {
     hostEmail: EMAIL.admin, duration: 60, status, successCount: ok, failedCount: fail,
     startTime: now(), totalSize: 1024, totalFiles: 1, files: [], timestamp: now(), ...tag,
   });
-  await db.collection('zoom recordings backup').doc(ID.ZOOM_DONE).set(
-    zoomRow(ID.ZOOM_DONE, `Completed Meeting ${TESTRUNID}`, 'completed', 5, 0),
-  );
+  //    ZRD-10: ZOOM_DONE carries a recording uuid that the stubbed Zoom listing does NOT contain → "Not in Zoom";
+  //    ZOOM_VERIFIED is listed → "In Zoom"; ZOOM_FAIL has no uuid → unknown (—). One row per presence state.
+  await db.collection('zoom recordings backup').doc(ID.ZOOM_DONE).set({
+    ...zoomRow(ID.ZOOM_DONE, `Completed Meeting ${TESTRUNID}`, 'completed', 5, 0),
+    meetinguid: `${TESTRUNID}_uuid_not_in_zoom`,
+  });
   await db.collection('zoom recordings backup').doc(ID.ZOOM_FAIL).set(
     zoomRow(ID.ZOOM_FAIL, `Failed Meeting ${TESTRUNID}`, 'failed', 0, 3),
   );

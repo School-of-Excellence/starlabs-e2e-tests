@@ -23,6 +23,10 @@
 // ZRD-08/09 (live cost rates): the cost line shows the server's USD→INR + egress price when /api/cost-rates
 // answers (values the stub chose, distinct from the app's fallback constants) and "(fallback rate)" otherwise.
 //
+// ZRD-10 (sortable "In Zoom" column): one seeded row per presence state — Verified (its uuid is in the stubbed Zoom
+// listing → In Zoom), Completed (uuid NOT listed → Not in Zoom), Failed (no uuid → unknown). Ascending must give
+// In Zoom → Not in Zoom → unknown, and the second click the reverse; the default date order differs from both.
+//
 // NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/; the
 // "Queued…" migrate state (needs the Zoom panel's live recordings list).
 import { test, expect, Page, Route } from '@playwright/test';
@@ -179,5 +183,18 @@ test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (s
     await expect(basis, 'ZRD-09: the server\'s egress price').toContainText('$0.08/GB');
     await expect(basis, 'ZRD-09: marked live, with the rate date').toContainText('(live rate, Oct 5)');
     await expect(basis).not.toContainText('(fallback rate)');
+  });
+
+  test('ZRD-10 sorting by In Zoom orders In Zoom → Not in Zoom → unknown, and reverses on the second click', async ({ page }) => {
+    const order = async () => (await page.locator('tr.mat-mdc-row, tr[mat-row]').allInnerTexts())
+      .map((t) => [TOPIC.ok, TOPIC.done, TOPIC.fail].find((topic) => t.includes(topic)))
+      .filter(Boolean);
+    const header = page.getByRole('columnheader', { name: /In Zoom/ });
+    // presence must be known before the sort means anything
+    await expect(rowOf(page, TOPIC.done), 'ZRD-10: the completed row is marked Not in Zoom').toContainText('Not in Zoom', { timeout: 30_000 });
+    await header.click();
+    await expect.poll(order, { message: 'ZRD-10: ascending — In Zoom, then Not in Zoom, then unknown' }).toEqual([TOPIC.ok, TOPIC.done, TOPIC.fail]);
+    await header.click();
+    await expect.poll(order, { message: 'ZRD-10: descending — unknown first' }).toEqual([TOPIC.fail, TOPIC.done, TOPIC.ok]);
   });
 });
