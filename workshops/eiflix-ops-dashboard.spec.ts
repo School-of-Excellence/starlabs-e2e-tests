@@ -24,6 +24,7 @@ import {
   seedReportLoginLogs, clearReportLoginLogs, seedConsumption, clearConsumption, wsConsumptionText,
   seedPurchases, clearPurchases, countNewUserDataInWindow, countCapturedPayments,
   countWebUsersFromAnalytics,
+  countNewUsersCard, countPaidCard, seedUsersRangePaid, clearUsersRangePaid, wsDateInputValue,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -698,5 +699,104 @@ test.describe('Workshops — eiflix operations dashboard: report export', () => 
     // A .xlsx is a zip: it must start with PK, and be far larger than an empty stub.
     expect(bytes.subarray(0, 2).toString('binary'), 'WS-55: the bytes are a zip container').toBe('PK');
     expect(bytes.length, 'WS-55: the workbook has real content').toBeGreaterThan(2000);
+  });
+});
+
+// ===================================================================================================
+// WS-58 — the Users section date range
+//
+// Two cards, two DIFFERENT date fields: Total New Users by signup date, New Users to Paid by move
+// date. The seed makes them disagree on purpose — NU_C signed up 3 days ago and moved across TODAY —
+// so a card that filtered on the wrong field is visible as a wrong number, not just a smaller one.
+//
+// Every expected value is computed by the TEST from Firestore before the app is asked, over the whole
+// collection (the shared emulator holds other runs' rows — the WS-54 lesson). Counts are POLLED: the
+// cards animate their numbers and the listeners settle after first paint (the WS-30 lesson).
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: Users date range', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedUsersRangePaid();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearUsersRangePaid();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-58 the Users range filters signups by created date and paid moves by move date', async ({ page }) => {
+    // [ORACLES] all computed before the app renders.
+    const allNew = await countNewUsersCard(null);
+    const todayNew = await countNewUsersCard(0);
+    const weekNew = await countNewUsersCard(7);
+    const allPaid = await countPaidCard(null);
+    const todayPaid = await countPaidCard(0);
+
+    // [PRECONDITIONS] the seed must actually straddle the windows, or "the number got smaller"
+    // would be unfalsifiable.
+    expect(todayNew, `WS-58: the seed must hold signups OUTSIDE today (all=${allNew}, today=${todayNew})`)
+      .toBeLessThan(allNew);
+    expect(todayPaid, 'WS-58: NU_C moved across today, so Today must hold at least one paid move')
+      .toBeGreaterThan(0);
+    expect(weekNew, 'WS-58: 7D must sit between Today and All').toBeGreaterThanOrEqual(todayNew);
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+
+    const cardFor = (title: string) => page.locator('button.eod-card').filter({ hasText: title });
+    const newCard = cardFor('Total New Users');
+    const paidCard = cardFor('New Users to Paid');
+    await expect(newCard, 'WS-58: the Users cards must render').toBeVisible({ timeout: 45_000 });
+
+    const countOf = async (card: typeof newCard) => {
+      const t = await card.locator('.eod-count').first().innerText().catch(() => '');
+      return Number(t.replace(/[^\d]/g, '')) || 0;
+    };
+    const settles = async (card: typeof newCard, want: number, message: string) =>
+      expect.poll(() => countOf(card), { message, timeout: 60_000 }).toBe(want);
+
+    // [ASSERT] unfiltered — All is the default, so the cards start as the totals they always were.
+    await settles(newCard, allNew, `WS-58: Total New Users unfiltered must equal the independent count (${allNew})`);
+    await settles(paidCard, allPaid, `WS-58: New Users to Paid unfiltered must equal the independent count (${allPaid})`);
+
+    // [REAL-UI + ASSERT] Today. The paid card is the falsifiable half: every paid row in the base
+    // seed signed up long ago, so a card filtering on the signup date would read 0 here.
+    await page.getByTestId('eif-users-range-today').click();
+    await settles(newCard, todayNew, `WS-58: Today must narrow Total New Users to signups from today (${todayNew})`);
+    await settles(paidCard, todayPaid, `WS-58: Today must narrow New Users to Paid by MOVE date (${todayPaid}), not by signup date`);
+
+    // [REAL-UI + ASSERT] 7D widens the signup window back out.
+    await page.getByTestId('eif-users-range-7d').click();
+    await settles(newCard, weekNew, `WS-58: 7D must count signups in the last 7 days (${weekNew})`);
+
+    // [REAL-UI + ASSERT] 30D.
+    const monthNew = await countNewUsersCard(30);
+    await page.getByTestId('eif-users-range-30d').click();
+    await settles(newCard, monthNew, `WS-58: 30D must count signups in the last 30 days (${monthNew})`);
+
+    // [REAL-UI + ASSERT] the manual From-To. Both bounds on today == the Today window, so the
+    // custom path has to land on the same number the segment did.
+    const today = wsDateInputValue(0);
+    await page.getByTestId('eif-users-range-from').fill(today);
+    await page.getByTestId('eif-users-range-to').fill(today);
+    await settles(newCard, todayNew, `WS-58: a manual From-To of today must match the Today segment (${todayNew})`);
+    await settles(paidCard, todayPaid, 'WS-58: the manual range filters the paid card by move date too');
+
+    // [REAL-UI + ASSERT] Clear restores the totals.
+    await page.getByTestId('eif-users-range-clear').click();
+    await settles(newCard, allNew, `WS-58: Clear must restore the unfiltered total (${allNew})`);
+    await settles(paidCard, allPaid, 'WS-58: Clear must restore the unfiltered paid total');
+
+    // [REAL-UI] the All segment is the same cleared state, reached the other way.
+    await page.getByTestId('eif-users-range-today').click();
+    await settles(newCard, todayNew, 'WS-58: Today narrows again');
+    await page.getByTestId('eif-users-range-all').click();
+    await settles(newCard, allNew, 'WS-58: All restores the unfiltered total');
   });
 });

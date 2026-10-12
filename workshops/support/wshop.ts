@@ -1385,3 +1385,93 @@ export function wsSeedDayMDY(dayOffset: number): string {
   d.setHours(9, 0, 0, 0);
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
+
+// =================================================================================================
+// 2026-10-12 — Users section date range on /eiflixoperationsdashboard (WS-58).
+// =================================================================================================
+
+/**
+ * The window the Users section builds: `days` back from today at local midnight, through the end of
+ * today. 0 = Today. Written out rather than reusing reportWindow() on purpose — the EiFlix Report's
+ * 7D starts at today-6, the Users range (like Engagement) starts at today-7, and silently borrowing
+ * the wrong one would make this oracle agree with a bug.
+ */
+function usersRangeBounds(days: number): { start: Date; end: Date } {
+  const start = new Date();
+  const end = new Date();
+  start.setDate(start.getDate() - days);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/**
+ * Independent oracle for the Total New Users card: `new_user_data` rows that never moved across,
+ * optionally narrowed to a signup window. `days === null` means no date filter (the All state).
+ *
+ * Counted by the TEST over the WHOLE collection, because that is the population the card counts —
+ * the shared emulator holds other runs' rows and a run-scoped count would not match (WS-54).
+ */
+export async function countNewUsersCard(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('new_user_data').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (data['movedtoexist'] === true) return;
+    if (!win) { n++; return; }
+    const at = asDate(data['created']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/**
+ * Independent oracle for the New Users to Paid card: rows that DID move across, optionally narrowed
+ * by the MOVE date (never the signup date — that distinction is the point of WS-58).
+ */
+export async function countPaidCard(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('new_user_data').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (data['movedtoexist'] !== true) return;
+    if (!win) { n++; return; }
+    const at = asDate(data['movedon']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/** 'yyyy-MM-dd' for a day offset — the value an <input type="date"> holds. */
+export function wsDateInputValue(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * PRECONDITION for WS-58's paid side: NU_C moved across TODAY while its signup stays 3 days old.
+ * The asymmetry is deliberate — a card that filtered on the signup date instead of the move date
+ * would drop this row from Today, so the case can tell the two fields apart.
+ *
+ * Restored by clearUsersRangePaid(). `movedon` is a field WS-54's oracles read, which is safe here
+ * because the suite runs serially (workers: 1) and those oracles recompute from Firestore.
+ */
+export async function seedUsersRangePaid(): Promise<void> {
+  const admin = seed.initAdmin();
+  const T = admin.firestore.Timestamp;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: true, movedon: T.fromDate(new Date()) }, { merge: true });
+}
+
+/** Undo seedUsersRangePaid: NU_C back to "never moved", with no move date. */
+export async function clearUsersRangePaid(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: FV.delete(), movedon: FV.delete() }, { merge: true });
+}
