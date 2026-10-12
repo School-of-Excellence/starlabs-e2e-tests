@@ -13,6 +13,7 @@
 import { test, expect } from '@playwright/test';
 import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetNewUserTags,
+  seedConvertedNewUser, clearConvertedNewUser, wsSeedDayMDY,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
@@ -121,5 +122,142 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
       (after as any)!.tags,
       'WS-23: the app persisted the segment tag id on the selected user',
     ).toContain(wsAddIds.NUT_SEGMENT);
+  });
+
+  // ===========================================================================================
+  // WS-56 — the created-date range filter keeps only rows created inside the window
+  //
+  // The three seeded users sit on three different days (-1d / -2d / -3d, seed-workshops.js at()).
+  // Narrowing to the MIDDLE day puts a negative control on BOTH sides of the window, so a filter
+  // that ignored the start bound and one that ignored the end bound both fail.
+  //
+  // Why the toHaveCount(0) assertions are sound: all three rows are asserted VISIBLE TOGETHER first,
+  // which also proves they share page 1 of the 20-row paginator. Filtering only removes rows, so a
+  // row that was on page 1 and is now absent was excluded by the filter, not paged away.
+  //
+  // The negative halves are asserted FIRST (and carry the wait). A filterPredicate that THROWS leaves
+  // every row in place, so leading with "the row must be gone" catches that; leading with the positive
+  // would pass on a broken predicate (the WS-43 lesson).
+  // ===========================================================================================
+  test('WS-56 the created-date range narrows the table to the chosen window', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
+
+    const rowFor = (name: string) => page.locator(ROW).filter({ hasText: name });
+
+    // [PRECONDITION] all three days render, on one page, before any filtering.
+    await expect(rowFor(wsAddNames.nuAlpha), 'WS-56: the -1d user must render').toHaveCount(1, { timeout: 30_000 });
+    await expect(rowFor(wsAddNames.nuBravo), 'WS-56: the -2d user must render').toHaveCount(1);
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-56: the -3d user must render').toHaveCount(1);
+
+    // [REAL-UI] type the SAME day into both bounds — a one-day window on the -2d user. Both bounds are
+    // real inputs now, so this exercises the app's own parse. Tab blurs, which is what fires dateChange
+    // (fill() alone dispatches `input`, and the component re-filters on `change`).
+    const middleDay = wsSeedDayMDY(-2);
+    const start = page.getByTestId('new-created-start-date');
+    const end = page.getByTestId('new-created-end-date');
+    await start.fill(middleDay);
+    await start.press('Tab');
+    await end.fill(middleDay);
+    await end.press('Tab');
+
+    // [ASSERT] negative controls first — one newer than the end bound, one older than the start bound.
+    await expect(
+      rowFor(wsAddNames.nuAlpha),
+      `WS-56: the -1d user is NEWER than the window end (${middleDay}) and must be filtered out`,
+    ).toHaveCount(0, { timeout: 15_000 });
+    await expect(
+      rowFor(wsAddNames.nuCharlie),
+      `WS-56: the -3d user is OLDER than the window start (${middleDay}) and must be filtered out`,
+    ).toHaveCount(0);
+
+    // ...and the row inside the window survives.
+    await expect(
+      rowFor(wsAddNames.nuBravo),
+      'WS-56: the user created inside the window must remain visible',
+    ).toHaveCount(1);
+
+    // [REAL-UI] the clear (x) on the range control drops both bounds and the full table comes back.
+    await page.getByTestId('new-event-17').click();
+    await expect(
+      rowFor(wsAddNames.nuAlpha),
+      'WS-56: clearing the dates restores the rows outside the window',
+    ).toHaveCount(1, { timeout: 15_000 });
+    await expect(rowFor(wsAddNames.nuCharlie), 'WS-56: clearing restores the oldest row too').toHaveCount(1);
+  });
+
+  // ===========================================================================================
+  // WS-57 — the conversion filter's two options split the table, and the pair SWAPS
+  //
+  // NU_C is flipped to "moved over to existing users"; NU_A is left alone. The same two rows must
+  // trade places when the option flips — Converted shows C and hides A, Not converted shows A and
+  // hides C. A table that filtered nothing (or filtered on the wrong side) fails one direction.
+  //
+  // The Moved On column is asserted too: it belongs to the Converted side only, because the rows on
+  // the other side have no move date to put in it.
+  // ===========================================================================================
+  test('WS-57 the conversion filter splits converted from not-converted profiles', async ({ page }) => {
+    await seedConvertedNewUser();
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
+
+      const rowFor = (name: string) => page.locator(ROW).filter({ hasText: name });
+      const movedOnHeader = page.locator('table.users-table th').filter({ hasText: 'Moved On' });
+
+      // Open the menu by clicking the button's LEADING icon, not its centre. Once a choice is active
+      // the button also carries a clear (x), and a centre click on a short label could land on it —
+      // which would clear the filter instead of opening the menu. x:14 is always the leading icon.
+      const openConversionMenu = () =>
+        page.getByTestId('new-toggle-converted-filter-18').click({ position: { x: 14, y: 22 } });
+
+      // [PRECONDITION] both sides render unfiltered, on one page.
+      await expect(rowFor(wsAddNames.nuCharlie), 'WS-57: the converted user must render').toHaveCount(1, { timeout: 30_000 });
+      await expect(rowFor(wsAddNames.nuAlpha), 'WS-57: the not-converted user must render').toHaveCount(1);
+      await expect(movedOnHeader, 'WS-57: the Moved On column is absent while nothing is filtered').toHaveCount(0);
+
+      // [REAL-UI] open the two-option menu and pick "Converted".
+      await openConversionMenu();
+      await page.getByTestId('new-set-converted-filter-converted').click();
+
+      // [ASSERT] negative half first — a thrown predicate would leave this row in place.
+      await expect(
+        rowFor(wsAddNames.nuAlpha),
+        'WS-57: Converted must filter OUT the profile that never moved over',
+      ).toHaveCount(0, { timeout: 15_000 });
+      await expect(
+        rowFor(wsAddNames.nuCharlie),
+        'WS-57: Converted must keep the profile that moved over',
+      ).toHaveCount(1);
+      await expect(movedOnHeader, 'WS-57: Converted adds the Moved On column').toHaveCount(1);
+
+      // [REAL-UI] flip to the other option — the same two rows must trade places.
+      await openConversionMenu();
+      await page.getByTestId('new-set-converted-filter-not-converted').click();
+
+      await expect(
+        rowFor(wsAddNames.nuCharlie),
+        'WS-57: Not converted must filter OUT the profile that moved over',
+      ).toHaveCount(0, { timeout: 15_000 });
+      await expect(
+        rowFor(wsAddNames.nuAlpha),
+        'WS-57: Not converted must keep the profile that never moved over',
+      ).toHaveCount(1);
+      await expect(
+        movedOnHeader,
+        'WS-57: the Moved On column belongs to the Converted side only',
+      ).toHaveCount(0);
+
+      // [REAL-UI] the clear (x) on the button drops the filter — both sides come back.
+      await page.getByTestId('new-event-19').click();
+      await expect(
+        rowFor(wsAddNames.nuCharlie),
+        'WS-57: clearing the conversion filter restores the converted profile',
+      ).toHaveCount(1, { timeout: 15_000 });
+      await expect(rowFor(wsAddNames.nuAlpha), 'WS-57: clearing restores the not-converted profile').toHaveCount(1);
+    } finally {
+      // Restore NU_C however this case ended, so the next spec sees the seeded state.
+      await clearConvertedNewUser();
+    }
   });
 });

@@ -1338,3 +1338,50 @@ export async function countWebUsersFromAnalytics(days: number): Promise<number> 
   });
   return ids.size;
 }
+
+// =================================================================================================
+// 2026-10-12 — /newusersprofile: the created-date range + the two-option conversion filter.
+// =================================================================================================
+
+/**
+ * PRECONDITION for the conversion filter (WS-57): one of the three seeded new users is flipped to
+ * "moved over to existing users", the other is deliberately left alone.
+ *
+ *   NU_C — `movedtoexist: true`  → the Converted side
+ *   NU_A — no `movedtoexist`     → the Not-converted side
+ *
+ * Two docs on opposite sides is what makes the case two-sided: the SAME pair has to swap visibility
+ * when the option flips, so neither option can pass by accident on a table that filtered nothing.
+ *
+ * NU_C is the doc this suite already treats as mutable (resetNewUserTags / seedUserTypeLoginLogs).
+ * Only `movedtoexist` is touched — `movedon` is left alone on purpose, so the purchases oracles in
+ * the ops-dashboard suite (WS-54) see no change. Restored by clearConvertedNewUser().
+ */
+export async function seedConvertedNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: true }, { merge: true });
+}
+
+/** Undo seedConvertedNewUser: put NU_C back to "not moved". */
+export async function clearConvertedNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: FV.delete() }, { merge: true });
+}
+
+/**
+ * The local calendar day `seed-workshops.js at(offset)` used, formatted the way the app's date inputs
+ * parse it (NativeDateAdapter → Date.parse, so M/D/YYYY is read as LOCAL midnight; an ISO yyyy-mm-dd
+ * would be read as UTC and could land on the previous day).
+ *
+ * Built with the same setDate() arithmetic as the seed, so the test and the seed cannot disagree
+ * about which day a row belongs to.
+ */
+export function wsSeedDayMDY(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(9, 0, 0, 0);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
