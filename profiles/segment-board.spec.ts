@@ -157,7 +157,7 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
       page.getByTestId('sgb-stat-total'), page.getByTestId('sgb-stat-inseg'), page.getByTestId('sgb-stat-unseg'),
       page.getByTestId('sgb-stat-dups'), page.getByTestId('sgb-refresh-all'), page.getByTestId('sgb-clear-filters'),
       page.getByTestId('sgb-card-refresh'), page.getByTestId('sgb-dlg-type-auto'), page.getByTestId('sgb-dlg-type-manual'),
-      page.getByTestId('sgb-dlg-status-active'), page.getByTestId('sgb-dlg-status-inactive'), page.getByTestId('sgb-dlg-stored'),
+      page.getByTestId('sgb-dlg-status-active'), page.getByTestId('sgb-dlg-status-inactive'),
       page.getByTestId('sgb-drawer-search'), page.getByTestId('sgb-drawer-export'), page.getByTestId('sgb-drawer-save-list'),
     ]) expect(l).toBeTruthy();
   });
