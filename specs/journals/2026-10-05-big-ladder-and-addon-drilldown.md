@@ -40,3 +40,10 @@ open THAT record. Verify all's `duplicate_removed` result is counted apart from 
 `/api/cost-rates` stubbed per test: 503 → the cost line must say "(fallback rate)" and claim no live source; a live
 answer with values distinct from the app's fallback constants (₹88.25, $0.08/GB vs ₹96.4, $0.12) must replace them
 and show "(live rate, Oct 5)". Run (app 2a5f282e): comms 33 pass / 12 skip / 0 fail.
+
+## ZRD-10 (sortable "In Zoom" column, 2026-10-09)
+ZOOM_DONE now carries a recording uuid the stubbed Zoom listing does NOT contain, so the three rows cover all three
+presence states (Verified = In Zoom, Completed = Not in Zoom, Failed = unknown). Ascending must read In Zoom → Not in
+Zoom → unknown and the second click the reverse; the default (startTime desc) order differs from both. ZRD-01's
+reasons are unaffected (an unverified backup is blocked before presence is consulted). Run (app 5577db76): comms
+34 pass / 12 skip / 0 fail.
