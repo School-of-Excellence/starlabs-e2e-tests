@@ -29,3 +29,27 @@ needs Java 21 (machine has 17). Verified instead: `--list` registers all 8 (6 + 
 0 unreferenced); app `tsc` 0 + `ng build` ok; and the spec's click paths were walked through the app's own engine in a static
 harness (create → list built, View all without ids, move/add/remove, archive/unarchive/delete) — all green. **The readiness gate /
 CI is the first real run.**
+
+## 2026-10-12 · SGB-06: segment history instead of hard delete
+
+The app no longer hard-deletes segments: archiving is the only delete. Every config change now writes a history doc to
+`segmentboardconfig/{id}/segmenthistory`, in the same batch as the change itself.
+
+**What SGB-06 proves now:**
+- archive → unarchive → archive keeps the config and the stored list;
+- the Archived view has no Delete button;
+- the app's own history docs exist: `create` (from SGB-02), `archive` ×2 and `unarchive`. The `archive` entry carries `changes.archived {from:false, to:true}`, `by.email` and `at`;
+- the side panel History tab (`sgb-drawer-tab-history`) lists at least 3 `sgb-history-item` rows.
+
+**Why this isn't circular:** the test only clicks, and every history doc it reads was written by the app.
+
+**Teardown:** `cleanupSpecSegments` now `recursiveDelete`s the config docs, so the history subcollection goes with them. Firestore doesn't delete subcollections with their parent.
+
+**Hooks:**
+- `sgb-arch-delete` is gone from the app and the spec.
+- Added `sgb-drawer-tab-history` and `sgb-history-item`.
+- hook-diff: aligned, 57 hooks.
+
+**Needs (console):**
+- read/create rules for `segmentboardconfig/{id}/segmenthistory` on starlabs-test;
+- the collection-group index on `segmenthistory.at` (descending), used only by the board-wide Change history, which no case drives.

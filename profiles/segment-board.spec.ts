@@ -1,5 +1,6 @@
 // segment-board.spec.ts — /segmentboard: master segments built from participant metadata, their stored lists,
-// manual placement, search and the archive lifecycle.
+// manual placement, search, the archive lifecycle (no hard delete) and the per-segment change history
+// (segmentboardconfig/{id}/segmenthistory, written by the app in the same batch as each change).
 //
 // Prefix: sgb — SegmentBoardComponent (segment-board.component.html + the engine it mounts,
 // segment-board.engine.ts, which renders the board, dialogs and side panel as literal-hook HTML strings).
@@ -26,7 +27,7 @@
 import { test, expect, Page } from '@playwright/test';
 import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, pollUntil } from '../queue/support/firestore-admin';
+import { getDoc, pollUntil, queryWhere } from '../queue/support/firestore-admin';
 
 const RUN = process.env.PROF_RUNID || 'prof';
 const IDS = { J: `${RUN}_SB_J`, a: `${RUN}_sb_a`, b: `${RUN}_sb_b`, c: `${RUN}_sb_c`, d: `${RUN}_sb_d`, e: `${RUN}_sb_e`, MANUAL: `${RUN}_SB_MANUAL` };
@@ -43,7 +44,7 @@ let guard: ConsoleGuard;
 async function open(page: Page) {
   await installProfileStubs(page);
   await loginAsProfileAdmin(page);
-  page.on('dialog', (d) => d.accept());   // archive / delete / remove confirm with window.confirm
+  page.on('dialog', (d) => d.accept());   // archive / remove confirm with window.confirm
   await page.goto('/segmentboard', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('app-segment-board'), 'must mount — check the /segmentboard grant').toBeAttached({ timeout: 30_000 });
   await expect(page.getByTestId('sgb-new-seg'), 'the board finishes loading').toBeVisible({ timeout: 90_000 });
@@ -126,7 +127,8 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await pollUntil(() => listOf(AUTO_ID), (l) => sameSet(l, [IDS.a, IDS.b]), { label: 'Bravo matches the automated segment again' });
   });
 
-  test('SGB-06 archive → Archived view → unarchive → archive → delete removes both docs', async ({ page }) => {
+  test('SGB-06 archive → unarchive → archive: no hard delete, and every step is in the segment history', async ({ page }) => {
+    const hist = (action: string) => queryWhere(`segmentboardconfig/${AUTO_ID}/segmenthistory`, [['action', '==', action]]);
     await open(page);
     const archive = async () => {
       await card(page, NAMES.AUTO).getByTestId('sgb-card-edit').click();
@@ -142,11 +144,26 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await page.getByTestId('sgb-show-archived').click();
     await expect(card(page, NAMES.AUTO), 'SGB-06: back on the board').toHaveCount(1);
 
+    // the history the app wrote (same batch as each change): create (SGB-02), archive, unarchive
+    await pollUntil(() => hist('unarchive'), (r) => r.length === 1, { label: 'unarchive entry' });
+    expect((await hist('create')).length, 'SGB-06: the create from SGB-02 is recorded').toBe(1);
+    const [a1] = await hist('archive');
+    expect(a1?.changes?.archived, 'SGB-06: archive records archived false → true').toEqual({ from: false, to: true });
+    expect(a1?.by?.email, 'SGB-06: who changed it').toBeTruthy();
+    expect(a1?.at, 'SGB-06: when (server time)').toBeTruthy();
+    // the side panel History tab lists them
+    await card(page, NAMES.AUTO).getByTestId('sgb-card-viewall').click();
+    await page.getByTestId('sgb-drawer').getByTestId('sgb-drawer-tab-history').click();
+    await expect(page.getByTestId('sgb-drawer').getByTestId('sgb-history-item').first(), 'SGB-06: History tab shows entries').toBeVisible();
+    expect(await page.getByTestId('sgb-drawer').getByTestId('sgb-history-item').count()).toBeGreaterThanOrEqual(3);
+    await page.getByTestId('sgb-drawer-close').click();
+
+    // archiving is the only delete: the Archived view has no Delete, and the config + list stay
     await archive();
     await page.getByTestId('sgb-show-archived').click();
-    await page.getByTestId('sgb-arch-card').filter({ hasText: NAMES.AUTO }).getByTestId('sgb-arch-delete').click();
-    await pollUntil(() => getDoc('segmentboardconfig', AUTO_ID), (d) => d === null, { label: 'config deleted' });
-    expect(await getDoc('segmentboardlist', AUTO_ID), 'SGB-06: its saved list goes with it').toBeNull();
+    await expect(page.getByTestId('sgb-arch-card').filter({ hasText: NAMES.AUTO })).toHaveCount(1);
+    await pollUntil(() => hist('archive'), (r) => r.length === 2, { label: 'second archive entry' });
+    expect(await getDoc('segmentboardlist', AUTO_ID), 'SGB-06: the stored list is kept').not.toBeNull();
   });
 
   // Hooks no case above drives: stats tiles (global counts, not run-scoped), refresh controls, the remaining

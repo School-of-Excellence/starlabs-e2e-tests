@@ -58,10 +58,12 @@ const SEEDED_SEGMENT_BOARD = ['segmentboardconfig', 'segmentboardlist'];
 async function cleanupSpecSegments(db) {
   const names = [SB_NAMES.AUTO, SB_NAMES.MANUAL];
   for (const name of names) {
-    for (const s of (await db.collection('segmentboardconfig').where('name', '==', name).get()).docs) await s.ref.delete();
+    // recursiveDelete: the app writes each segment's change history to segmentboardconfig/{id}/segmenthistory
+    for (const s of (await db.collection('segmentboardconfig').where('name', '==', name).get()).docs) await db.recursiveDelete(s.ref);
     for (const s of (await db.collection('segmentboardlist').where('segmentname', '==', name).get()).docs) await s.ref.delete();
   }
   await db.collection('segmentboardlist').doc(SB_IDS.MANUAL).delete().catch(() => {});
+  await db.recursiveDelete(db.collection('segmentboardconfig').doc(SB_IDS.MANUAL)).catch(() => {});
 }
 
 async function seedSegmentBoard(db, tag, J1) {
