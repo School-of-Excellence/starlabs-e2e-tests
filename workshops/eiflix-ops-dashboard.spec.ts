@@ -27,6 +27,7 @@ import {
   countNewUsersCard, countPaidCard, seedUsersRangePaid, clearUsersRangePaid, wsDateInputValue,
   seedMasterclassPayments, clearMasterclassPayments, countCapturedForUsersRange, wsMasterclassAmounts,
   sumCapturedForUsersRange, wsMasterclassJourney,
+  seedDeviceBreakdownPages, clearDeviceBreakdownPages, wsDbDayKey, wsDbPlatforms,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -910,5 +911,56 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     await expect(pmRow.locator('.eod-tag-journey'), 'WS-60: the participant row shows their journey')
       .toHaveText(wsMasterclassJourney, { timeout: 15_000 });
     await expect(newRow.locator('.eod-tag-journey'), 'WS-60: a new-user-only payer has no journey').toHaveCount(0);
+  });
+});
+
+// ===================================================================================================
+// WS-61 — Device Breakdown: From–To alongside 1M / 2M / 3M
+//
+// Two register pages under platform names nothing else writes: -20d (2h) and -50d (1h). Each step
+// asserts the platform that must be ABSENT before the one that must be present, so a window that
+// ignored a bound fails rather than passing on extra rows.
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: Device Breakdown range', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await seedDeviceBreakdownPages();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearDeviceBreakdownPages();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-61 Device Breakdown narrows to a manual From–To and Clear returns to 1M', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const rowFor = (name: string) => page.locator('button.eod-db-row').filter({ hasText: new RegExp(name, 'i') });
+
+    // [1M default] -20d in, -50d out.
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: 1M includes the -20d page').toHaveCount(1, { timeout: 60_000 });
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: 1M excludes the -50d page').toHaveCount(0);
+
+    // [2M] widens to -50d.
+    await page.getByTestId('eif-set-db-range-21').click();
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: 2M includes the -50d page').toHaveCount(1, { timeout: 15_000 });
+
+    // [From–To] -50d .. -45d: only the older page. Negative half first.
+    await page.getByTestId('eif-db-range-from').fill(wsDbDayKey(-50));
+    await page.getByTestId('eif-db-range-to').fill(wsDbDayKey(-45));
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: the -20d page is outside -50d..-45d').toHaveCount(0, { timeout: 15_000 });
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: the -50d page is inside (the From day is inclusive)').toHaveCount(1);
+    await expect(rowFor(wsDbPlatforms.older).locator('.eod-db-hours'), 'WS-61: its hours come from that page alone')
+      .toHaveText('1h');
+
+    // [Clear] back to 1M.
+    await page.getByTestId('eif-db-range-clear').click();
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: Clear returns to 1M, which excludes -50d').toHaveCount(0, { timeout: 15_000 });
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: and includes -20d again').toHaveCount(1);
   });
 });

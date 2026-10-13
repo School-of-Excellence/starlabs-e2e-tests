@@ -1553,3 +1553,44 @@ export async function sumCapturedForUsersRange(days: number | null): Promise<num
   });
   return sum;
 }
+
+// =================================================================================================
+// 2026-10-13 — Device Breakdown From–To (WS-61).
+// =================================================================================================
+
+/** 'yyyy-MM-dd' for a day offset — the register's doc-id format, and an <input type=date> value. */
+export function wsDbDayKey(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Two platform names no real device writes, so no other page in the emulator can contribute to them. */
+export const wsDbPlatforms = { recent: 'WS61Recent', older: 'WS61Older' };
+
+/**
+ * Register pages 20 and 50 days back — outside the 7-day window the dashboard heals (and rewrites) on
+ * load, inside the 90 days it reads. Written with merge and only under `platforms.<our name>`, so an
+ * existing page for those days keeps everything else, and `profileids` is never touched (Non-Active
+ * reads that, and must not see these seconds).
+ *   -20d  WS61Recent  2h   → inside 1M
+ *   -50d  WS61Older   1h   → outside 1M, inside 2M
+ */
+export async function seedDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: { [wsProfileIds.p0]: 7200 } } }, { merge: true }),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: { [wsProfileIds.p1]: 3600 } } }, { merge: true }),
+  ]);
+}
+
+export async function clearDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: FV.delete() } }, { merge: true }).catch(() => undefined),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: FV.delete() } }, { merge: true }).catch(() => undefined),
+  ]);
+}
