@@ -27,6 +27,8 @@ export const PROC_NAME = S.PROC_NAME;
 export const MODEL = S.MODEL;
 export const MODEL_DIRECTIVE = S.MODEL_DIRECTIVE;
 export const ATC = S.ATC;
+export const QUEUE_NAME: string = S.QUEUE_NAME;
+export const RECOMMEND_NAME = `Recommend Self ${S.RUN}`;
 export const PASSWORD = 'Test!1234';
 
 /** users_roles.name == the actor's email (seedAuthChain), so that is the label every picker renders. */

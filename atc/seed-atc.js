@@ -50,7 +50,7 @@ const PF = {
   mentor: `${RUN}_pf_mentor`,     // roles {mentor} — validator candidate (prescribe validator list)
   p0: `${RUN}_pf_p0`, p1: `${RUN}_pf_p1`, p2: `${RUN}_pf_p2`, p3: `${RUN}_pf_p3`, p4: `${RUN}_pf_p4`,
   // p5..p7: one participant per Prescribe case so a case's leftover draft never opens another case's picker
-  p5: `${RUN}_pf_p5`, p6: `${RUN}_pf_p6`, p7: `${RUN}_pf_p7`,
+  p5: `${RUN}_pf_p5`, p6: `${RUN}_pf_p6`, p7: `${RUN}_pf_p7`, p8: `${RUN}_pf_p8`,
 };
 const EMAIL = {
   admin: `admin+${RUN}@example.com`, eis: `eis+${RUN}@example.com`,
@@ -58,6 +58,7 @@ const EMAIL = {
   p0: `participant0+${RUN}@example.com`, p1: `participant1+${RUN}@example.com`, p2: `participant2+${RUN}@example.com`,
   p3: `participant3+${RUN}@example.com`, p4: `participant4+${RUN}@example.com`,
   p5: `participant5+${RUN}@example.com`, p6: `participant6+${RUN}@example.com`, p7: `participant7+${RUN}@example.com`,
+  p8: `participant8+${RUN}@example.com`,
 };
 
 function roster() {
@@ -69,7 +70,7 @@ function roster() {
     mk('agent2', ['changeagent'], 'changeagent'),
     mk('mentor', ['mentor'], 'mentor'),
   ];
-  const participants = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7'].map((k) => ({ uid: `${RUN}_u_${k}`, profileid: PF[k], email: EMAIL[k], role: 'participant' }));
+  const participants = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'].map((k) => ({ uid: `${RUN}_u_${k}`, profileid: PF[k], email: EMAIL[k], role: 'participant' }));
   return { staff, participants };
 }
 
@@ -96,6 +97,9 @@ const ATC = {
   B1: `${RUN}_B1`,     // atc_alpha  p1 — VATC-07 bulk Change Agent (4 procedure states + deleted adjustment)
   EIS1: `${RUN}_EIS1`, // atc_alpha  p3 authored by the eis user — VATC-06 scoping
   E1: `${RUN}_E1`, E2: `${RUN}_E2`, E3: `${RUN}_E3`, E4: `${RUN}_E4`, E5: `${RUN}_E5`, E6: `${RUN}_E6`, // atc_alpha p2 — EATC-*
+  E7: `${RUN}_E7`,     // atc_alpha p2 — EATC-09 (directive, edit/delete adjustment, procedure toggle, mandatory, notes, preview Close)
+  M1: `${RUN}_M1`,     // atc_alpha p1, mentoring + already 'validated' — VATC-08 (mentor filter, validated status)
+  Q1: `${RUN}_Q1`,     // atc_alpha p1, beta, inside the seeded queue window — VATC-08 (queue filter)
   EV1: `${RUN}_EV1`,   // atc_to_validate 'atc given' p2 — EATC-04 (/validation route)
   N1: `${RUN}_N1`,     // atc_notes for A1
 };
@@ -109,7 +113,8 @@ const ROUTES = [
 
 // Default-DB collections this seed owns (testrunid-tagged; teardown sweeps by tag).
 const DEFAULT_SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard', 'bigactivity', 'procedures',
-  'procedure_recommend', 'atc model', 'products', 'participant metadata'];
+  'procedure_recommend', 'atc model', 'products', 'participant metadata', 'queue generation', 'arena events'];
+const QUEUE_NAME = `ATC Queue ${RUN}`;
 
 function atcDb(admin) { return getFirestore(admin.app(), ATC_DB_ID); }
 
@@ -187,7 +192,7 @@ async function seedATC() {
   });
   const simpleAdj = (name) => [{ name, procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] }] }];
 
-  await writeATC('atc_alpha', ATC.A1, { ...base(PF.p1, PF.admin, MODEL.alpha, 2), notesid: ATC.N1 }, [
+  await writeATC('atc_alpha', ATC.A1, { ...base(PF.p1, PF.admin, MODEL.alpha, 2), notesid: ATC.N1, totaladjustment: 1, totalprocedure: 2 }, [
     { name: `A1 adjustment one ${RUN}`, procedures: [
       { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
       { proc: 'two', status: 'completed', bigactivity: { [ACT.ca]: [PF.agent2] }, assigned: [PF.agent2] },
@@ -216,6 +221,28 @@ async function seedATC() {
   ]);
 
   await writeATC('atc_alpha', ATC.EIS1, base(PF.p3, PF.eis, MODEL.alpha, 3), simpleAdj(`EIS1 adjustment ${RUN}`));
+
+  // M1 — mentored + already validated (VATC-08: mentor filter, 'validated' status text, summary totals)
+  await writeATC('atc_alpha', ATC.M1, {
+    ...base(PF.p1, PF.admin, MODEL.alpha, 15), status: 'validated', validator: [pref(PF.mentor)],
+    bigactivity: { [ACT.author]: [PF.admin], [ACT.mentoring]: [PF.mentor] }, totaladjustment: 3, totalprocedure: 4,
+  }, simpleAdj(`M1 adjustment ${RUN}`));
+  // Q1 — beta model, 20 days ago: the ONLY listed ATC inside the seeded queue window + its product (VATC-08)
+  await writeATC('atc_alpha', ATC.Q1, base(PF.p1, PF.admin, MODEL.beta, 20), simpleAdj(`Q1 adjustment ${RUN}`));
+  await db.collection('queue generation').doc(`${RUN}_queue`).set({
+    queuename: QUEUE_NAME, docid: `${RUN}_queue`, queuestartdate: daysAgo(21), queueenddate: daysAgo(19), ...tag,
+  });
+  await db.collection('arena events').doc(`${RUN}_event`).set({
+    eventname: QUEUE_NAME, delete: false, productref: db.doc(`products/${RUN}_product_beta`), ...tag,
+  });
+  // E7 — two adjustments; adjustment 01 has two procedures (EATC-09)
+  await writeATC('atc_alpha', ATC.E7, base(PF.p2, PF.admin, MODEL.alpha, 14), [
+    { name: `E7 adjustment one ${RUN}`, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+      { proc: 'two', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+    ] },
+    { name: `E7 adjustment two ${RUN}`, procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] }] },
+  ]);
 
   for (const [i, id] of [ATC.E1, ATC.E2, ATC.E3, ATC.E4, ATC.E5].entries()) {
     await writeATC('atc_alpha', id, base(PF.p2, PF.admin, MODEL.alpha, 7 + i), simpleAdj(`${id} adjustment ${RUN}`));
@@ -255,7 +282,7 @@ async function teardownATC() {
   return n;
 }
 
-module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, seedATC, teardownATC };
+module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, QUEUE_NAME, seedATC, teardownATC };
 
 if (require.main === module) {
   (async () => {
