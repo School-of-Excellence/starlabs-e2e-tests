@@ -799,4 +799,38 @@ test.describe('Workshops — eiflix operations dashboard: Users date range', () 
     await page.getByTestId('eif-users-range-all').click();
     await settles(newCard, allNew, 'WS-58: All restores the unfiltered total');
   });
+
+  // =================================================================================================
+  // WS-59 — Total B!G Participants moved out of Users into its own B!G section (2026-10-13)
+  //
+  // Both halves are asserted: the card is GONE from Users and PRESENT in B!G. Asserting only the new
+  // home would pass on a page that rendered the card twice.
+  // =================================================================================================
+  test('WS-59 the B!G card renders in its own section and no longer in Users', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+
+    const users = page.getByTestId('eif-users-section');
+    const big = page.getByTestId('eif-big-section');
+    await expect(users.locator('button.eod-card').filter({ hasText: 'Total New Users' }),
+      'WS-59: Users keeps Total New Users').toBeVisible({ timeout: 45_000 });
+    await expect(users.locator('button.eod-card').filter({ hasText: 'New Users to Paid' }),
+      'WS-59: Users keeps New Users to Paid').toBeVisible();
+
+    // [ASSERT] negative half first — the card must have LEFT Users.
+    await expect(users.locator('button.eod-card').filter({ hasText: 'B!G Participants' }),
+      'WS-59: B!G Participants must no longer render in Users').toHaveCount(0);
+    await expect(users.locator('button.eod-card'), 'WS-59: Users now holds exactly two cards').toHaveCount(2);
+
+    // ...and it arrived in the B!G section, as the only card there.
+    await expect(big.getByRole('heading', { name: 'B!G' }), 'WS-59: the B!G section has its heading').toBeVisible();
+    const bigCard = big.locator('button.eod-card').filter({ hasText: 'Total B!G Participants' });
+    await expect(bigCard, 'WS-59: B!G Participants renders in the B!G section').toHaveCount(1);
+    await expect(big.locator('button.eod-card'), 'WS-59: B!G holds just that one card').toHaveCount(1);
+
+    // [REAL-UI] the moved card still opens its details panel — it is the same card, only relocated.
+    await bigCard.click();
+    await expect(page.locator('.eod-panel, [role="dialog"]').filter({ hasText: 'Total B!G Participants' }).first(),
+      'WS-59: the moved card still opens its details panel').toBeVisible({ timeout: 15_000 });
+  });
 });
