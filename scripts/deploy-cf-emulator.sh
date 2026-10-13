@@ -160,12 +160,12 @@ fi
 # --- 3) boot the emulator (firestore + auth + functions). singleProjectMode is set in the config. ----------
 # NOTE: not `exec` — we run in the foreground so the EXIT/INT/TERM trap restores package.json `main` when the
 # emulator is stopped (Ctrl-C). The emulator is a long-running foreground process.
-echo "🚀 firebase emulators:start --project $FIREBASE_PROJECT (firestore:8080 auth:9099 functions:5001 ui:4001)"
+echo "🚀 firebase emulators:start --project $FIREBASE_PROJECT (firestore:8080 auth:9099 functions:5001 storage:9199 ui:4001)"
 # shellcheck disable=SC2086
 # FB_FN_FLAGS / FB_EMU_EXTRA are intentionally unquoted: they word-split into 0+ flags (no spaces in values).
 firebase emulators:start \
   --project "$FIREBASE_PROJECT" \
   --config "$CONFIG" \
-  --only firestore,auth,functions \
+  --only firestore,auth,functions,storage \
   ${FB_FN_FLAGS} \
   ${FB_EMU_EXTRA:-}

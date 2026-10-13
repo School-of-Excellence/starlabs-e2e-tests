@@ -25,15 +25,15 @@
       "*.spec.ts",
       "**/*.spec.ts",
       "firebase.json",
-    "firestore.indexes.json",
-    "firestore.rules",
+      "firestore.indexes.json",
+      "firestore.rules",
       "package-lock.json",
       "tsconfig*.json",
       "**/tsconfig*.json",
       "*.conf.js",
       "**/*.conf.js",
       "scripts/**",
-    "qa/**",
+      "qa/**",
       "src/app/LiveKit Cloud/**",
       "src/assets/**",
       "src/coi-serviceworker.js",
@@ -416,6 +416,29 @@
         "functions/components/clientissue.js"
       ],
       "reviewNote": "WIRED 2026-09-08; CI-READY 2026-09-15. The emulator twin now exists (playwright.support.emulator.config.ts via makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown.ts), so the suite joins the emulator gate. config switched to the emulator twin and ciReady flipped true so the suite runs on the emulator gate via branch-suites and the console mirror (suites-deploy) credits src/app/Customer Support/**."
+    },
+    "atc": {
+      "title": "ATC (Prescribe / Edit / View)",
+      "description": "Prescribe ATC, Edit ATC and View Prescribed ATC incl. bulk Change Agent, drafts, two-device conflict and media — EMULATOR ONLY (seeded firestore-atc; never the development or production database).",
+      "config": "playwright.atc.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "atc",
+      "ciReady": true,
+      "appPaths": [
+        "src/app/ATC/prescribe-atc/**",
+        "src/app/ATC/edit-atc/**",
+        "src/app/ATC/view-prescribed-atc/**",
+        "src/app/ATC/shared/**",
+        "src/app/ATC/atc-option/**",
+        "src/app/ATC/atc-ael-confirm/**",
+        "src/app/ATC/preview-atc-before-submission/**",
+        "src/app/ATC/select-validator/**",
+        "src/app/shared/atc-draft.service.ts",
+        "src/app/shared/atc-draft.logic.ts",
+        "src/app/shared/media-cache.service.ts"
+      ],
+      "cfPaths": [],
+      "reviewNote": "ADDED 2026-10-13 (plan specs/plans/2026-10-13-atc-prescribe-edit-view.md). ciReady:true 2026-10-13 — suite green 25/25 against offline-ATC (operator order: suite first, then ship). Operator rule: ATC is tested against the EMULATOR ONLY — seed-atc.js refuses to run without the emulator hosts (G1), the specs abort and fail on any real Firestore/Storage request (G2), and emulator-wiring.spec.ts proves firestore-atc reads the emulator (G3). Only these three routes are re-allowed in _support/excluded-routes.ts; every other ATC route stays excluded and unclaimed."
     },
     "unit": {
       "title": "Unit tests",

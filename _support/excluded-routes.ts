@@ -1,10 +1,13 @@
 // ATC-integrating / ATC-folder routes that MUST be excluded from CI E2E (sensitive ATC data — D-001).
 // Source: specs/operator-screens.md §C + the ATC route group in DOCS.md. Tests must never navigate to these.
 export const ATC_EXCLUDED_ROUTES: string[] = [
-  // ATC route group
-  '/addtripleATC', '/atctrajectory', '/editATC', '/edittripleATC', '/liveprescription',
-  '/pickformentoring', '/prescribeATC', '/previewATC', '/previewtripleATC', '/reviewflagATC',
-  '/view-participant-atc', '/viewassignedATC', '/viewprescribedATC', '/viewtripleATC',
+  // ATC route group.
+  // RE-ALLOWED 2026-10-13 (operator; plan specs/plans/2026-10-13-atc-prescribe-edit-view.md): /prescribeATC,
+  // /editATC, /viewprescribedATC — driven ONLY by the `atc` suite, against the EMULATOR ONLY (seeded
+  // firestore-atc; never the development or production database). Every other ATC route stays excluded.
+  '/addtripleATC', '/atctrajectory', '/edittripleATC', '/liveprescription',
+  '/pickformentoring', '/previewATC', '/previewtripleATC', '/reviewflagATC',
+  '/view-participant-atc', '/viewassignedATC', '/viewtripleATC',
   '/viewUpgradedATC', '/viewaigeneratedatc',
   // Non-ATC-folder screens that integrate ATC data (operator-screens.md §C)
   '/updateprofiletaxonomy', '/overall_event_dashboard', '/big-dashboard', '/profilelist',

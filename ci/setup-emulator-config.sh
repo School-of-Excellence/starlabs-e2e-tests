@@ -3,7 +3,7 @@
 # setup-emulator-config.sh — OVERLAY the emulator build config onto the app + stage the emulator config in the hub.
 #
 # Playwright-HUB-centric: the Playwright repo (starlabs-e2e-tests) is the workspace root. This script:
-#   • stages firebase.emulator.json + firestore.rules + firestore.indexes.json at the HUB root
+#   • stages firebase.emulator.json + firestore.rules + firestore.indexes.json + storage.rules at the HUB root
 #     (deploy-cf-emulator.sh reads $HUB/firebase.emulator.json; its functions.source resolves the
 #      `starlabs-cloud-function` symlink in the hub);
 #   • injects the Angular-specific emulator wiring into the APP UNDER TEST ($APP_PATH): environment.emulator.ts
@@ -22,7 +22,7 @@ APP_PATH="${APP_PATH:-$HUB_ROOT/app}"
 echo "→ emulator overlay: hub = $HUB_ROOT | app = $APP_PATH"
 
 # Hub-root emulator config files — needed in BOTH the CF-guard-only and full web-e2e modes.
-for f in firebase.emulator.json firestore.rules firestore.indexes.json; do
+for f in firebase.emulator.json firestore.rules firestore.indexes.json storage.rules; do
   [ -f "$OVERLAY/$f" ] || { echo "::error::overlay file missing: $OVERLAY/$f"; exit 1; }
 done
 
@@ -31,7 +31,8 @@ done
 cp "$OVERLAY/firebase.emulator.json"  "$HUB_ROOT/firebase.emulator.json"
 cp "$OVERLAY/firestore.rules"         "$HUB_ROOT/firestore.rules"
 cp "$OVERLAY/firestore.indexes.json"  "$HUB_ROOT/firestore.indexes.json"
-echo "✓ firebase.emulator.json + firestore.rules + firestore.indexes.json → hub root"
+cp "$OVERLAY/storage.rules"           "$HUB_ROOT/storage.rules"
+echo "✓ firebase.emulator.json + firestore.rules + firestore.indexes.json + storage.rules → hub root"
 
 # CF PREDEPLOY LOOP-GUARD (CF_GUARD_ONLY, Option B 2026-07-05): the guard boots the emulator with ONLY
 # firestore + the CF functions — NO Angular app, NO ng serve (see playwright.cf-guards.config.ts). It
