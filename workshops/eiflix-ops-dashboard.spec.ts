@@ -964,3 +964,47 @@ test.describe('Workshops — eiflix operations dashboard: Device Breakdown range
     await expect(rowFor(wsDbPlatforms.recent), 'WS-61: and includes -20d again').toHaveCount(1);
   });
 });
+
+// ===================================================================================================
+// WS-62 — New Users to Paid: Watson TOTAL AMOUNT, when the build has NO Watson config
+//
+// The emulator build sets `watson: null` on purpose — tests must never reach the finance project. That
+// makes this the one path CI can check, and it is the risky one: the lookup runs on every dashboard
+// load, so a missing config must leave the card and panel working and show NO total — never a wrong
+// "₹0" — without a console error. The arithmetic itself is unit-tested against Journey Support's
+// screenshot values (eiflixoperationsdashboard.logs.spec.ts).
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: paid total amount (no Watson)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedUsersRangePaid();          // NU_C moved across today -> the paid card has a row
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearUsersRangePaid();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-62 without Watson the paid card and panel still work and show no total amount', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const paid = page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'New Users to Paid' });
+    await expect(paid, 'WS-62: the paid card renders').toBeVisible({ timeout: 45_000 });
+    await expect.poll(async () => Number((await paid.locator('.eod-count').innerText()).replace(/[^\d]/g, '')) || 0,
+      { message: 'WS-62: the paid card still counts people', timeout: 60_000 }).toBeGreaterThan(0);
+    await expect(paid.getByTestId('eif-mc-card-amount'), 'WS-62: no Watson -> no total on the card (never a wrong ₹0)').toHaveCount(0);
+
+    await paid.click();
+    const panel = page.locator('.eod-panel').filter({ hasText: 'New Users to Paid' });
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }), 'WS-62: the panel lists the moved person')
+      .toHaveCount(1, { timeout: 15_000 });
+    await expect(panel.getByTestId('eif-mc-amount'), 'WS-62: no Watson -> no per-person amount').toHaveCount(0);
+  });
+});
+
