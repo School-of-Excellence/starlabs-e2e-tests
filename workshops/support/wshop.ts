@@ -1487,6 +1487,7 @@ export const wsMasterclassIds = {
   failed: `${RUN}_mc_failed`,      // status 'failed', NU_C, today        → NEGATIVE CONTROL: never shown
 };
 export const wsMasterclassAmounts = { capNew: 499, capPm: 1500, capOld: 2999, failed: 777 };
+export const wsMasterclassJourney = `BIG Journey ${RUN}`;
 
 /**
  * Four payments against the seeded W_DASH workshop (an existing doc, read-only elsewhere, so no other
@@ -1507,11 +1508,16 @@ export async function seedMasterclassPayments(): Promise<void> {
     put(wsMasterclassIds.capPm, 'captured', wsProfileIds.p0, wsMasterclassAmounts.capPm, daysAgo(0)),
     put(wsMasterclassIds.capOld, 'captured', wsAddIds.NU_B, wsMasterclassAmounts.capOld, daysAgo(40)),
     put(wsMasterclassIds.failed, 'failed', wsAddIds.NU_C, wsMasterclassAmounts.failed, daysAgo(0)),
+    // p0's journey doc names itself in `journeyname`; the dashboard reads `journey`. Give it one for
+    // this case so the participant row has a journey to show. Removed by clearMasterclassPayments().
+    db.collection('journey').doc(wsAddIds.JRN_BIG).set({ journey: wsMasterclassJourney }, { merge: true }),
   ]);
 }
 
 export async function clearMasterclassPayments(): Promise<void> {
   const admin = seed.initAdmin();
+  await admin.firestore().collection('journey').doc(wsAddIds.JRN_BIG)
+    .set({ journey: admin.firestore.FieldValue.delete() }, { merge: true });
   await Promise.all(Object.values(wsMasterclassIds).map(id =>
     admin.firestore().collection('workshoppaymentlog').doc(id).delete().catch(() => undefined)));
 }
@@ -1528,4 +1534,22 @@ export async function countCapturedForUsersRange(days: number | null): Promise<n
     if (at && at >= win.start && at <= win.end) n++;
   });
   return n;
+}
+
+/** Sum of amountRupees over captured payments in the Users-range window (non-numeric counts as 0, as the card does). */
+export async function sumCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let sum = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (win) {
+      const at = asDate(data['datetime']);
+      if (!(at && at >= win.start && at <= win.end)) return;
+    }
+    const n = Number(data['amountRupees']);
+    sum += Number.isFinite(n) ? n : 0;
+  });
+  return sum;
 }

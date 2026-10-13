@@ -26,6 +26,7 @@ import {
   countWebUsersFromAnalytics,
   countNewUsersCard, countPaidCard, seedUsersRangePaid, clearUsersRangePaid, wsDateInputValue,
   seedMasterclassPayments, clearMasterclassPayments, countCapturedForUsersRange, wsMasterclassAmounts,
+  sumCapturedForUsersRange, wsMasterclassJourney,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -875,6 +876,11 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     await expect.poll(countOf, { message: `WS-60: All counts every captured payment (${all})`, timeout: 60_000 }).toBe(all);
     await page.getByTestId('eif-users-range-today').click();
     await expect.poll(countOf, { message: `WS-60: Today narrows on datetime (${today})`, timeout: 30_000 }).toBe(today);
+    // The card highlights the rupee total (no "collected" wording) — summed by the TEST.
+    const todaySum = await sumCapturedForUsersRange(0);
+    await expect(card.getByTestId('eif-mc-card-amount'), `WS-60: the card highlights today's total (₹${todaySum})`)
+      .toHaveText('₹' + todaySum.toLocaleString('en-IN'), { timeout: 15_000 });
+    await expect(card, 'WS-60: the old "collected" wording is gone').not.toContainText('collected');
 
     // [REAL-UI] open the card — the panel lists the people behind the number.
     await card.click();
@@ -899,5 +905,10 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     const pmRow = panel.locator('.eod-row').filter({ has: page.getByTestId('eif-mc-amount').filter({ hasText: '₹1,500' }) });
     await expect(pmRow, 'WS-60: the participant\'s purchase is listed').toHaveCount(1);
     await expect(pmRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: a participant is NOT tagged New User').toHaveCount(0);
+
+    // Journey — participant-metadata payers only.
+    await expect(pmRow.locator('.eod-tag-journey'), 'WS-60: the participant row shows their journey')
+      .toHaveText(wsMasterclassJourney, { timeout: 15_000 });
+    await expect(newRow.locator('.eod-tag-journey'), 'WS-60: a new-user-only payer has no journey').toHaveCount(0);
   });
 });
