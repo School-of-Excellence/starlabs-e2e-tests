@@ -25,6 +25,7 @@ import {
   seedPurchases, clearPurchases, countNewUserDataInWindow, countCapturedPayments,
   countWebUsersFromAnalytics,
   countNewUsersCard, countPaidCard, seedUsersRangePaid, clearUsersRangePaid, wsDateInputValue,
+  seedMasterclassPayments, clearMasterclassPayments, countCapturedForUsersRange, wsMasterclassAmounts,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -820,7 +821,8 @@ test.describe('Workshops — eiflix operations dashboard: Users date range', () 
     // [ASSERT] negative half first — the card must have LEFT Users.
     await expect(users.locator('button.eod-card').filter({ hasText: 'B!G Participants' }),
       'WS-59: B!G Participants must no longer render in Users').toHaveCount(0);
-    await expect(users.locator('button.eod-card'), 'WS-59: Users now holds exactly two cards').toHaveCount(2);
+    // Two user cards + Master Class Purchase (WS-60, 2026-10-13) — and no B!G.
+    await expect(users.locator('button.eod-card'), 'WS-59: Users holds exactly three cards').toHaveCount(3);
 
     // ...and it arrived in the B!G section, as the only card there.
     await expect(big.getByRole('heading', { name: 'B!G' }), 'WS-59: the B!G section has its heading').toBeVisible();
@@ -832,5 +834,70 @@ test.describe('Workshops — eiflix operations dashboard: Users date range', () 
     await bigCard.click();
     await expect(page.locator('.eod-panel, [role="dialog"]').filter({ hasText: 'Total B!G Participants' }).first(),
       'WS-59: the moved card still opens its details panel').toBeVisible({ timeout: 15_000 });
+  });
+});
+
+// ===================================================================================================
+// WS-60 — Master Class Purchase card (Users section)
+//
+// Captured payments only, tagged New User when the payer is in new_user_data, labelled with the
+// workshop's detail-page title, narrowed by the Users range on `datetime`. NU_C's payment is FAILED
+// and NU_C pays for nothing else, so NU_C appearing anywhere means the status filter leaked.
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: Master Class Purchase', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedMasterclassPayments();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearMasterclassPayments();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-60 Master Class Purchase counts captured payments by datetime, tags new users and names the workshop', async ({ page }) => {
+    const all = await countCapturedForUsersRange(null);
+    const today = await countCapturedForUsersRange(0);
+    expect(today, `WS-60: the seed must hold captured payments outside today (all=${all}, today=${today})`).toBeLessThan(all);
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const card = page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'Master Class Purchase' });
+    await expect(card, 'WS-60: the card renders in the Users section').toBeVisible({ timeout: 45_000 });
+    const countOf = async () => Number((await card.locator('.eod-count').first().innerText().catch(() => '')).replace(/[^\d]/g, '')) || 0;
+
+    await expect.poll(countOf, { message: `WS-60: All counts every captured payment (${all})`, timeout: 60_000 }).toBe(all);
+    await page.getByTestId('eif-users-range-today').click();
+    await expect.poll(countOf, { message: `WS-60: Today narrows on datetime (${today})`, timeout: 30_000 }).toBe(today);
+
+    // [REAL-UI] open the card — the panel lists the people behind the number.
+    await card.click();
+    const panel = page.locator('.eod-panel').filter({ hasText: 'Master Class Purchase' });
+    await expect(panel, 'WS-60: the details panel opens').toBeVisible({ timeout: 15_000 });
+
+    // [ASSERT] negative control first: the FAILED payer must not be listed.
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }),
+      'WS-60: a failed payment must never appear').toHaveCount(0);
+    // ...nor the 40-day-old captured payer, under Today.
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuBravo }),
+      'WS-60: a captured payment outside the window must not appear under Today').toHaveCount(0);
+
+    const newRow = panel.locator('.eod-row').filter({ hasText: wsAddNames.nuAlpha });
+    await expect(newRow, 'WS-60: the new user\'s purchase is listed').toHaveCount(1);
+    await expect(newRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: payer in new_user_data is tagged New User').toHaveCount(1);
+    await expect(newRow.getByTestId('eif-mc-workshop'), 'WS-60: the row names the workshop by its detail-page title')
+      .toHaveText(`Dashboard Workshop ${RUN}`);
+    await expect(newRow.getByTestId('eif-mc-amount'), 'WS-60: the row shows the amount in rupees')
+      .toHaveText('₹' + wsMasterclassAmounts.capNew);
+
+    const pmRow = panel.locator('.eod-row').filter({ has: page.getByTestId('eif-mc-amount').filter({ hasText: '₹1,500' }) });
+    await expect(pmRow, 'WS-60: the participant\'s purchase is listed').toHaveCount(1);
+    await expect(pmRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: a participant is NOT tagged New User').toHaveCount(0);
   });
 });

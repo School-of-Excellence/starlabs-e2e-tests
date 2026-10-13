@@ -1475,3 +1475,57 @@ export async function clearUsersRangePaid(): Promise<void> {
   await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
     .set({ movedtoexist: FV.delete(), movedon: FV.delete() }, { merge: true });
 }
+
+// =================================================================================================
+// 2026-10-13 — Master Class Purchase card in the Users section (WS-60).
+// =================================================================================================
+
+export const wsMasterclassIds = {
+  capNew: `${RUN}_mc_cap_new`,     // captured, today, NU_A (a new user)  → tagged New User
+  capPm: `${RUN}_mc_cap_pm`,       // captured, today, p0 (a participant) → NOT tagged
+  capOld: `${RUN}_mc_cap_old`,     // captured, 40 days ago               → in All, outside 30D
+  failed: `${RUN}_mc_failed`,      // status 'failed', NU_C, today        → NEGATIVE CONTROL: never shown
+};
+export const wsMasterclassAmounts = { capNew: 499, capPm: 1500, capOld: 2999, failed: 777 };
+
+/**
+ * Four payments against the seeded W_DASH workshop (an existing doc, read-only elsewhere, so no other
+ * suite's workshop counts move). The failed row's payer (NU_C) appears in NO captured row, so if the
+ * card ever shows NU_C it can only be because the status filter let a non-captured payment through.
+ */
+export async function seedMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ref = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return T.fromDate(d); };
+  const put = (id: string, status: string, profileid: string, amountRupees: number, datetime: any) =>
+    db.collection('workshoppaymentlog').doc(id).set({ docid: id, status, profileid, amountRupees, datetime, workshopref: ref, ...tag });
+  await Promise.all([
+    put(wsMasterclassIds.capNew, 'captured', wsAddIds.NU_A, wsMasterclassAmounts.capNew, daysAgo(0)),
+    put(wsMasterclassIds.capPm, 'captured', wsProfileIds.p0, wsMasterclassAmounts.capPm, daysAgo(0)),
+    put(wsMasterclassIds.capOld, 'captured', wsAddIds.NU_B, wsMasterclassAmounts.capOld, daysAgo(40)),
+    put(wsMasterclassIds.failed, 'failed', wsAddIds.NU_C, wsMasterclassAmounts.failed, daysAgo(0)),
+  ]);
+}
+
+export async function clearMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  await Promise.all(Object.values(wsMasterclassIds).map(id =>
+    admin.firestore().collection('workshoppaymentlog').doc(id).delete().catch(() => undefined)));
+}
+
+/** Captured payments in the Users-range window (null = All), counted by the TEST over the whole collection. */
+export async function countCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    if (!win) { n++; return; }
+    const at = asDate((d.data() || {})['datetime']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
