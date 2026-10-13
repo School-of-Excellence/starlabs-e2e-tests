@@ -33,8 +33,14 @@ const RUN = process.env.PROF_RUNID || 'prof';
 const IDS = { J: `${RUN}_SB_J`, a: `${RUN}_sb_a`, b: `${RUN}_sb_b`, c: `${RUN}_sb_c`, d: `${RUN}_sb_d`, e: `${RUN}_sb_e`, MANUAL: `${RUN}_SB_MANUAL` };
 const NAMES = { J: `SB Journey ${RUN}`, a: `SB Alpha ${RUN}`, b: `SB Bravo ${RUN}`, c: `SB Charlie ${RUN}`, MANUAL: `SB Manual ${RUN}`, AUTO: `SB Active ${RUN}` };
 const EMAILS = { c: `sb-c+${RUN}@example.com`, e: `sb-e+${RUN}@example.com` };
-/** The id the app gives a new segment (segIdFor in the engine): upper-case slug, 24 chars. */
-const AUTO_ID = NAMES.AUTO.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24);
+/** The app gives a new segment a Firestore auto id: find it by its run-unique name (the live doc, never a migrated copy). */
+let autoIdCache = '';
+async function autoId(): Promise<string> {
+  if (autoIdCache) return autoIdCache;
+  const docs = await pollUntil(() => queryWhere('segmentboardconfig', [['name', '==', NAMES.AUTO]]), (r) => r.some((d) => !d['migratedto']),
+    { label: 'auto segment config by name' });
+  return (autoIdCache = docs.find((d) => !d['migratedto'])!.id);
+}
 
 const listOf = async (id: string) => ((await getDoc('segmentboardlist', id))?.profilelist as string[] | undefined) ?? null;
 const sameSet = (got: string[] | null, want: string[]) => !!got && got.length === want.length && want.every((x) => got.includes(x));
@@ -78,11 +84,16 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await page.getByTestId('sgb-dlg-cond-option').and(page.locator('[value="ACTIVE"]')).check();
     await page.getByTestId('sgb-dlg-save').click();
 
-    const cfg = await pollUntil(() => getDoc('segmentboardconfig', AUTO_ID), (d) => !!d, { label: `config ${AUTO_ID}` });
+    const AUTO_ID = await autoId();
+    expect(AUTO_ID, 'SGB-02: a new segment gets a random (auto) id, not a slug of its name').toMatch(/^[A-Za-z0-9]{20}$/);
+    const cfg = await getDoc('segmentboardconfig', AUTO_ID);
+    expect(cfg!.id, 'SGB-02: the id field matches the doc id').toBe(AUTO_ID);
+    expect(String(cfg!.createdBy ?? ''), 'SGB-02: createdBy is a profile id, not an email').not.toContain('@');
     expect(cfg!.journeys, 'SGB-02: the journey setting stores the journey doc id').toEqual([IDS.J]);
     expect(cfg!.rule, 'SGB-02: the rule is a plain condition list').toEqual([{ field: 'customerStatus', op: 'in', value: ['ACTIVE'] }]);
     const list = await pollUntil(() => listOf(AUTO_ID), (l) => sameSet(l, [IDS.a, IDS.b]),
       { label: 'auto list = Alpha + Bravo', timeoutMs: 60_000 });
+    expect((await getDoc('segmentboardlist', AUTO_ID))?.segmentid, 'SGB-02: the list doc id and segmentid are the config id').toBe(AUTO_ID);
     for (const out of [IDS.c, IDS.d, IDS.e]) expect(list, `SGB-02: ${out} is a negative control`).not.toContain(out);
   });
 
@@ -99,6 +110,7 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await page.getByTestId('sgb-move-go').click();
 
     await pollUntil(() => listOf(IDS.MANUAL), (l) => sameSet(l, [IDS.b]), { label: 'manual list = Bravo' });
+    const AUTO_ID = await autoId();
     await pollUntil(() => listOf(AUTO_ID), (l) => sameSet(l, [IDS.a]), { label: 'auto list drops Bravo' });
     await page.getByTestId('sgb-drawer-close').click();
   });
@@ -124,10 +136,11 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await drawer.getByTestId('sgb-drawer-row').filter({ hasText: NAMES.b }).getByTestId('sgb-drawer-row-select').check();
     await drawer.getByTestId('sgb-bulk-remove').click();
     await pollUntil(() => listOf(IDS.MANUAL), (l) => sameSet(l, [IDS.c]), { label: 'manual list = Charlie' });
-    await pollUntil(() => listOf(AUTO_ID), (l) => sameSet(l, [IDS.a, IDS.b]), { label: 'Bravo matches the automated segment again' });
+    await pollUntil(async () => listOf(await autoId()), (l) => sameSet(l, [IDS.a, IDS.b]), { label: 'Bravo matches the automated segment again' });
   });
 
   test('SGB-06 archive → unarchive → archive: no hard delete, and every step is in the segment history', async ({ page }) => {
+    const AUTO_ID = await autoId();
     const hist = (action: string) => queryWhere(`segmentboardconfig/${AUTO_ID}/segmenthistory`, [['action', '==', action]]);
     await open(page);
     const archive = async () => {
@@ -149,7 +162,7 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     expect((await hist('create')).length, 'SGB-06: the create from SGB-02 is recorded').toBe(1);
     const [a1] = await hist('archive');
     expect(a1?.changes?.archived, 'SGB-06: archive records archived false → true').toEqual({ from: false, to: true });
-    expect(a1?.by?.email, 'SGB-06: who changed it').toBeTruthy();
+    expect((a1?.by as { profileid?: string })?.profileid, 'SGB-06: who changed it (profile id)').toBeTruthy();
     expect(a1?.at, 'SGB-06: when (server time)').toBeTruthy();
     // the side panel History tab lists them
     await card(page, NAMES.AUTO).getByTestId('sgb-card-viewall').click();
@@ -176,6 +189,15 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
       page.getByTestId('sgb-card-refresh'), page.getByTestId('sgb-dlg-type-auto'), page.getByTestId('sgb-dlg-type-manual'),
       page.getByTestId('sgb-dlg-status-active'), page.getByTestId('sgb-dlg-status-inactive'),
       page.getByTestId('sgb-drawer-search'), page.getByTestId('sgb-drawer-export'), page.getByTestId('sgb-drawer-save-list'),
+    ]) expect(l).toBeTruthy();
+  });
+  // The one-time id migration rewrites every text-id segment on the project. On the shared test project that would
+  // move other runs' and real segments too, so it is registered here and never driven by a case.
+  test.fixme('SGB-ADDR3 id migration controls addressable (never driven: project-wide one-time write)', async ({ page }) => {
+    await page.goto('/segmentboard', { waitUntil: 'domcontentloaded' });
+    for (const l of [
+      page.getByTestId('sgb-mig-open'), page.getByTestId('sgb-mig-dlg'), page.getByTestId('sgb-mig-row'),
+      page.getByTestId('sgb-mig-run'), page.getByTestId('sgb-mig-done'),
     ]) expect(l).toBeTruthy();
   });
   test.fixme('SGB-ADDR2 import & compare and count filters addressable (deferred behavioral)', async ({ page }) => {

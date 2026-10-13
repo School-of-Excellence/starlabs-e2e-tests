@@ -53,3 +53,19 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 **Needs (console):**
 - read/create rules for `segmentboardconfig/{id}/segmenthistory` on starlabs-test;
 - the collection-group index on `segmenthistory.at` (descending), used only by the board-wide Change history, which no case drives.
+
+## 2026-10-13 · Random segment ids; who = profile id; migration hooks
+
+**What changed in the app:**
+- New segments get Firestore auto ids, so the spec can no longer derive the id from the name. `autoId()` finds the live config doc by its run-unique name, skipping docs with `migratedto`.
+- SGB-02 now also asserts:
+  - the id is an auto id, and the `id` field equals the doc id;
+  - `createdBy` holds a profile id, not an email;
+  - the list doc's `segmentid` equals the config id.
+- SGB-06 checks `by.profileid` instead of `by.email`.
+
+**Seed:** `sbSegId` is removed, and cleanup still goes by name. The seeded manual segment keeps its fixed test id, so the board shows the migration banner during runs; it's harmless and nothing clicks it.
+
+**Migration hooks:** `sgb-mig-open`, `-dlg`, `-row`, `-run` and `-done` are registered in SGB-ADDR3 (`test.fixme`) and never driven. The migration rewrites every text-id segment on the project, which on the shared test project would include other runs' and real segments.
+
+**Needs:** the test admin user must have a `profile_data` doc linked by `user_ref`. Otherwise every save is refused ("No profile found…"), and SGB-02..06 fail on their first write.

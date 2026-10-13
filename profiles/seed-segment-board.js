@@ -49,8 +49,7 @@ const SB_EMAILS = {
   a: `sb-a+${TESTRUNID}@example.com`, b: `sb-b+${TESTRUNID}@example.com`, c: `sb-c+${TESTRUNID}@example.com`,
   d: `sb-d+${TESTRUNID}@example.com`, e: `sb-e+${TESTRUNID}@example.com`,
 };
-/** The id the app gives a new segment (segIdFor in segment-board.engine.ts): upper-case slug, 24 chars. */
-const sbSegId = (name) => name.toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || 'SEG';
+// The app gives new segments Firestore auto ids, so app-created segments are found by their run-unique name.
 
 const SEEDED_SEGMENT_BOARD = ['segmentboardconfig', 'segmentboardlist'];
 
@@ -90,4 +89,4 @@ async function seedSegmentBoard(db, tag, J1) {
   });
 }
 
-module.exports = { SB_IDS, SB_NAMES, SB_EMAILS, sbSegId, SEEDED_SEGMENT_BOARD, seedSegmentBoard, cleanupSpecSegments };
+module.exports = { SB_IDS, SB_NAMES, SB_EMAILS, SEEDED_SEGMENT_BOARD, seedSegmentBoard, cleanupSpecSegments };
