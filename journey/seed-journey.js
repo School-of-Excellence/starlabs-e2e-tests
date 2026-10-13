@@ -86,6 +86,8 @@ const ID = {
   SL2: `${TESTRUNID}_SL2`,          // salesleads doc (pending, initial payment APPROVED) — JP-27..32 approve
   SLP: `${TESTRUNID}_SLP`,          // salesleads doc — ASSURED, product-only (journey '') — JCD-04
   SLJ: `${TESTRUNID}_SLJ`,          // salesleads doc — ASSURED, journey + product (negative control) — JCD-04
+  SLQ: `${TESTRUNID}_SLQ`,          // salesleads doc — ASSURED, no journey AND no productref — JCD-06 (PJP fallback)
+  PJP_SLQ: `${TESTRUNID}_PJP_SLQ`,  // participantjourneyproduct for SLQ (salesleadsref → SLQ, productref → P2) — JCD-06
   DF1: `${TESTRUNID}_DF1`,          // delivery forms doc with a formarray — formtemplate render (JP-16) + a deliverysequence-authoring activity option (JP-AUTH)
   APT1: `${TESTRUNID}_APT1`,        // appointmenttype doc — a second deliverysequence-authoring activity option
   EMT1: `${TESTRUNID}_EMT1`,        // email templates doc (active:true) — JP-09 onboarding email template
@@ -364,9 +366,36 @@ async function seedJourney() {
       email: `${id.toLowerCase()}@example.com`, journey, productref: productRef(ID.P1), journeytype: 'new',
       status: 'approved', paymentplan: 'monthly', paymentplanassureddate: T.fromMillis(Date.now() - 60e3),
       date: T.fromMillis(Date.now() - 60e3), purchasedate: T.fromMillis(Date.now() - 60e3),
-      totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, salespersonname: 'E2E Seeder', ...tag,
+      totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, salespersonname: 'E2E Seeder',
+      // JCD-05: a Sales Notes value renders the notes cell whose click opens the OnboardingRemark dialog.
+      ...(id === ID.SLP ? { notes: `JCD sale note ${TESTRUNID}` } : {}), ...tag,
     });
   }
+  //    JCD-06 (sashong 176ce857): SLQ is product-only with NO productref of its own — the Journey cell must fall
+  //    back to the productref of the participantjourneyproduct whose salesleadsref points at it (P2 → "Test
+  //    Product Two"). SLP (own productref → P1) stays the control that the sale's own product still wins.
+  await db.collection('salesleads').doc(ID.SLQ).set({
+    docid: ID.SLQ, profileid: `${TESTRUNID}_pf_slq`, name: `JCD Assured PJP Product ${TESTRUNID}`,
+    email: `${ID.SLQ.toLowerCase()}@example.com`, journey: '', journeytype: 'new',
+    status: 'approved', paymentplan: 'monthly', paymentplanassureddate: T.fromMillis(Date.now() - 60e3),
+    date: T.fromMillis(Date.now() - 60e3), purchasedate: T.fromMillis(Date.now() - 60e3),
+    totalpurchasevalue: 1000, initialpayment: 100, installmentamount: 300, salespersonname: 'E2E Seeder', ...tag,
+  });
+  //    PJP_SLQ is also the JCD-05 entry point: paymentplan set + not onboarded + purchased this year → a row in the JE
+  //    dashboard's "To onboard" table, whose "Mark Onboarded" opens OnboardingRemark in its email-composer mode.
+  await db.collection('participantjourneyproduct').doc(ID.PJP_SLQ).set({
+    docid: ID.PJP_SLQ, profileid: `${TESTRUNID}_pf_slq`, salesleadsref: db.collection('salesleads').doc(ID.SLQ),
+    productref: productRef(ID.P2), paymentplan: 'monthly', journeystatus: 'initiated', onboarded: false,
+    purchasedate: T.fromMillis(Date.now() - 60e3), paymentplanassureddate: T.fromMillis(Date.now() - 60e3), ...tag,
+  });
+  //    …named, so the To-onboard table's name search can find it.
+  await db.collection('participant metadata').doc(`${TESTRUNID}_pf_slq`).set({
+    docid: `${TESTRUNID}_pf_slq`, profileid: `${TESTRUNID}_pf_slq`, name: `JCD Onboard Remark ${TESTRUNID}`,
+    email: `${TESTRUNID}_pf_slq@example.com`, customerstatus: 'active', ...tag,
+  });
+  //    The OnboardingRemark dialog reads classify/postmarkserver on open and indexes it (senders['senderemails']),
+  //    so a missing doc throws. Merge, untagged — the same shape comms/seed-comms.js writes.
+  await db.collection('classify').doc('postmarkserver').set({ servername: ['POSTMARK_STARLABS_TEST'] }, { merge: true });
 
   //    delivery forms doc with a formarray — formtemplate route (?id=DF1) builds the form from this
   //    (JP-16 render), and it is also a "Form" delivery activity option in the deliverysequence
@@ -377,6 +406,9 @@ async function seedJourney() {
   //    component adds a FormControl for it). JP-16 asserts the Text field's fieldname renders.
   await db.collection('delivery forms').doc(ID.DF1).set({
     docid: ID.DF1, formname: `Test Delivery Form ${TESTRUNID}`,
+    // JP-33: a TWO-LINE description — the formtemplate must keep the line break (white-space: pre-line,
+    // mahalakshmi 6399b868); with normal white-space the browser collapses it into one line.
+    formdescription: `Description line one ${TESTRUNID}\nDescription line two ${TESTRUNID}`,
     formarray: [
       { type: 'label', fieldname: `Onboarding Questionnaire ${TESTRUNID}`, fielddescription: 'Seeded section.' },
       { type: 'Text', fieldname: `Participant Goal ${TESTRUNID}`, required: false },

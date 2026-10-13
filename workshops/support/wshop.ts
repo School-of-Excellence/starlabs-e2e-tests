@@ -6,7 +6,7 @@
 // or open a real Zoom window. NOTE: on the test project getCloudFunctionUrl() returns '' for
 // workshopprogressmessage (the project isn't in its URL map, workshop-dashboard.component.ts:481), so
 // the comms HTTP path is inert here regardless — the firewall is belt-and-suspenders.
-import { Page } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { loginAs } from '../../queue/support/actors';
 import { installAllExternalStubs } from '../../queue/stubs';
 import { installProdFirewall } from '../../_shared/prod-firewall';
@@ -892,4 +892,819 @@ export async function clearPopupBanner(): Promise<void> {
   const ref = admin.firestore().collection(wsPopupBannerDoc.col).doc(wsPopupBannerDoc.id);
   const snap = await ref.get().catch(() => ({ exists: false, data: () => ({}) } as any));
   if (snap.exists && (snap.data() || {})['testrunid'] === RUN) await ref.delete().catch(() => undefined);
+}
+
+// =================================================================================================
+// 2026-10-08 — evergreen "days remaining" in the Extended Participants dialog.
+// =================================================================================================
+
+/** The evergreen world CN/WS-49 needs. Nothing else in the suite seeds an evergreen workshop. */
+export const wsEvergreenIds = {
+  WORKSHOP: `${RUN}_W_evergreen`,
+  ENR_ACTIVE: `${RUN}_ev_enr_active`,
+  ENR_LAPSED: `${RUN}_ev_enr_lapsed`,
+  ENR_LASTDAY: `${RUN}_ev_enr_lastday`,
+  PW_ACTIVE: `${RUN}_ev_pw_active`,
+  PW_LAPSED: `${RUN}_ev_pw_lapsed`,
+  PW_LASTDAY: `${RUN}_ev_pw_lastday`,
+};
+
+/** Days out the seeded extension runs — the number the app must render as "N days left". */
+export const WS_EVERGREEN_DAYS_LEFT = 12;
+
+/**
+ * PRECONDITION for the Extended Participants dialog: an evergreen workshop with two extended
+ * participants — one whose extension is still running, one whose has lapsed.
+ *
+ * `extenduntill` is stored the way the app writes it: 23:59 on the chosen day. The ACTIVE one is set
+ * exactly WS_EVERGREEN_DAYS_LEFT calendar days out, so the rendered "N days left" is the app's own
+ * arithmetic over a known input — the test supplies the date and never the answer.
+ *
+ * The dialog's trigger only renders when `evergreenWorkshop === true` AND
+ * `evergreenWorkshopMeta.workshopDays > 0` (computeEvergreenDayDistribution), so both are set.
+ *
+ * ORDERING CONSTRAINT — read this before moving the case that calls it. These three run-tagged
+ * `workshop participant enrolled` docs are counted by WS-07's precondition, which asserts the run
+ * has EXACTLY 2 of them. That holds only because the evergreen describe is declared last in
+ * workshop-dashboard.spec.ts and the suite runs serially (workers:1, fullyParallel:false), so WS-07
+ * has already run by the time these exist, and clearEvergreenExtended() removes them afterwards.
+ * Moving the describe above WS-07 would break it with a confusing "expected 2, got 5".
+ */
+export async function seedEvergreenExtended(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+
+  // 23:59 local on a day N ahead (negative = in the past), matching confirmExtend().
+  const endOfDay = (daysFromToday: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysFromToday);
+    return T.fromDate(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 0, 0));
+  };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+
+  const wsRef = db.collection('workshopconfiguration').doc(wsEvergreenIds.WORKSHOP);
+  await wsRef.set({
+    docid: wsEvergreenIds.WORKSHOP, active: true, workshopcompleted: false, categorybased: false,
+    atcmodel: null, created: ago(30),
+    evergreenWorkshop: true,
+    evergreenWorkshopMeta: { workshopDays: 7 },
+    detailpage: {
+      type: 'workshop', title: `Evergreen Workshop ${RUN}`, shortdescription: 'seeded evergreen',
+      workshopStartDate: ago(30), workshopEndDate: ago(1),
+      registrationStartDate: ago(40), registrationEndDate: ago(31),
+    },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_ev_ch0`, heading: 'Evergreen Module', subheading: 'One',
+      challenges: [{ type: 'video', challengeid: `${RUN}_ev_ch0_s0`, heading: 'Evergreen Video', status: '' }],
+    }],
+    ...tag,
+  });
+
+  const pwActive = db.collection('participant workshop').doc(wsEvergreenIds.PW_ACTIVE);
+  const pwLapsed = db.collection('participant workshop').doc(wsEvergreenIds.PW_LAPSED);
+  const pwLastDay = db.collection('participant workshop').doc(wsEvergreenIds.PW_LASTDAY);
+
+  // Both enrolled long enough ago to sit past workshopDays, which is what puts them in the
+  // Completed/Extended reckoning rather than a day bucket.
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_ACTIVE).set({
+    docid: wsEvergreenIds.ENR_ACTIVE, profileid: wsProfileIds.p0, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwActive, enrollmentdate: ago(20), ...tag,
+  });
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_LAPSED).set({
+    docid: wsEvergreenIds.ENR_LAPSED, profileid: wsProfileIds.p1, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwLapsed, enrollmentdate: ago(20), ...tag,
+  });
+  await db.collection('workshop participant enrolled').doc(wsEvergreenIds.ENR_LASTDAY).set({
+    docid: wsEvergreenIds.ENR_LASTDAY, profileid: wsProfileIds.p2, status: 'enrolled',
+    workshopref: wsRef, participantworkshopref: pwLastDay, enrollmentdate: ago(20), ...tag,
+  });
+
+  const pwBase = {
+    workshopref: wsRef, challenges: [], ...tag,
+  };
+  await pwActive.set({
+    docid: wsEvergreenIds.PW_ACTIVE, profileid: wsProfileIds.p0, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(WS_EVERGREEN_DAYS_LEFT), created: ago(2) }],
+    },
+  });
+  await pwLapsed.set({
+    docid: wsEvergreenIds.PW_LAPSED, profileid: wsProfileIds.p1, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(-3), created: ago(10) }],
+    },
+  });
+  // Ends TODAY at 23:59 — the boundary the day count is most likely to get wrong, and the reason
+  // the rule counts calendar days rather than elapsed hours. Must read "Last day", never "0 days".
+  await pwLastDay.set({
+    docid: wsEvergreenIds.PW_LASTDAY, profileid: wsProfileIds.p2, ...pwBase,
+    evergreenaccessto: {
+      extendworkshop: [{ extenduntill: endOfDay(0), created: ago(1) }],
+    },
+  });
+}
+
+/** Remove the evergreen world (teardown only). */
+export async function clearEvergreenExtended(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('workshopconfiguration', wsEvergreenIds.WORKSHOP),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_ACTIVE),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_LAPSED),
+    drop('workshop participant enrolled', wsEvergreenIds.ENR_LASTDAY),
+    drop('participant workshop', wsEvergreenIds.PW_ACTIVE),
+    drop('participant workshop', wsEvergreenIds.PW_LAPSED),
+    drop('participant workshop', wsEvergreenIds.PW_LASTDAY),
+  ]);
+}
+
+// =================================================================================================
+// 2026-10-09 — EiFlix App Logs: web sign-ins (`eiflixweb: true`) join the app sign-ins.
+// =================================================================================================
+
+export const wsWebLoginIds = {
+  webToday: `${RUN}_ll_today_web`,
+  webFlagFalse: `${RUN}_ll_today_webfalse`,
+};
+
+/** The version strings WS-51 identifies its rows by — unique, so no other seed row collides. */
+export const wsWebLoginVersions = { web: '4.0.0', notWeb: '8.8.8' };
+
+/**
+ * PRECONDITION for the web-login rows, kept SEPARATE from seedLoginLogs() because WS-31 asserts
+ * exact tallies off that seed ("2 of 2 unique people", four rows in 30D, "1–4 of 4").
+ *
+ *   webToday     — `eiflixweb: true`, NO `app` field at all (how the web client really writes it),
+ *                  and a `device_os` of 'android' on purpose: the table must still read 'web',
+ *                  because the flag says where the session happened and the other field is stale.
+ *   webFlagFalse — another product WITH `eiflixweb: false`. The sharp negative control for this
+ *                  change: a present-but-false flag must not let a non-EiFlix row onto the table.
+ */
+export async function seedWebLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const now = T.fromDate(new Date());
+  const put = (id: string, data: any) =>
+    db.collection('loginlog').doc(id).set({ docid: id, ...data, testrunid: RUN, _testdata: true });
+  await Promise.all([
+    put(wsWebLoginIds.webToday, {
+      eiflixweb: true, profileid: wsProfileIds.p0, date: now,
+      device_os: 'android', current_version: wsWebLoginVersions.web,
+    }),
+    put(wsWebLoginIds.webFlagFalse, {
+      app: 'SolarVoice', eiflixweb: false, profileid: wsProfileIds.p1, date: now,
+      device_os: 'ios', current_version: wsWebLoginVersions.notWeb,
+    }),
+  ]);
+}
+
+/** Undo seedWebLoginLogs. */
+export async function clearWebLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsWebLoginIds).map(id =>
+    db.collection('loginlog').doc(id).delete().catch(() => undefined)));
+}
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: unique users per surface.
+// =================================================================================================
+
+export const wsReportLoginIds = { p1Android: `${RUN}_ll_today_p1_android` };
+
+/**
+ * PRECONDITION for the report's MOBILE TOTAL. The other seeders give each person one surface, so
+ * the union and the sum happen to agree and a broken dedup would pass. This puts p1 — who already
+ * has an iOS sign-in today — on Android as well, so Android + iOS is 5 while the true unique total
+ * is 4. Only correct deduplication produces 4.
+ *
+ * Run alongside seedLoginLogs() + seedWebLoginLogs() + seedUserTypeLoginLogs(); today then holds:
+ *   android      p0, p1, NU_A              → 3  (NU_A is the one NEW user)
+ *   ios          p1, NU_C                  → 2  (NU_C has movedtoexist:true, so it is EXISTING)
+ *   mobile total p0, p1, NU_A, NU_C        → 4  (NOT 5)
+ *   web          p0                        → 1  (p0 is on Android AND web — counted in both)
+ */
+export async function seedReportLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('loginlog').doc(wsReportLoginIds.p1Android).set({
+    docid: wsReportLoginIds.p1Android, app: 'EiFlix', profileid: wsProfileIds.p1,
+    date: T.fromDate(new Date()), device_os: 'android', current_version: '5.0.0',
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** Undo seedReportLoginLogs. */
+export async function clearReportLoginLogs(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('loginlog').doc(wsReportLoginIds.p1Android)
+    .delete().catch(() => undefined);
+}
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: Total Content Consumption.
+// =================================================================================================
+
+export const wsConsumptionIds = {
+  appExisting: `${RUN}_ca_cons_app_existing`,
+  appNew: `${RUN}_ca_cons_app_new`,
+  webExisting: `${RUN}_ca_cons_web_existing`,
+  otherPlatform: `${RUN}_ca_cons_other`,
+};
+
+/**
+ * Seconds chosen so the rendered durations are unmistakable and cannot collide with any other
+ * number on the dashboard:
+ *   app existing  3661s  =  1 hours 01 minutes 01 seconds
+ *   app new       7322s  =  2 hours 02 minutes 02 seconds
+ *   app TOTAL    10983s  =  3 hours 03 minutes 03 seconds   (the sum, which the app must compute)
+ *   web existing  3723s  =  1 hours 02 minutes 03 seconds
+ */
+export const wsConsumptionSeconds = { appExisting: 3661, appNew: 7322, webExisting: 3723 };
+export const wsConsumptionText = {
+  appExisting: '1 hours 01 minutes 01 seconds',
+  appNew: '2 hours 02 minutes 02 seconds',
+  appTotal: '3 hours 03 minutes 03 seconds',
+  webExisting: '1 hours 02 minutes 03 seconds',
+  webNew: '0 hours 00 minutes 00 seconds',
+  // `from` split. The app's two rows are eiflixworkshop (3661s) and eiflixcontent (7322s); the
+  // web's single row is eiflixworkshop, so web library must stay at zero.
+  appWorkshop: '1 hours 01 minutes 01 seconds',
+  appLibrary: '2 hours 02 minutes 02 seconds',
+  webWorkshop: '1 hours 02 minutes 03 seconds',
+  webLibrary: '0 hours 00 minutes 00 seconds',
+};
+
+/**
+ * PRECONDITION for Total Content Consumption: `content analytics` rows dated TODAY, one per case.
+ *
+ *   appExisting   platform_name 'eiflixapp',  p0 (participant metadata → existing)
+ *   appNew        platform_name 'EiflixApp',  NU_A (new_user_data, not moved → NEW) — and the MIXED
+ *                 CASE is deliberate: platform matching must be case-insensitive, so this row has
+ *                 to land in the same bucket as the lowercase one.
+ *   webExisting   platform_name 'Eiflixweb',  p0
+ *   otherPlatform platform_name 'SolarVoice', a big number that must NOT appear anywhere.
+ *
+ * Run alongside the base content seed. These ids are run-scoped and swept by the same teardown.
+ */
+export async function seedConsumption(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const today = T.fromDate(new Date());
+  const tag = { testrunid: RUN, _testdata: true };
+  const put = (id: string, platform_name: string, totaltimespend: number, profileid: string, from?: string) =>
+    db.collection('content analytics').doc(id).set({
+      docid: id, platform_name, totaltimespend, profileid, type: 'eiflixcontent',
+      ...(from ? { from } : {}),
+      videoid: `${RUN}_vid_cons`, videoname: `TEST_VID_CONS_${RUN}`, logdate: today, ...tag,
+    });
+  await Promise.all([
+    // `from` is set so the workshop/library split has distinct, non-equal figures to prove, and
+    // EiflixWorkshop is mixed-case for the same reason EiflixApp is.
+    put(wsConsumptionIds.appExisting, 'eiflixapp', wsConsumptionSeconds.appExisting, wsProfileIds.p0, 'EiflixWorkshop'),
+    put(wsConsumptionIds.appNew, 'EiflixApp', wsConsumptionSeconds.appNew, wsAddIds.NU_A, 'eiflixcontent'),
+    put(wsConsumptionIds.webExisting, 'Eiflixweb', wsConsumptionSeconds.webExisting, wsProfileIds.p0, 'eiflixworkshop'),
+    put(wsConsumptionIds.otherPlatform, 'SolarVoice', 99999, wsProfileIds.p1, 'eiflixworkshop'),
+  ]);
+}
+
+/** Undo seedConsumption. */
+export async function clearConsumption(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all(Object.values(wsConsumptionIds).map(id =>
+    db.collection('content analytics').doc(id).delete().catch(() => undefined)));
+}
+
+// =================================================================================================
+// 2026-10-09 — EiFlix Report: Purchases & Signups.
+// =================================================================================================
+
+export const wsPurchaseIds = {
+  nuJourneyToday: `${RUN}_nu_pur_journey`,
+  nuJoinedToday: `${RUN}_nu_pur_joined`,
+  payCaptured: `${RUN}_wpl_captured`,
+  payCapturedTwo: `${RUN}_wpl_captured2`,
+  payFailed: `${RUN}_wpl_failed`,
+  payOld: `${RUN}_wpl_old`,
+};
+
+/**
+ * PRECONDITION for Journey Purchased / New Users Joined / Masterclass Purchase.
+ *
+ * The two new_user_data rows are deliberately NOT symmetric — each carries the counted field in
+ * the window and the OTHER field far outside it. movedon and created live on the same documents,
+ * so a count that read the wrong field would otherwise still return a plausible number:
+ *
+ *   nuJourneyToday  movedon = today, created = 300 days ago  → Journey Purchased only
+ *   nuJoinedToday   created = today, movedon = 300 days ago  → New Users Joined only
+ *
+ * The payment log has three captured-status cases and two that must not count:
+ *   payCaptured / payCapturedTwo  datetime today, status 'captured'  → both count
+ *   payFailed                     datetime today, status 'failed'    → excluded by the IF
+ *   payOld                        datetime 200 days ago, 'captured'  → excluded by the WHERE
+ */
+export async function seedPurchases(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = T.fromDate(new Date());
+  const longAgo = (days: number) => {
+    const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d);
+  };
+
+  await db.collection('new_user_data').doc(wsPurchaseIds.nuJourneyToday).set({
+    docid: wsPurchaseIds.nuJourneyToday, name: `WS Journey Buyer ${RUN}`,
+    email: `journey.${RUN}@example.com`, movedon: now, created: longAgo(300), ...tag,
+  });
+  await db.collection('new_user_data').doc(wsPurchaseIds.nuJoinedToday).set({
+    docid: wsPurchaseIds.nuJoinedToday, name: `WS Fresh Joiner ${RUN}`,
+    email: `joined.${RUN}@example.com`, created: now, movedon: longAgo(300), ...tag,
+  });
+
+  const pay = (id: string, datetime: any, status: string) =>
+    db.collection('workshoppaymentlog').doc(id).set({
+      docid: id, datetime, status, profileid: wsProfileIds.p0, ...tag,
+    });
+  await Promise.all([
+    pay(wsPurchaseIds.payCaptured, now, 'captured'),
+    pay(wsPurchaseIds.payCapturedTwo, now, 'captured'),
+    pay(wsPurchaseIds.payFailed, now, 'failed'),
+    pay(wsPurchaseIds.payOld, longAgo(200), 'captured'),
+  ]);
+}
+
+/** Undo seedPurchases. */
+export async function clearPurchases(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('new_user_data', wsPurchaseIds.nuJourneyToday),
+    drop('new_user_data', wsPurchaseIds.nuJoinedToday),
+    drop('workshoppaymentlog', wsPurchaseIds.payCaptured),
+    drop('workshoppaymentlog', wsPurchaseIds.payCapturedTwo),
+    drop('workshoppaymentlog', wsPurchaseIds.payFailed),
+    drop('workshoppaymentlog', wsPurchaseIds.payOld),
+  ]);
+}
+
+/**
+ * Independent oracles for the Purchases & Signups counts.
+ *
+ * The report's numbers are over WHOLE collections, and the shared emulator holds other runs'
+ * `new_user_data` and `workshoppaymentlog` rows (the same reason WS-30 uses a floor rather than an
+ * equality). Asserting a literal count would pass or fail on whatever else happens to be seeded.
+ *
+ * So the test computes the same population itself, with the Admin SDK, and requires the app to
+ * agree. Two separate computations over one population — the test never reads the app's own number
+ * back into its expectation.
+ *
+ * The window mirrors the component's: local midnight `days - 1` days back, through end of today.
+ */
+function reportWindow(days: number): { start: Date; end: Date } {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+const asDate = (v: any): Date | null => {
+  if (!v) return null;
+  if (typeof v.toDate === 'function') return v.toDate();
+  if (typeof v._seconds === 'number') return new Date(v._seconds * 1000);
+  if (typeof v.seconds === 'number') return new Date(v.seconds * 1000);
+  return null;
+};
+
+/** How many `new_user_data` docs carry `field` inside the window — counted by the TEST. */
+export async function countNewUserDataInWindow(field: 'movedon' | 'created', days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('new_user_data').get();
+  let n = 0;
+  snap.forEach((d: any) => {
+    const at = asDate((d.data() || {})[field]);
+    if (at && at >= start && at <= end) n++;
+  });
+  return n;
+}
+
+/** How many `workshoppaymentlog` docs are captured inside the window — counted by the TEST. */
+export async function countCapturedPayments(days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('workshoppaymentlog').get();
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (String(data['status'] ?? '').trim().toLowerCase() !== 'captured') return;
+    const at = asDate(data['datetime']);
+    if (at && at >= start && at <= end) n++;
+  });
+  return n;
+}
+
+/**
+ * Independent oracle for Web App Users, which moved from `loginlog` to `content analytics`
+ * (platform_name 'Eiflixweb') on 2026-10-09.
+ *
+ * Counted by the TEST over the whole collection, because the shared emulator also holds other
+ * runs' analytics rows — the same reason WS-54 stopped asserting literal counts.
+ */
+export async function countWebUsersFromAnalytics(days: number): Promise<number> {
+  const admin = seed.initAdmin();
+  const { start, end } = reportWindow(days);
+  const snap = await admin.firestore().collection('content analytics').get();
+  const ids = new Set<string>();
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (String(data['platform_name'] ?? '').trim().toLowerCase() !== 'eiflixweb') return;
+    if (!(Number(data['totaltimespend']) > 0)) return;
+    const pid = String(data['profileid'] ?? '').trim();
+    if (!pid) return;
+    const at = asDate(data['logdate']);
+    if (at && at >= start && at <= end) ids.add(pid);
+  });
+  return ids.size;
+}
+
+// =================================================================================================
+// 2026-10-12 — /newusersprofile: the created-date range + the two-option conversion filter.
+// =================================================================================================
+
+/**
+ * PRECONDITION for the conversion filter (WS-57): one of the three seeded new users is flipped to
+ * "moved over to existing users", the other is deliberately left alone.
+ *
+ *   NU_C — `movedtoexist: true`  → the Converted side
+ *   NU_A — no `movedtoexist`     → the Not-converted side
+ *
+ * Two docs on opposite sides is what makes the case two-sided: the SAME pair has to swap visibility
+ * when the option flips, so neither option can pass by accident on a table that filtered nothing.
+ *
+ * NU_C is the doc this suite already treats as mutable (resetNewUserTags / seedUserTypeLoginLogs).
+ * Only `movedtoexist` is touched — `movedon` is left alone on purpose, so the purchases oracles in
+ * the ops-dashboard suite (WS-54) see no change. Restored by clearConvertedNewUser().
+ */
+export async function seedConvertedNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: true }, { merge: true });
+}
+
+/** Undo seedConvertedNewUser: put NU_C back to "not moved". */
+export async function clearConvertedNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: FV.delete() }, { merge: true });
+}
+
+/**
+ * The local calendar day `seed-workshops.js at(offset)` used, formatted the way the app's date inputs
+ * parse it (NativeDateAdapter → Date.parse, so M/D/YYYY is read as LOCAL midnight; an ISO yyyy-mm-dd
+ * would be read as UTC and could land on the previous day).
+ *
+ * Built with the same setDate() arithmetic as the seed, so the test and the seed cannot disagree
+ * about which day a row belongs to.
+ */
+export function wsSeedDayMDY(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(9, 0, 0, 0);
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
+
+// =================================================================================================
+// 2026-10-12 — Users section date range on /eiflixoperationsdashboard (WS-58).
+// =================================================================================================
+
+/**
+ * The window the Users section builds: `days` back from today at local midnight, through the end of
+ * today. 0 = Today. Written out rather than reusing reportWindow() on purpose — the EiFlix Report's
+ * 7D starts at today-6, the Users range (like Engagement) starts at today-7, and silently borrowing
+ * the wrong one would make this oracle agree with a bug.
+ */
+function usersRangeBounds(days: number): { start: Date; end: Date } {
+  const start = new Date();
+  const end = new Date();
+  start.setDate(start.getDate() - days);
+  start.setHours(0, 0, 0, 0);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+/**
+ * Independent oracle for the Total New Users card: `new_user_data` rows that never moved across,
+ * optionally narrowed to a signup window. `days === null` means no date filter (the All state).
+ *
+ * Counted by the TEST over the WHOLE collection, because that is the population the card counts —
+ * the shared emulator holds other runs' rows and a run-scoped count would not match (WS-54).
+ */
+export async function countNewUsersCard(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('new_user_data').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (data['movedtoexist'] === true) return;
+    if (!win) { n++; return; }
+    const at = asDate(data['created']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/**
+ * Independent oracle for the New Users to Paid card: rows that DID move across, optionally narrowed
+ * by the MOVE date (never the signup date — that distinction is the point of WS-58).
+ */
+export async function countPaidCard(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('new_user_data').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (data['movedtoexist'] !== true) return;
+    if (!win) { n++; return; }
+    const at = asDate(data['movedon']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/** 'yyyy-MM-dd' for a day offset — the value an <input type="date"> holds. */
+export function wsDateInputValue(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * PRECONDITION for WS-58's paid side: NU_C moved across TODAY while its signup stays 3 days old.
+ * The asymmetry is deliberate — a card that filtered on the signup date instead of the move date
+ * would drop this row from Today, so the case can tell the two fields apart.
+ *
+ * Restored by clearUsersRangePaid(). `movedon` is a field WS-54's oracles read, which is safe here
+ * because the suite runs serially (workers: 1) and those oracles recompute from Firestore.
+ */
+export async function seedUsersRangePaid(): Promise<void> {
+  const admin = seed.initAdmin();
+  const T = admin.firestore.Timestamp;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: true, movedon: T.fromDate(new Date()) }, { merge: true });
+}
+
+/** Undo seedUsersRangePaid: NU_C back to "never moved", with no move date. */
+export async function clearUsersRangePaid(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
+    .set({ movedtoexist: FV.delete(), movedon: FV.delete() }, { merge: true });
+}
+
+// =================================================================================================
+// 2026-10-13 — Master Class Purchase card in the Users section (WS-60).
+// =================================================================================================
+
+export const wsMasterclassIds = {
+  capNew: `${RUN}_mc_cap_new`,     // captured, today, NU_A (a new user)  → tagged New User
+  capPm: `${RUN}_mc_cap_pm`,       // captured, today, p0 (a participant) → NOT tagged
+  capOld: `${RUN}_mc_cap_old`,     // captured, 40 days ago               → in All, outside 30D
+  failed: `${RUN}_mc_failed`,      // status 'failed', NU_C, today        → NEGATIVE CONTROL: never shown
+};
+export const wsMasterclassAmounts = { capNew: 499, capPm: 1500, capOld: 2999, failed: 777 };
+export const wsMasterclassJourney = `BIG Journey ${RUN}`;
+
+/**
+ * Four payments against the seeded W_DASH workshop (an existing doc, read-only elsewhere, so no other
+ * suite's workshop counts move). The failed row's payer (NU_C) appears in NO captured row, so if the
+ * card ever shows NU_C it can only be because the status filter let a non-captured payment through.
+ */
+export async function seedMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ref = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return T.fromDate(d); };
+  const put = (id: string, status: string, profileid: string, amountRupees: number, datetime: any) =>
+    db.collection('workshoppaymentlog').doc(id).set({ docid: id, status, profileid, amountRupees, datetime, workshopref: ref, ...tag });
+  await Promise.all([
+    put(wsMasterclassIds.capNew, 'captured', wsAddIds.NU_A, wsMasterclassAmounts.capNew, daysAgo(0)),
+    put(wsMasterclassIds.capPm, 'captured', wsProfileIds.p0, wsMasterclassAmounts.capPm, daysAgo(0)),
+    put(wsMasterclassIds.capOld, 'captured', wsAddIds.NU_B, wsMasterclassAmounts.capOld, daysAgo(40)),
+    put(wsMasterclassIds.failed, 'failed', wsAddIds.NU_C, wsMasterclassAmounts.failed, daysAgo(0)),
+    // p0's journey doc names itself in `journeyname`; the dashboard reads `journey`. Give it one for
+    // this case so the participant row has a journey to show. Removed by clearMasterclassPayments().
+    db.collection('journey').doc(wsAddIds.JRN_BIG).set({ journey: wsMasterclassJourney }, { merge: true }),
+  ]);
+}
+
+export async function clearMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('journey').doc(wsAddIds.JRN_BIG)
+    .set({ journey: admin.firestore.FieldValue.delete() }, { merge: true });
+  await Promise.all(Object.values(wsMasterclassIds).map(id =>
+    admin.firestore().collection('workshoppaymentlog').doc(id).delete().catch(() => undefined)));
+}
+
+/** Captured payments in the Users-range window (null = All), counted by the TEST over the whole collection. */
+export async function countCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    if (!win) { n++; return; }
+    const at = asDate((d.data() || {})['datetime']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/** Sum of amountRupees over captured payments in the Users-range window (non-numeric counts as 0, as the card does). */
+export async function sumCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let sum = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (win) {
+      const at = asDate(data['datetime']);
+      if (!(at && at >= win.start && at <= win.end)) return;
+    }
+    const n = Number(data['amountRupees']);
+    sum += Number.isFinite(n) ? n : 0;
+  });
+  return sum;
+}
+
+// =================================================================================================
+// 2026-10-13 — Device Breakdown From–To (WS-61).
+// =================================================================================================
+
+/** 'yyyy-MM-dd' for a day offset — the register's doc-id format, and an <input type=date> value. */
+export function wsDbDayKey(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Two platform names no real device writes, so no other page in the emulator can contribute to them. */
+export const wsDbPlatforms = { recent: 'WS61Recent', older: 'WS61Older' };
+
+/**
+ * Register pages 20 and 50 days back — outside the 7-day window the dashboard heals (and rewrites) on
+ * load, inside the 90 days it reads. Written with merge and only under `platforms.<our name>`, so an
+ * existing page for those days keeps everything else, and `profileids` is never touched (Non-Active
+ * reads that, and must not see these seconds).
+ *   -20d  WS61Recent  2h   → inside 1M
+ *   -50d  WS61Older   1h   → outside 1M, inside 2M
+ */
+export async function seedDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: { [wsProfileIds.p0]: 7200 } } }, { merge: true }),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: { [wsProfileIds.p1]: 3600 } } }, { merge: true }),
+  ]);
+}
+
+export async function clearDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: FV.delete() } }, { merge: true }).catch(() => undefined),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: FV.delete() } }, { merge: true }).catch(() => undefined),
+  ]);
+}
+
+// =================================================================================================
+// 2026-10-13 — profileid in the SendmessagesComponent WhatsApp payload (WDC-14 / WS-63), and a
+// dependency-free .xlsx reader for the panel-export checks (WS-60 / WS-62).
+// =================================================================================================
+
+/** A WATI endpoint that exists only inside the test browser — every request to it is answered by a route. */
+export const wsWatiEndpoint = 'https://wati.e2e.test';
+/** The one template the stubbed WATI offers. No custom params, so the form is valid once it is picked. */
+export const wsWatiTemplate = 'e2e_progress_tpl';
+
+/**
+ * SendmessagesComponent reads `classify/wati` in TWO shapes before it will list templates:
+ * initWatiConfig() reads `wati[0]` and gives up if it is missing; loadTemplates() reads `['101723']`.
+ * Both point at the in-browser endpoint above, so no request can reach the real WATI. Merged and
+ * removed field-by-field, so an existing document keeps anything else it holds.
+ */
+export async function seedWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const cfg = { watitoken: 'e2e-token', endpoint: wsWatiEndpoint };
+  await admin.firestore().collection('classify').doc('wati').set({ wati: [cfg], '101723': cfg }, { merge: true });
+}
+
+export async function clearWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('classify').doc('wati')
+    .set({ wati: FV.delete(), '101723': FV.delete() }, { merge: true }).catch(() => undefined);
+}
+
+/**
+ * Answer the dialog's template request with one UTILITY template, and capture the bulk-send POST the
+ * screen makes to `workshopprogressmessage`. On the emulator project that function's URL resolves to ''
+ * (the project is not in the screens' URL maps), so the POST goes to the app's own origin — it is
+ * matched by its body, never by URL, and answered here so nothing is sent anywhere.
+ */
+export async function captureWorkshopProgressSend(page: Page): Promise<() => any | null> {
+  let captured: any = null;
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+  await page.route(`${wsWatiEndpoint}/**`, async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    return route.fulfill({
+      status: 200, headers: cors, contentType: 'application/json',
+      body: JSON.stringify({ messageTemplates: [
+        { elementName: wsWatiTemplate, status: 'APPROVED', type: 'template', category: 'UTILITY', customParams: [] },
+      ] }),
+    });
+  });
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const body = req.method() === 'POST' ? req.postData() : null;
+    if (body && /"type"\s*:\s*"(whatsapp|mail)"/.test(body) && /"(participants|recipients)"/.test(body)) {
+      captured = JSON.parse(body);
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ successCount: 1, failureCount: 0, broadcastName: 'e2e' }) });
+    }
+    return route.fallback();
+  });
+  return () => captured;
+}
+
+/**
+ * Read the first sheet of an .xlsx into rows of cell values — no dependency, just the zip container
+ * and the sheet XML. Handles stored and deflated entries, and shared / inline / str / numeric cells,
+ * which covers what SheetJS writes. The hub has no SheetJS, which is why WS-55 could only check size.
+ */
+export function readXlsxRows(file: string): (string | number)[][] {
+  const zlib = require('zlib');
+  const buf: Buffer = require('fs').readFileSync(file);
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  if (eocd < 0) throw new Error('readXlsxRows: not a zip file');
+  const entries = new Map<string, Buffer>();
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let i = 0, n = buf.readUInt16LE(eocd + 10); i < n; i++) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const raw = buf.subarray(start, start + size);
+    entries.set(name, method === 8 ? zlib.inflateRawSync(raw) : raw);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  const xml = (n: string) => entries.get(n)?.toString('utf8') ?? '';
+  const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const shared = [...xml('xl/sharedStrings.xml').matchAll(/<si>([\s\S]*?)<\/si>/g)]
+    .map((m) => unesc([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join('')));
+  const sheetName = [...entries.keys()].find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)) || 'xl/worksheets/sheet1.xml';
+  const colIndex = (ref: string) => ref.replace(/\d+/g, '').split('').reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1;
+  const rows: (string | number)[][] = [];
+  for (const r of xml(sheetName).matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+    const line: (string | number)[] = [];
+    for (const c of r[1].matchAll(/<c r="([A-Z]+\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const t = (/t="([^"]+)"/.exec(c[2]) || [])[1];
+      const inner = c[3] || '';
+      const v = (/<v>([\s\S]*?)<\/v>/.exec(inner) || [])[1];
+      let value: string | number = '';
+      if (t === 's') value = shared[Number(v)] ?? '';
+      else if (t === 'inlineStr') value = unesc([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => m[1]).join(''));
+      else if (t === 'str' || t === 'b' || t === 'e') value = unesc(v ?? '');
+      else if (v !== undefined) value = Number(v);
+      line[colIndex(c[1])] = value;
+    }
+    rows.push(Array.from(line, (x) => (x === undefined ? '' : x)));
+  }
+  return rows;
+}
+
+/** Pick the stubbed template in SendmessagesComponent (the list arrives after the in-browser WATI answers). */
+export async function pickWatiTemplate(page: Page, composer: Locator): Promise<void> {
+  await composer.locator('mat-select[formcontrolname="templateName"]').click();
+  await page.locator('mat-option').filter({ hasText: wsWatiTemplate }).click();
 }

@@ -167,6 +167,9 @@ export const ddcStuckWorld = {
 export const jcdAssuredLeads = {
   productOnly: `JCD Assured Product Only ${RUN}`,
   withJourney: `JCD Assured With Journey ${RUN}`,
+  pjpProduct: `JCD Assured PJP Product ${RUN}`,
+  note: `JCD sale note ${RUN}`,
+  onboardPerson: `JCD Onboard Remark ${RUN}`,
 };
 
 export const jchTexts = {

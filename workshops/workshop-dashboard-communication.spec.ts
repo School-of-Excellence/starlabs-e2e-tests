@@ -24,6 +24,7 @@ import {
   resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed, stampParticipantWorkshopP0TextAssignment, wsP0AssignmentAnswer,
   setupOverviewShape, teardownOverviewShape,
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
+  wsProfileIds, seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -725,5 +726,150 @@ test.describe('Workshop dashboard — Communication dialog hands off to the side
 
     await dialog.getByTestId('wdash-comm-close-btn').click();
     await expect(dialogs, 'WDC-07: the dialog closes').toHaveCount(0, { timeout: 15_000 });
+  });
+});
+
+// =============================================================================================
+// WDC-14 — a WhatsApp send through SendmessagesComponent carries the profileid (2026-10-13)
+//
+// WDC-07 only opens and dismisses the composer. This one SENDS: the WATI config points at an endpoint
+// that exists only in the test browser (one stubbed template), and the bulk POST to
+// workshopprogressmessage is caught and answered by the test — nothing leaves the machine.
+// ALPHA (p0) is the ONLY ticked person, so the payload must hold exactly one participant, and the
+// profileid must be p0's: the value the screen resolved, never one the test wrote into the request.
+// No console guard, for the same reason as WDC-07 (the composers log benign config errors on open).
+// =============================================================================================
+test.describe('Workshop dashboard — WhatsApp send carries the profileid', () => {
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    await alignWorkshopMetadataNames();
+    await seedWatiConfig();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => { await clearWatiConfig(); });
+
+  test('WDC-14 a WhatsApp send from the Communication dialog carries the selected person\'s profileid', async ({ page }) => {
+    const sent = await captureWorkshopProgressSend(page);   // after the stubs, so these routes win
+    await openDashboard(page);
+    const dialog = await openCommunication(page);
+    await search(dialog, ALPHA, 1);
+    await tick(row(dialog, ALPHA).getByTestId('wdash-comm-select-row'));
+    await expect.poll(() => selectedCount(dialog), { timeout: 10_000 }).toBe(1);
+
+    await dialog.getByTestId('wdash-comm-send-whatsapp').click();
+    const composer = page.getByRole('dialog').last();
+    await expect(composer.getByRole('heading', { name: 'Send Message' })).toBeVisible({ timeout: 20_000 });
+    await pickWatiTemplate(page, composer);
+    await composer.getByTestId('sen-send-whats-app-14').click();
+
+    await expect.poll(sent, { message: 'WDC-14: the screen posts the bulk WhatsApp send', timeout: 30_000 }).not.toBeNull();
+    const body = sent();
+    expect(body.type, 'WDC-14: a WhatsApp send').toBe('whatsapp');
+    expect(body.participants, 'WDC-14: only the ticked person is sent').toHaveLength(1);
+    expect(body.participants[0].profileid, 'WDC-14: the participant carries their profileid').toBe(wsProfileIds.p0);
+  });
+});
+
+// =============================================================================================
+// WS-48 — the side panel's name search.
+//
+// The panel is opened from the Exist Users Enrolled card, which lists p0 and p1. Their metadata
+// names are the actor emails (CF-owned — see wsMetaNames), so "participant0" picks out exactly one.
+//
+// NOTE on typing: this input is bound with [(ngModel)] + (ngModelChange), NOT (keyup). ngModel
+// listens to the `input` event, which fill() dispatches — so fill() is correct here. Do not
+// "fix" it to pressSequentially; that is only needed for the (keyup)-bound boxes on this screen.
+// =============================================================================================
+test.describe('Workshop dashboard — side panel name search', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await installWshopStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'workshop dashboard side panel: no fatal console errors'));
+
+  test('WS-48 the side panel search narrows the list by name, and clearing restores it', async ({ page }) => {
+    expect(wsMetaNames.p0, 'WS-48: the p0 name constant resolves').toBeTruthy();
+    expect(wsMetaNames.p1, 'WS-48: the p1 name constant resolves').toBeTruthy();
+
+    await openDashboard(page);
+    await page.getByTestId('wdash-exist-users-card').click();
+
+    const cards = page.locator('.participant-panel mat-card.participant-card');
+    await expect(cards, 'WS-48: both existing enrollees are listed').toHaveCount(2, { timeout: 30_000 });
+    // The names arrive from a separate metadata query that lags on a slow emulator. Searching before
+    // they render would legitimately match nothing, so wait for the name to actually be on screen.
+    await expect(cards.filter({ hasText: wsMetaNames.p0 }), 'WS-48: p0 name has rendered')
+      .toHaveCount(1, { timeout: 60_000 });
+
+    const search = page.getByTestId('wd-side-search-85');
+    await expect(search, 'WS-48: the search box renders in the panel').toBeVisible({ timeout: 15_000 });
+
+    // [ASSERT] a term unique to one person leaves only that person.
+    await search.fill('participant0');
+    await expect(cards, 'WS-48: only the matching person remains').toHaveCount(1, { timeout: 15_000 });
+    await expect(cards.first(), 'WS-48: and it is the right one').toContainText(wsMetaNames.p0);
+    await expect(cards.filter({ hasText: wsMetaNames.p1 }), 'WS-48: the other is filtered out').toHaveCount(0);
+
+    // [ASSERT] negative control — a term in nobody's name empties the list, so the filter is really
+    // running and the single match above was not just the list sitting still.
+    await search.fill('nosuchperson-zzz');
+    await expect(cards, 'WS-48: a term nobody matches empties the panel').toHaveCount(0, { timeout: 15_000 });
+
+    // [ASSERT] the panel search is the PANEL's — the progress table behind it is untouched, even
+    // with the panel filtered down to nothing. Both lists read the same participants, so a search
+    // wired one level too high would quietly empty the table too.
+    await expect(
+      page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]'),
+      'WS-48: the progress table is not filtered by the panel search',
+    ).toHaveCount(1);
+
+    // [ASSERT] the clear button puts everyone back.
+    await page.getByTestId('wd-side-search-clear-86').click();
+    await expect(cards, 'WS-48: clearing the search restores both').toHaveCount(2, { timeout: 15_000 });
+    await expect(search, 'WS-48: and empties the box').toHaveValue('');
+  });
+
+  // ===========================================================================================
+  // WS-50 — the search does not survive into the next card's panel.
+  //
+  // Every path that opens the panel resets the search along with the filter option (15 sites in
+  // workshop-dashboard.component.ts). Without that reset, typing a name, then opening a different
+  // metric card, would show a panel filtered by a term the operator can no longer see any reason
+  // for — a list that looks empty for no visible cause. That is a quiet failure, so it gets a case.
+  // ===========================================================================================
+  test('WS-50 opening another card clears the side panel search rather than carrying it over', async ({ page }) => {
+    await openDashboard(page);
+    await page.getByTestId('wdash-exist-users-card').click();
+
+    const cards = page.locator('.participant-panel mat-card.participant-card');
+    await expect(cards, 'WS-50: the Exist panel lists both enrollees').toHaveCount(2, { timeout: 30_000 });
+
+    // Filter it down to nothing, so carrying the term over would be unmistakable.
+    const search = page.getByTestId('wd-side-search-85');
+    await search.fill('nosuchperson-zzz');
+    await expect(cards, 'WS-50: the panel is filtered to nothing').toHaveCount(0, { timeout: 15_000 });
+
+    // Close the panel before reaching for another card: the open panel covers the metric row, and
+    // Playwright correctly refuses to click a card that is outside the viewport behind it. This is
+    // also the real flow — a person closes one panel and opens the next.
+    //
+    // closeParticipantPanel() deliberately does NOT clear the search (it only drops the panel state),
+    // which makes this stronger: the term genuinely survives the close, and only the next OPEN
+    // clears it. That open-path reset is the thing under test.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await expect(page.locator('.participant-panel.panel-visible'), 'WS-50: the panel has closed')
+      .toHaveCount(0, { timeout: 15_000 });
+
+    // Open a DIFFERENT card's panel. Total Enrolled lists everyone enrolled on this workshop.
+    await page.getByTestId('wd-on-metric-click-6').click();
+
+    // [ASSERT] the box is empty and the new panel shows its people, not an empty list.
+    await expect(page.getByTestId('wd-side-search-85'), 'WS-50: the search box is cleared')
+      .toHaveValue('', { timeout: 15_000 });
+    await expect(cards, 'WS-50: the new panel is not filtered by the previous term')
+      .toHaveCount(2, { timeout: 30_000 });
   });
 });

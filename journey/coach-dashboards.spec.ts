@@ -25,7 +25,10 @@ test.beforeEach(async ({ page }) => {
   guard = attachJourneyGuard(page);
   await installJourneyStubs(page);
 });
-test.afterEach(() => assertNoFatal(guard, 'coach dashboards: no fatal console errors / pageerrors'));
+// Per-test, tightly-anchored console patterns a case EXPECTS (JCD-05's deliberate failed-upload control).
+let expectedErrors: RegExp[] = [];
+test.beforeEach(() => { expectedErrors = []; });
+test.afterEach(() => assertNoFatal(guard, 'coach dashboards: no fatal console errors / pageerrors', expectedErrors));
 
 test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
   // ===========================================================================================
@@ -206,5 +209,88 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
       .toHaveText(journeyNames.product1, { timeout: 60_000 });
     await expect(journeyCell(jcdAssuredLeads.withJourney), 'JCD-04: a sale with a journey keeps showing the JOURNEY')
       .toHaveText(journeyNames.journey1);
+  });
+
+  // JCD-06 — the Journey cell's product fallback also reads the sale's participantjourneyproduct (sashong 176ce857).
+  // SLQ has no journey AND no productref of its own; only its PJP (salesleadsref → SLQ) carries productref → P2. The
+  // app joins them itself (saleProductRefs, keyed by the salesleads doc id); SLP (own productref → P1) is the control.
+  test('JCD-06 a sale with no product of its own shows the product of its participant journey product', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+    await page.getByTestId('jcd-lnk-assured-table').click();
+    const table = page.locator('table.jcd-table');
+    await expect(table.locator('th').filter({ hasText: /^\s*Journey\b/ })).toHaveCount(1, { timeout: 30_000 });
+    const jIdx = (await table.locator('thead th').allTextContents()).findIndex((t) => /^\s*Journey\b/.test(t));
+    const journeyCell = (name: string) => table.locator('tr.jcd-tr').filter({ hasText: name }).locator('td').nth(jIdx);
+    await page.getByTestId('jcd-inp-133').fill('JCD Assured');
+    await expect(journeyCell(jcdAssuredLeads.pjpProduct), 'JCD-06: the PJP\'s product (P2) fills the empty Journey cell')
+      .toHaveText(journeyNames.product2, { timeout: 60_000 });
+    await expect(journeyCell(jcdAssuredLeads.productOnly), 'JCD-06: a sale with its own productref still shows its own product')
+      .toHaveText(journeyNames.product1);
+  });
+
+  // JCD-05 — OnboardingRemark: a manually added attachment is uploaded to Storage and attached by its download URL
+  // (sashong 176ce857; it used to be an in-memory data: URL, for which the template shows NO open link). Opened the
+  // way users reach it: Mark Onboarded on a To-onboard row (markOnboarded → dialog). STORAGE IS STUBBED: every
+  // firebasestorage.googleapis.com request is answered here, so no file reaches any bucket. Oracle: the upload went
+  // to email-attachments/manual_<file>…, and the attachment row's open link carries the download URL built from the
+  // stub's token. Control: a failed upload adds no attachment and tells the user. (Entry: To onboard → Mark Onboarded
+// on PJP_SLQ — the notes cells open the same component read-only, without the composer.)
+  test('JCD-05 an attachment added in the onboarding email is uploaded and linked by its download URL; a failed upload is refused', async ({ page }) => {
+    const uploads: string[] = [];
+    let failNext = false;
+    await page.route('**/firebasestorage.googleapis.com/**', async (route) => {
+      const req = route.request();
+      const url = new URL(req.url());
+      const name = url.searchParams.get('name') || decodeURIComponent(url.pathname.split('/o/')[1] || '');
+      if (req.method() === 'POST') {
+        uploads.push(name);
+        // 403 (storage/unauthorized) — not retried by the SDK, unlike 5xx which it retries with backoff for minutes
+        if (failNext) return route.fulfill({ status: 403, contentType: 'application/json', body: '{"error":{"code":403,"message":"stub denied"}}' });
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        name, bucket: 'starlabs-cicd.appspot.com', generation: '1', contentType: 'application/pdf', size: '12', downloadTokens: 'e2e-token' }) });
+    });
+    const alerts: string[] = [];
+    page.on('dialog', async (d) => { alerts.push(d.message()); await d.accept(); });
+
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+    // "To onboard" → the seeded PJP_SLQ row → Mark Onboarded: the dialog's email-composer ("Onboard Remark") mode,
+    // the one that has Attachments (the notes cells open it as a read-only "View Note").
+    await page.getByTestId('jcd-div-035').click();
+    await page.getByTestId('jcd-inp-133').fill(jcdAssuredLeads.onboardPerson);
+    await page.locator('tr.jcd-tr').filter({ hasText: jcdAssuredLeads.onboardPerson }).getByTestId('jcd-btn-153').click();
+    const remark = page.locator('app-onboarding-remark');
+    await expect(remark.getByText('Onboard Remark').first(), 'JCD-05: Mark Onboarded opens the onboarding email composer').toBeVisible({ timeout: 30_000 });
+
+    // The composer (and its Attachments) renders once an email template is picked — same picker JP-09 drives;
+    // re-type until the async template load has landed.
+    const tmplInput = remark.getByTestId('jorm-inp-018');
+    const tmplItem = remark.locator('.custom-dropdown-item').filter({ hasText: journeyNames.emailTemplate });
+    await expect(async () => {
+      await tmplInput.click();
+      await tmplInput.fill('');
+      await tmplInput.fill(journeyNames.emailTemplate);
+      await expect(tmplItem).toBeVisible({ timeout: 3_000 });
+    }, 'JCD-05: the seeded onboarding template is offered').toPass({ timeout: 30_000 });
+    await tmplItem.click();
+    await expect(remark.getByText('New Message'), 'JCD-05: the email composer renders').toBeVisible({ timeout: 15_000 });
+
+    await remark.getByTestId('jorm-inp-035').setInputFiles({ name: 'welcome-pack.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 e2e') });
+    const item = remark.locator('.gmail-attach-item').filter({ hasText: 'welcome-pack.pdf' });
+    await expect(item, 'JCD-05: the attachment is listed').toHaveCount(1, { timeout: 30_000 });
+    expect(uploads.some((n) => /^email-attachments\/manual_welcome-pack\.pdf_\d+$/.test(n)), `JCD-05: uploaded to email-attachments/manual_<name>_<ts> (saw ${uploads.join(', ')})`).toBe(true);
+    await expect(item.getByTestId('jorm-a-036'), 'JCD-05: linked by its Storage download URL (a data: URL shows no link)')
+      .toHaveAttribute('href', /firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/email-attachments%2Fmanual_welcome-pack\.pdf_\d+\?alt=media&token=e2e-token/);
+
+    // the control below makes the app log its upload error and the browser log the stubbed 403 — both expected
+    expectedErrors = [/onAddAttachment upload error/, /Failed to load resource: the server responded with a status of 403/];
+    failNext = true;
+    await remark.getByTestId('jorm-inp-035').setInputFiles({ name: 'broken.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 x') });
+    await expect.poll(() => alerts.at(-1), { message: 'JCD-05: a failed upload is reported' }).toBe('Failed to upload "broken.pdf". Please try again.');
+    await expect(remark.locator('.gmail-attach-item').filter({ hasText: 'broken.pdf' }), 'JCD-05: …and nothing is attached').toHaveCount(0);
   });
 });
