@@ -6,7 +6,7 @@
 // or open a real Zoom window. NOTE: on the test project getCloudFunctionUrl() returns '' for
 // workshopprogressmessage (the project isn't in its URL map, workshop-dashboard.component.ts:481), so
 // the comms HTTP path is inert here regardless — the firewall is belt-and-suspenders.
-import { Page } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { loginAs } from '../../queue/support/actors';
 import { installAllExternalStubs } from '../../queue/stubs';
 import { installProdFirewall } from '../../_shared/prod-firewall';
@@ -1593,4 +1593,118 @@ export async function clearDeviceBreakdownPages(): Promise<void> {
     col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: FV.delete() } }, { merge: true }).catch(() => undefined),
     col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: FV.delete() } }, { merge: true }).catch(() => undefined),
   ]);
+}
+
+// =================================================================================================
+// 2026-10-13 — profileid in the SendmessagesComponent WhatsApp payload (WDC-14 / WS-63), and a
+// dependency-free .xlsx reader for the panel-export checks (WS-60 / WS-62).
+// =================================================================================================
+
+/** A WATI endpoint that exists only inside the test browser — every request to it is answered by a route. */
+export const wsWatiEndpoint = 'https://wati.e2e.test';
+/** The one template the stubbed WATI offers. No custom params, so the form is valid once it is picked. */
+export const wsWatiTemplate = 'e2e_progress_tpl';
+
+/**
+ * SendmessagesComponent reads `classify/wati` in TWO shapes before it will list templates:
+ * initWatiConfig() reads `wati[0]` and gives up if it is missing; loadTemplates() reads `['101723']`.
+ * Both point at the in-browser endpoint above, so no request can reach the real WATI. Merged and
+ * removed field-by-field, so an existing document keeps anything else it holds.
+ */
+export async function seedWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const cfg = { watitoken: 'e2e-token', endpoint: wsWatiEndpoint };
+  await admin.firestore().collection('classify').doc('wati').set({ wati: [cfg], '101723': cfg }, { merge: true });
+}
+
+export async function clearWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('classify').doc('wati')
+    .set({ wati: FV.delete(), '101723': FV.delete() }, { merge: true }).catch(() => undefined);
+}
+
+/**
+ * Answer the dialog's template request with one UTILITY template, and capture the bulk-send POST the
+ * screen makes to `workshopprogressmessage`. On the emulator project that function's URL resolves to ''
+ * (the project is not in the screens' URL maps), so the POST goes to the app's own origin — it is
+ * matched by its body, never by URL, and answered here so nothing is sent anywhere.
+ */
+export async function captureWorkshopProgressSend(page: Page): Promise<() => any | null> {
+  let captured: any = null;
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+  await page.route(`${wsWatiEndpoint}/**`, async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    return route.fulfill({
+      status: 200, headers: cors, contentType: 'application/json',
+      body: JSON.stringify({ messageTemplates: [
+        { elementName: wsWatiTemplate, status: 'APPROVED', type: 'template', category: 'UTILITY', customParams: [] },
+      ] }),
+    });
+  });
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const body = req.method() === 'POST' ? req.postData() : null;
+    if (body && /"type"\s*:\s*"(whatsapp|mail)"/.test(body) && /"(participants|recipients)"/.test(body)) {
+      captured = JSON.parse(body);
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ successCount: 1, failureCount: 0, broadcastName: 'e2e' }) });
+    }
+    return route.fallback();
+  });
+  return () => captured;
+}
+
+/**
+ * Read the first sheet of an .xlsx into rows of cell values — no dependency, just the zip container
+ * and the sheet XML. Handles stored and deflated entries, and shared / inline / str / numeric cells,
+ * which covers what SheetJS writes. The hub has no SheetJS, which is why WS-55 could only check size.
+ */
+export function readXlsxRows(file: string): (string | number)[][] {
+  const zlib = require('zlib');
+  const buf: Buffer = require('fs').readFileSync(file);
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  if (eocd < 0) throw new Error('readXlsxRows: not a zip file');
+  const entries = new Map<string, Buffer>();
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let i = 0, n = buf.readUInt16LE(eocd + 10); i < n; i++) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const raw = buf.subarray(start, start + size);
+    entries.set(name, method === 8 ? zlib.inflateRawSync(raw) : raw);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  const xml = (n: string) => entries.get(n)?.toString('utf8') ?? '';
+  const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const shared = [...xml('xl/sharedStrings.xml').matchAll(/<si>([\s\S]*?)<\/si>/g)]
+    .map((m) => unesc([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join('')));
+  const sheetName = [...entries.keys()].find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)) || 'xl/worksheets/sheet1.xml';
+  const colIndex = (ref: string) => ref.replace(/\d+/g, '').split('').reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1;
+  const rows: (string | number)[][] = [];
+  for (const r of xml(sheetName).matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+    const line: (string | number)[] = [];
+    for (const c of r[1].matchAll(/<c r="([A-Z]+\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const t = (/t="([^"]+)"/.exec(c[2]) || [])[1];
+      const inner = c[3] || '';
+      const v = (/<v>([\s\S]*?)<\/v>/.exec(inner) || [])[1];
+      let value: string | number = '';
+      if (t === 's') value = shared[Number(v)] ?? '';
+      else if (t === 'inlineStr') value = unesc([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => m[1]).join(''));
+      else if (t === 'str' || t === 'b' || t === 'e') value = unesc(v ?? '');
+      else if (v !== undefined) value = Number(v);
+      line[colIndex(c[1])] = value;
+    }
+    rows.push(Array.from(line, (x) => (x === undefined ? '' : x)));
+  }
+  return rows;
+}
+
+/** Pick the stubbed template in SendmessagesComponent (the list arrives after the in-browser WATI answers). */
+export async function pickWatiTemplate(page: Page, composer: Locator): Promise<void> {
+  await composer.locator('mat-select[formcontrolname="templateName"]').click();
+  await page.locator('mat-option').filter({ hasText: wsWatiTemplate }).click();
 }

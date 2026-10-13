@@ -28,6 +28,7 @@ import {
   seedMasterclassPayments, clearMasterclassPayments, countCapturedForUsersRange, wsMasterclassAmounts,
   sumCapturedForUsersRange, wsMasterclassJourney,
   seedDeviceBreakdownPages, clearDeviceBreakdownPages, wsDbDayKey, wsDbPlatforms,
+  readXlsxRows,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
@@ -903,6 +904,16 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     await expect(newRow.getByTestId('eif-mc-amount'), 'WS-60: the row shows the amount in rupees')
       .toHaveText('₹' + wsMasterclassAmounts.capNew);
 
+    // [REAL-UI] Export carries the amount as a NUMBER (2026-10-13), read back from the downloaded file.
+    const [mcDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
+    const mcFile = test.info().outputPath('masterclass.xlsx');
+    await mcDownload.saveAs(mcFile);
+    const mcSheet = readXlsxRows(mcFile);
+    const amountCol = mcSheet[0].indexOf('Amount');
+    expect(amountCol, 'WS-60: the export has an Amount column').toBeGreaterThan(-1);
+    const mcRow = mcSheet.find((r) => r[0] === wsAddNames.nuAlpha);
+    expect(mcRow?.[amountCol], 'WS-60: the new user\'s amount is exported as a number').toBe(wsMasterclassAmounts.capNew);
+
     const pmRow = panel.locator('.eod-row').filter({ has: page.getByTestId('eif-mc-amount').filter({ hasText: '₹1,500' }) });
     await expect(pmRow, 'WS-60: the participant\'s purchase is listed').toHaveCount(1);
     await expect(pmRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: a participant is NOT tagged New User').toHaveCount(0);
@@ -999,12 +1010,24 @@ test.describe('Workshops — eiflix operations dashboard: paid total amount (no 
     await expect.poll(async () => Number((await paid.locator('.eod-count').innerText()).replace(/[^\d]/g, '')) || 0,
       { message: 'WS-62: the paid card still counts people', timeout: 60_000 }).toBeGreaterThan(0);
     await expect(paid.getByTestId('eif-mc-card-amount'), 'WS-62: no Watson -> no total on the card (never a wrong ₹0)').toHaveCount(0);
+    // Captions (2026-10-13): "Purchased Journey" and "not yet purchased journey".
+    await expect(paid.locator('.eod-card-caption'), 'WS-62: paid card caption').toHaveText('Purchased Journey');
+    await expect(page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'Total New Users' }).locator('.eod-card-caption'),
+      'WS-62: Total New Users caption').toHaveText('Signed up · not yet purchased journey');
 
     await paid.click();
     const panel = page.locator('.eod-panel').filter({ hasText: 'New Users to Paid' });
     await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }), 'WS-62: the panel lists the moved person')
       .toHaveCount(1, { timeout: 15_000 });
     await expect(panel.getByTestId('eif-mc-amount'), 'WS-62: no Watson -> no per-person amount').toHaveCount(0);
+
+    // Export without Watson: the people are there, the Total Amount column is not (never a column of blanks or zeros).
+    const [paidDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
+    const paidFile = test.info().outputPath('paid.xlsx');
+    await paidDownload.saveAs(paidFile);
+    const paidSheet = readXlsxRows(paidFile);
+    expect(paidSheet.some((r) => r[0] === wsAddNames.nuCharlie), 'WS-62: the export lists the moved person').toBe(true);
+    expect(paidSheet[0], 'WS-62: no Watson -> no Total Amount column').not.toContain('Total Amount');
   });
 });
 

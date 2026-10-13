@@ -24,6 +24,7 @@ import {
   resetParticipantWorkshopP0, stampParticipantWorkshopP0Completed, stampParticipantWorkshopP0TextAssignment, wsP0AssignmentAnswer,
   setupOverviewShape, teardownOverviewShape,
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
+  wsProfileIds, seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -725,6 +726,47 @@ test.describe('Workshop dashboard — Communication dialog hands off to the side
 
     await dialog.getByTestId('wdash-comm-close-btn').click();
     await expect(dialogs, 'WDC-07: the dialog closes').toHaveCount(0, { timeout: 15_000 });
+  });
+});
+
+// =============================================================================================
+// WDC-14 — a WhatsApp send through SendmessagesComponent carries the profileid (2026-10-13)
+//
+// WDC-07 only opens and dismisses the composer. This one SENDS: the WATI config points at an endpoint
+// that exists only in the test browser (one stubbed template), and the bulk POST to
+// workshopprogressmessage is caught and answered by the test — nothing leaves the machine.
+// ALPHA (p0) is the ONLY ticked person, so the payload must hold exactly one participant, and the
+// profileid must be p0's: the value the screen resolved, never one the test wrote into the request.
+// No console guard, for the same reason as WDC-07 (the composers log benign config errors on open).
+// =============================================================================================
+test.describe('Workshop dashboard — WhatsApp send carries the profileid', () => {
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    await alignWorkshopMetadataNames();
+    await seedWatiConfig();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => { await clearWatiConfig(); });
+
+  test('WDC-14 a WhatsApp send from the Communication dialog carries the selected person\'s profileid', async ({ page }) => {
+    const sent = await captureWorkshopProgressSend(page);   // after the stubs, so these routes win
+    await openDashboard(page);
+    const dialog = await openCommunication(page);
+    await search(dialog, ALPHA, 1);
+    await tick(row(dialog, ALPHA).getByTestId('wdash-comm-select-row'));
+    await expect.poll(() => selectedCount(dialog), { timeout: 10_000 }).toBe(1);
+
+    await dialog.getByTestId('wdash-comm-send-whatsapp').click();
+    const composer = page.getByRole('dialog').last();
+    await expect(composer.getByRole('heading', { name: 'Send Message' })).toBeVisible({ timeout: 20_000 });
+    await pickWatiTemplate(page, composer);
+    await composer.getByTestId('sen-send-whats-app-14').click();
+
+    await expect.poll(sent, { message: 'WDC-14: the screen posts the bulk WhatsApp send', timeout: 30_000 }).not.toBeNull();
+    const body = sent();
+    expect(body.type, 'WDC-14: a WhatsApp send').toBe('whatsapp');
+    expect(body.participants, 'WDC-14: only the ticked person is sent').toHaveLength(1);
+    expect(body.participants[0].profileid, 'WDC-14: the participant carries their profileid').toBe(wsProfileIds.p0);
   });
 });
 

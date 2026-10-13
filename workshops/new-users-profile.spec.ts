@@ -14,6 +14,7 @@ import { test, expect } from '@playwright/test';
 import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetNewUserTags,
   seedConvertedNewUser, clearConvertedNewUser, wsSeedDayMDY,
+  seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
@@ -258,6 +259,42 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
     } finally {
       // Restore NU_C however this case ended, so the next spec sees the seeded state.
       await clearConvertedNewUser();
+    }
+  });
+
+  // ===========================================================================================
+  // WS-63 — a WhatsApp send from New Users carries the profileid (2026-10-13)
+  //
+  // Same mechanism as WDC-14: the WATI config points at an in-browser endpoint with one stubbed template,
+  // and the bulk POST to workshopprogressmessage is caught and answered by the test. NU Alpha is the
+  // only ticked row, so exactly one participant must be sent, carrying NU Alpha's id.
+  // (This screen's mail button for SendmessagesComponent is commented out — mail here goes through the
+  // email-campaign composer — so WhatsApp is the SendmessagesComponent path to check.)
+  // ===========================================================================================
+  test('WS-63 a WhatsApp send from New Users carries the selected profileid', async ({ page }) => {
+    await seedWatiConfig();
+    try {
+      const sent = await captureWorkshopProgressSend(page);
+      await loginAsWshopAdmin(page);
+      await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
+      const row = page.locator(ROW).filter({ hasText: wsAddNames.nuAlpha });
+      await expect(row, 'WS-63: the row renders').toHaveCount(1, { timeout: 30_000 });
+      await row.locator('mat-checkbox input[type="checkbox"], mat-checkbox').first().click();
+
+      await page.getByTestId('new-toggle-comm-31').click();
+      await page.getByTestId('new-send-watti-33').click();
+      const composer = page.getByRole('dialog').last();
+      await expect(composer.getByRole('heading', { name: 'Send Message' })).toBeVisible({ timeout: 20_000 });
+      await pickWatiTemplate(page, composer);
+      await composer.getByTestId('sen-send-whats-app-14').click();
+
+      await expect.poll(sent, { message: 'WS-63: the screen posts the bulk WhatsApp send', timeout: 30_000 }).not.toBeNull();
+      const body = sent();
+      expect(body.type).toBe('whatsapp');
+      expect(body.participants, 'WS-63: only the ticked row is sent').toHaveLength(1);
+      expect(body.participants[0].profileid, 'WS-63: the participant carries their profileid').toBe(wsAddIds.NU_A);
+    } finally {
+      await clearWatiConfig();
     }
   });
 });
