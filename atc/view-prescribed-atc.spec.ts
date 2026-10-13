@@ -107,12 +107,12 @@ test.describe('ATC — View Prescribed ATC (real UI, emulator only)', () => {
     const r = row(page, ATC.A1);
     await expect(r).toBeVisible({ timeout: 45_000 });
     await r.getByTestId('vatc-toggle-full').click();
-    await expect(r.getByTestId('vatc-adj-0')).toContainText(`A1 adjustment one ${RUN}`, { timeout: 20_000 });
-    await expect(r.getByTestId('vatc-adj-0').getByTestId('vatc-proc-name').first()).toContainText(PROC_NAME.one);
-    await expect(r.getByTestId('vatc-adj-0').getByTestId('vatc-proc-name').nth(1)).toContainText(PROC_NAME.two);
+    await expect(r.locator(tid('vatc-adj-0'))).toContainText(`A1 adjustment one ${RUN}`, { timeout: 20_000 });
+    await expect(r.locator(tid('vatc-adj-0')).getByTestId('vatc-proc-name').first()).toContainText(PROC_NAME.one);
+    await expect(r.locator(tid('vatc-adj-0')).getByTestId('vatc-proc-name').nth(1)).toContainText(PROC_NAME.two);
     await expect(r).toContainText(`A1 consultation point ${RUN}`);
     await expect(r).toContainText(`A1 case notes ${RUN}`);
-    const assigned = r.getByTestId('vatc-adj-0').getByTestId('vatc-proc-assigned').first();
+    const assigned = r.locator(tid('vatc-adj-0')).getByTestId('vatc-proc-assigned').first();
     await expect(assigned).toContainText('1 assigned');
     await expect(assigned).toContainText(NAME.agent1);
   });

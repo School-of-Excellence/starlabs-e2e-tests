@@ -14,7 +14,7 @@ import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/suppor
 async function openEdit(page: Page, id: string, type: 'alpha' | 'validation' = 'alpha') {
   await loginAsAtc(page, 'admin');
   await page.goto(`/editATC/${id}/${type}`);
-  await expect(page.getByTestId('eatc-exadj-0')).toBeVisible({ timeout: 45_000 });
+  await expect(page.locator(tid('eatc-exadj-0'))).toBeVisible({ timeout: 45_000 });
   await expect(page.getByTestId('eatc-loading')).toHaveCount(0, { timeout: 30_000 });
 }
 const exadj = (page: Page, i: number) => page.locator(tid(`eatc-exadj-${i}`));
@@ -140,7 +140,7 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     await expect(page.locator(tid(`eatc-bulk-select-${ACT.ca}`)), 'box hidden until a new adjustment exists').toHaveCount(0);
     // a new procedure under the EXISTING adjustment (must stay untouched by bulk)
     await exadj(page, 0).getByTestId('eatc-exadj-addproc').click();
-    const exNew = exadj(page, 0).getByTestId('eatc-exproc-1');
+    const exNew = exadj(page, 0).locator(tid('eatc-exproc-1'));
     await pickOptions(page, exNew.getByTestId('eatc-proc-name'), [PROC_NAME.two], false);
     await addNewAdjustment(page, 0, `EATC-06 new adjustment ${RUN}`, [PROC_NAME.one, PROC_NAME.two]);
 
@@ -200,7 +200,7 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     await ref.update({ rev: d1.rev + 1, notes: 'edit theirs from another device' });
     await page.getByTestId('eatc-casenotes').fill('edit mine v2');
     await page.getByTestId('eatc-casenotes').blur();
-    await page.getByTestId('dcfl-keep-mine').click({ timeout: 30_000 });
+    await page.locator(tid('dcfl-keep-mine')).click({ timeout: 30_000 });
 
     await waitFor(async () => { const d = (await ref.get()).data(); return d.notes === 'edit mine v2' && d.rev > d1.rev + 1 ? d : null; }, 'this device wins');
     const archived = await atcDocs(`temporary_edit_ATC/${ATC.E5}/conflicts`);
@@ -222,14 +222,14 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     await page.getByTestId('dbu-textarea').fill(`E7 adjustment one EDITED ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(exadj(page, 0)).toContainText(`E7 adjustment one EDITED ${RUN}`);
-    await exadj(page, 0).getByTestId('eatc-exproc-1').getByTestId('eatc-exproc-toggle').click();
+    await exadj(page, 0).locator(tid('eatc-exproc-1')).getByTestId('eatc-exproc-toggle').click();
     // adjustment 02: Delete Adjustment Completely
     await exadj(page, 1).getByTestId('eatc-exadj-delete').click();
     await expect(exadj(page, 1).getByTestId('eatc-exadj-delete')).toHaveText(/Deleted/);
 
     // a new adjustment whose procedure is Mandatory (alpha → a Changework Brief audio is then required)
     await addNewAdjustment(page, 0, `EATC-09 new adjustment ${RUN}`, [PROC_NAME.one]);
-    await newadj(page, 0).getByTestId('eatc-newproc-0').getByTestId('eatc-proc-mandatory').locator('label').click();
+    await newadj(page, 0).locator(tid('eatc-newproc-0')).getByTestId('eatc-proc-mandatory').locator('label').click();
     await page.getByTestId('eatc-audio-input').setInputFiles({ name: 'eatc09.wav', mimeType: 'audio/wav', buffer: wavBuffer() });
     await page.getByTestId('eatc-summary').fill(`summary EATC-09 ${RUN}`);
     await page.getByTestId('eatc-summary').blur();

@@ -41,8 +41,12 @@ async function fillAdjustment(page: Page, i: number, text: string, procs: string
     await pickOptions(page, proc(page, i, j).getByTestId('patc-proc-name'), [procs[j]], false);
   }
 }
-// Hooks are written as literal getByTestId('…') calls on purpose: the hub readiness check only counts a hook
-// as "referenced by a spec" when its id appears literally (scripts/readiness/lib.cjs TESTID_REF).
+// HOOK RULE (hub readiness check, scripts/readiness/lib.cjs TESTID_REF) — applies to every atc spec:
+//   • STATIC hooks (a plain data-testid attribute in the app) → the literal getByTestId form, so the element
+//     check sees them as referenced;
+//   • BOUND hooks ([attr.data-testid] built from an index or key) → .locator(tid(...)), NEVER the literal
+//     getByTestId form: the app holds no literal copy of the indexed id, so the drift check would report it as
+//     "gone from the app". (Don't write a literal example of either form in a comment — the check reads comments.)
 async function fillNotes(page: Page, tag: string) {
   await page.getByTestId('patc-points').fill(`points ${tag}`);
   await page.getByTestId('patc-points').blur();
@@ -183,8 +187,8 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     const sel = p2.getByTestId('patc-participant');
     await expect(sel).toHaveAttribute('aria-disabled', 'false', { timeout: 45_000 });
     await pickOptions(p2, sel, [NAME.p2], false);
-    await p2.getByTestId('atco-draft-select-0').click({ timeout: 30_000 });
-    await expect(p2.getByTestId('patc-adj-0').getByTestId('patc-adj-text')).toHaveValue(`PATC-05 draft text ${RUN}`, { timeout: 30_000 });
+    await p2.locator(tid('atco-draft-select-0')).click({ timeout: 30_000 });
+    await expect(p2.locator(tid('patc-adj-0')).getByTestId('patc-adj-text')).toHaveValue(`PATC-05 draft text ${RUN}`, { timeout: 30_000 });
     await expect(p2.getByTestId('patc-product')).toContainText(MODEL.alpha);
     assertNoRealDb(g2);
     await ctx.close();
@@ -198,7 +202,7 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     await expect(sel3).toHaveAttribute('aria-disabled', 'false', { timeout: 45_000 });
     await pickOptions(p3, sel3, [NAME.p2], false);
     await p3.getByTestId('atco-close').click({ timeout: 30_000 });
-    await expect(p3.getByTestId('patc-adj-0').getByTestId('patc-adj-text'), 'Close starts a fresh ATC').toHaveValue('', { timeout: 30_000 });
+    await expect(p3.locator(tid('patc-adj-0')).getByTestId('patc-adj-text'), 'Close starts a fresh ATC').toHaveValue('', { timeout: 30_000 });
     expect((await drafts(PF.p2)).some((x) => x.data().delete === false && x.data().transcript?.[0]?.adjustment === `PATC-05 draft text ${RUN}`),
       'declining does not delete the existing draft').toBe(true);
     assertNoRealDb(g3);
@@ -302,7 +306,7 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     // this device edits again → autosave sees remote rev > base rev with local dirty → conflict dialog
     await page.getByTestId('patc-casenotes').fill('mine v2');
     await page.getByTestId('patc-casenotes').blur();
-    await page.getByTestId('dcfl-keep-mine').click({ timeout: 30_000 });
+    await page.locator(tid('dcfl-keep-mine')).click({ timeout: 30_000 });
 
     const winner = await waitFor(async () => { const d = (await draft.ref.get()).data(); return d.notes === 'mine v2' && d.rev > rev + 1 ? d : null; }, 'this device wins on the emulator');
     expect(winner.notes).toBe('mine v2');
