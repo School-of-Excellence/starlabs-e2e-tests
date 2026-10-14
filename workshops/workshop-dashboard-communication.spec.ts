@@ -811,6 +811,17 @@ test.describe('Workshop dashboard — Sale Achieved card (live workshops)', () =
     await expect(panel.locator('h3').first(), 'WDC-15: the panel heading reads "Sale Achieved", not the raw key').toHaveText('Sale Achieved', { timeout: 15_000 });
     await expect(panel, 'WDC-15: the panel states the purchase window').toContainText('Bought');
     await expect(page.getByTestId('wdash-sale-amount'), 'WDC-15: no buyers without Watson').toHaveCount(0);
+
+    // This panel SORTS instead of the All / New / Old filter (2026-10-14).
+    await expect(panel.getByTestId('wd-button-63'), 'WDC-15: no All/New/Old filter on Sale Achieved').toHaveCount(0);
+    const byAmount = page.getByTestId('wdash-sale-sort-amount');
+    const byRecent = page.getByTestId('wdash-sale-sort-recent');
+    await expect(byAmount, 'WDC-15: Amount is the default order').toHaveAttribute('aria-pressed', 'true');
+    await byRecent.click();
+    await expect(byRecent, 'WDC-15: Recent purchase can be chosen').toHaveAttribute('aria-pressed', 'true');
+    await expect(byAmount).toHaveAttribute('aria-pressed', 'false');
+    await byAmount.click();
+    await expect(byAmount).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId('wdash-sale-tip'), 'WDC-15: no purchases hover card without buyers').toHaveCount(0);
   });
 });
