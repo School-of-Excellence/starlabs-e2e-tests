@@ -904,6 +904,10 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     await expect(newRow.getByTestId('eif-mc-amount'), 'WS-60: the row shows the amount in rupees')
       .toHaveText('₹' + wsMasterclassAmounts.capNew);
 
+    // The purchases hover card (2026-10-14) belongs to New Users to Paid only — a Master Class row never opens it.
+    await newRow.hover();
+    await expect(page.getByTestId('eif-plan-tip'), 'WS-60: no purchases card on a Master Class row').toHaveCount(0);
+
     // [REAL-UI] Export carries the amount as a NUMBER (2026-10-13), read back from the downloaded file.
     const [mcDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
     const mcFile = test.info().outputPath('masterclass.xlsx');
