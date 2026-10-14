@@ -28,6 +28,7 @@
 // FIRESTORE_EMULATOR_HOST is set, else the cloud allowlist-guarded seed.initAdmin(). One copy for all seeders.
 const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
 const { LIST_IDS, SEEDED_LISTS, seedListsSegmentsTags } = require('./seed-lists-segments-tags');
+const { SB_IDS, SEEDED_SEGMENT_BOARD, seedSegmentBoard, cleanupSpecSegments } = require('./seed-segment-board');
 
 const TESTRUNID = process.env.PROF_RUNID || 'prof';
 
@@ -139,6 +140,9 @@ const ROUTES = [
   { route: '/ahcrm', label: 'A&H CRM' },
   { route: '/profilelist', label: 'Profile List' },
   { route: '/participantvideoask', label: 'Participant VideoAsk' },   // PA-47 (assigned 2026-09-08)
+  // segment-board.spec.ts (SGB-*): reads participant metadata / journey / products / modes, writes
+  // segmentboardconfig + segmentboardlist (run-named docs only; see seed-segment-board.js).
+  { route: '/segmentboard', label: 'Segment Board' },
 ];
 
 async function seedProfiles() {
@@ -327,6 +331,8 @@ async function seedProfiles() {
   // misplaced statement. The seeder's own WIRING notes (seed-lists-segments-tags.js:284-297) say this
   // goes "at the END of seedProfiles(), after step 9" — it does now, but BEFORE the return.
   await seedListsSegmentsTags(db, tag, PF);
+  // 11) /segmentboard world (SGB-*): run-named participants with negative controls + a manual segment.
+  await seedSegmentBoard(db, tag, ID.J1);
 
   // 11) STARLABS ROLES — the role vocabulary /profilelist renders, and PA-20's precondition.
   //
@@ -410,12 +416,15 @@ const SEEDED = [
   // lists/segments/tags docs are written but NEVER swept, so a re-run would inherit the previous run's
   // list membership — exactly the stale-precondition class that PA-33..PA-37 assert against.
   ...SEEDED_LISTS,
+  // segment-board world (seeded docs carry testrunid; app-written segment docs are removed by name below)
+  ...SEEDED_SEGMENT_BOARD,
 ];
 const SEEDED_FORMS_DB = ['formsByClient'];
 
 async function teardownProfiles() {
   const admin = initAdminAuto();
   const db = admin.firestore();
+  await cleanupSpecSegments(db);   // the segments the SGB spec created through the app (no testrunid)
   let n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
   // Forms DB sweep (named-DB handle).
   const { getFirestore } = require('firebase-admin/firestore');
@@ -436,7 +445,7 @@ async function teardownProfiles() {
   return n;
 }
 
-module.exports = { TESTRUNID, ID, LIST_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, seedProfiles, teardownProfiles };
+module.exports = { TESTRUNID, ID, LIST_IDS, SB_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, seedProfiles, teardownProfiles };
 
 if (require.main === module) {
   const mode = process.argv[2];
