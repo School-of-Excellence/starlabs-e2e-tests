@@ -75,6 +75,146 @@ const ID = {
 // The uP! Life Report formid the form-tracker tab-2 query filters by (participant-form-tracker.ts:144).
 const UP_LIFE_REPORT_FORMID = 'QundpMXgXlXiCJYZ7WU4';
 
+// ---- Participant Intelligence world (participant-intelligence.spec.ts, PI-*) ----------------------
+// Journal: specs/journals/2026-10-14-participant-intelligence-v5.md. Six participants that exist ONLY
+// as `participant metadata` (no Auth user, no profile_data — so no profile CF fires on them) plus the
+// reference docs the screen's rail reads. Every name starts with PI_SEARCH, so typing it in the top
+// search narrows the (shared-project) table to exactly this world.
+//
+//            customer      watson     onboarded  dob          productevent  consumed   unconsumed tags
+//   Alpha    active        regular    (missing)  (missing)    shared OLD    -          -          HELD
+//   Bravo    active        regular    false      30y          shared NEW    P1,P1      -          HELD
+//   Charlie  non active    regular    (missing)  50y          solo          P1         -          KEEP
+//   Delta    (missing)     regular    (missing)  (missing)    -             -          -          -     (approved request, shared OLD)
+//   Echo     discontinued  (missing)  (missing)  (missing)    -             -          P1         -     (PENDING request, shared NEW)
+//   Foxtrot  non active    (missing)  true       'not-a-date' -             -          -          -
+//
+// Each rule the spec asserts has a member of this table that it must drop (see the journal).
+// NOT seeded on purpose: queue_token / queue generation (the queue suite's data; onQueueStageChange fires
+// on ANY queue_token write and writes touchpoints + participant metadata), arena events (events suite),
+// atccount (left null like every profiles doc, so no ATC branch lights up).
+const PI_SEARCH = `PIV5-${TESTRUNID}-`;
+const PI = {
+  AL: `${TESTRUNID}_pi_alpha`, BR: `${TESTRUNID}_pi_bravo`, CH: `${TESTRUNID}_pi_charlie`,
+  DE: `${TESTRUNID}_pi_delta`, EC: `${TESTRUNID}_pi_echo`, FX: `${TESTRUNID}_pi_foxtrot`,
+  EV_OLD: `${TESTRUNID}_PI_EV_shared_old`,   // same NAME as EV_NEW → one merged rail option
+  EV_NEW: `${TESTRUNID}_PI_EV_shared_new`,
+  EV_SOLO: `${TESTRUNID}_PI_EV_solo`,        // a different name → its own option (the negative)
+  EPR_OK: `${TESTRUNID}_PI_EPR_delta_ok`,     // approved → Delta counts as Confirmed
+  EPR_PEND: `${TESTRUNID}_PI_EPR_echo_pend`,  // pending  → Echo must NOT count as Confirmed
+  TAG_HELD: `${TESTRUNID}_PI_TAG_held`,       // on Alpha + Bravo — the remove-from-all → delete flow
+  TAG_KEEP: `${TESTRUNID}_PI_TAG_keep`,       // on Charlie — must survive TAG_HELD's removal
+  LIST: `${TESTRUNID}_PI_LIST`,               // [Alpha, Charlie]
+  LIST2: `${TESTRUNID}_PI_LIST2`,             // [Echo]
+  SEG: `${TESTRUNID}_PI_SEG`,                 // segment = LIST ∪ LIST2
+  SQ: `${TESTRUNID}_PI_SQ`,                   // saved filter: customerstatus [non active]
+  SB_ON: `${TESTRUNID}_PI_SB_on`,             // live journey segment, saved list [Bravo, Delta]
+  SB_OFF: `${TESTRUNID}_PI_SB_off`,           // INACTIVE segment, saved list [Alpha] — never an option
+};
+const PI_NAME = {
+  AL: `${PI_SEARCH}Alpha`, BR: `${PI_SEARCH}Bravo`, CH: `${PI_SEARCH}Charlie`,
+  DE: `${PI_SEARCH}Delta`, EC: `${PI_SEARCH}Echo`, FX: `${PI_SEARCH}Foxtrot`,
+  EV_SHARED: `${PI_SEARCH}Shared Event`, EV_SOLO: `${PI_SEARCH}Solo Event`,
+  TAG_HELD: `${PI_SEARCH}Held Tag`, TAG_KEEP: `${PI_SEARCH}Keep Tag`,
+  LIST: `${PI_SEARCH}List`, LIST2: `${PI_SEARCH}List Two`, SEG: `${PI_SEARCH}Segment`,
+  SQ: `${PI_SEARCH}Saved Non Active`,
+  SB_ON: `${PI_SEARCH}Board Segment`, SB_OFF: `${PI_SEARCH}Retired Segment`,
+};
+
+/** A date of birth exactly `years` years and 10 days ago (clear of the birthday boundary). */
+function piDob(years) {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() - years);
+  d.setDate(d.getDate() - 10);
+  return d;
+}
+
+/**
+ * The docs a PI case MUTATES (tags, profiletags, remarks, the saved filter). Re-set before each mutating
+ * case — a precondition write only; the cases assert what the APP writes over it. Plain Dates (the admin
+ * SDK stores them as Timestamps), so the spec can call this with the firestore-admin db() handle.
+ */
+async function resetPiMutables(db) {
+  const tag = TAG(TESTRUNID);
+  const tagDoc = (id, name, tagsfor) => db.collection('participant tags').doc(id).set({
+    id, name, tagsfor, isActive: true, created: new Date(0), createdby: PF.admin, ...tag,
+  });
+  await tagDoc(PI.TAG_HELD, PI_NAME.TAG_HELD, ['live event']);
+  await tagDoc(PI.TAG_KEEP, PI_NAME.TAG_KEEP, ['live event']);
+  const md = db.collection('participant metadata');
+  await md.doc(PI.AL).set({ profiletags: [PI.TAG_HELD], remarks: [] }, { merge: true });
+  await md.doc(PI.BR).set({ profiletags: [PI.TAG_HELD] }, { merge: true });
+  await md.doc(PI.CH).set({ profiletags: [PI.TAG_KEEP], remarks: [] }, { merge: true });
+  // the analytics-shaped saved filter (top-level keys, no pifilter) — what both screens read back
+  await db.collection('searchquery').doc(PI.SQ).set({
+    docid: PI.SQ, label: PI_NAME.SQ, createdby: PF.admin,
+    customerstatus: ['non active'], financialstatus: [], activejourney: [], lastcompletedjourney: [],
+    activeproduct: [], profiletags: [], tier: [], registereduser: [], atccount: null,
+    subscriptionstart: { start: null, end: null }, subscriptionend: { start: null, end: null },
+    ...tag,
+  });
+}
+
+/** Stand up the PI world (idempotent: deterministic ids, full set()). */
+async function seedPiWorld(db) {
+  const tag = TAG(TESTRUNID);
+  const DAY = 86400e3;
+  const evRef = (id) => db.collection('event collection').doc(id);
+  const person = (key, fields) => db.collection('participant metadata').doc(PI[key]).set({
+    docid: PI[key], profileid: PI[key], name: PI_NAME[key],
+    email: `pi-${key.toLowerCase()}+${TESTRUNID}@example.com`, phonenumber: '9999000050', countrycode: '+91',
+    participantmode: 'Discovery Mode', activeproduct: [], consumedproducts: [], unconsumedproducts: [],
+    profiletags: [], remarks: [], productevent: {}, atccount: null, atcmodel: null,
+    ...fields, ...tag,
+  });
+  // customerstatus / financialstatus / currentjourneyonboarded / dateofbirth are OMITTED where the table
+  // above says "(missing)" — the screen maps a missing field to 'none' / null, which is what the rules read.
+  await person('AL', { customerstatus: 'active', financialstatus: 'regular', productevent: { [ID.P1]: [PI.EV_OLD] } });
+  await person('BR', {
+    customerstatus: 'active', financialstatus: 'regular', currentjourneyonboarded: false, dateofbirth: piDob(30),
+    productevent: { [ID.P1]: [PI.EV_NEW] }, consumedproducts: [ID.P1, ID.P1],
+  });
+  await person('CH', {
+    customerstatus: 'non active', financialstatus: 'regular', dateofbirth: piDob(50),
+    productevent: { [ID.P1]: [PI.EV_SOLO] }, consumedproducts: [ID.P1],
+  });
+  await person('DE', { financialstatus: 'regular' });
+  await person('EC', { customerstatus: 'discontinued', unconsumedproducts: [ID.P1] });
+  await person('FX', { customerstatus: 'non active', currentjourneyonboarded: true, dateofbirth: 'not-a-date' });
+
+  // Events: two share a name (merged into one option, canonical = the newest), one stands alone. No
+  // end_date, so no "upcoming events" query (e.g. /ahcrm's end_date >= now) ever picks them up.
+  await evRef(PI.EV_OLD).set({ docid: PI.EV_OLD, id: PI.EV_OLD, name: PI_NAME.EV_SHARED, start_date: new Date(Date.now() - 30 * DAY), ...tag });
+  await evRef(PI.EV_NEW).set({ docid: PI.EV_NEW, id: PI.EV_NEW, name: PI_NAME.EV_SHARED, start_date: new Date(Date.now() - 5 * DAY), ...tag });
+  await evRef(PI.EV_SOLO).set({ docid: PI.EV_SOLO, id: PI.EV_SOLO, name: PI_NAME.EV_SOLO, start_date: new Date(Date.now() - 10 * DAY), ...tag });
+  // Requests carry NO productref and never status 'attended', so eventparticipationdata_to_pmd has nothing
+  // to project into productevent (and the modes suite's attended-count is untouched).
+  const epr = db.collection('event participation request');
+  await epr.doc(PI.EPR_OK).set({ docid: PI.EPR_OK, profileid: PI.DE, eventref: evRef(PI.EV_OLD), status: 'approved', ...tag });
+  await epr.doc(PI.EPR_PEND).set({ docid: PI.EPR_PEND, profileid: PI.EC, eventref: evRef(PI.EV_NEW), status: 'pending', ...tag });
+
+  // Lists + a segment (the audience switcher). Segment membership = union of its member lists.
+  const now = new Date();
+  await db.collection('participant list').doc(PI.LIST).set({
+    docid: PI.LIST, listname: PI_NAME.LIST, profilelist: [PI.AL, PI.CH], live: false, segmentid: [], createddate: now, ...tag,
+  });
+  await db.collection('participant list').doc(PI.LIST2).set({
+    docid: PI.LIST2, listname: PI_NAME.LIST2, profilelist: [PI.EC], live: false, segmentid: [], createddate: now, ...tag,
+  });
+  await db.collection('segments').doc(PI.SEG).set({
+    docid: PI.SEG, segmentname: PI_NAME.SEG, participantlistid: [PI.LIST, PI.LIST2], createddate: now, ...tag,
+  });
+
+  // Segment board: one live segment and one inactive one (the board never places anyone in an inactive
+  // segment, so its stale saved list must not become a filter option).
+  await db.collection('segmentboardconfig').doc(PI.SB_ON).set({ docid: PI.SB_ON, name: PI_NAME.SB_ON, status: 'active', displayIndex: 9001, ...tag });
+  await db.collection('segmentboardconfig').doc(PI.SB_OFF).set({ docid: PI.SB_OFF, name: PI_NAME.SB_OFF, status: 'inactive', displayIndex: 9002, ...tag });
+  await db.collection('segmentboardlist').doc(PI.SB_ON).set({ segmentid: PI.SB_ON, profilelist: [PI.BR, PI.DE], lastupdated: now, ...tag });
+  await db.collection('segmentboardlist').doc(PI.SB_OFF).set({ segmentid: PI.SB_OFF, profilelist: [PI.AL], lastupdated: now, ...tag });
+
+  await resetPiMutables(db);
+}
+
 // Actors. profileids are run-prefixed; emails follow the actors.ts convention `<role>+<run>@example.com`.
 const PF = {
   admin: `${TESTRUNID}_pf_admin`,
@@ -334,6 +474,9 @@ async function seedProfiles() {
   // 11) /segmentboard world (SGB-*): run-named participants with negative controls + a manual segment.
   await seedSegmentBoard(db, tag, ID.J1);
 
+  // 10b) PARTICIPANT INTELLIGENCE world (participant-intelligence.spec.ts) — see the PI block at the top.
+  await seedPiWorld(db);
+
   // 11) STARLABS ROLES — the role vocabulary /profilelist renders, and PA-20's precondition.
   //
   //     profilelist builds its role checkboxes from `roleList`, which it fills from the SINGLE fixed-id
@@ -397,7 +540,7 @@ async function seedProfiles() {
     counts: {
       profiles: participants.length, journeys: 1, products: 2, askAH: 2, loveLetter: 1,
       formsByClient: 1, appflowbreaks: 2, productCfProducts: 1,
-      listsSegmentsTags: SEEDED_LISTS.length,
+      listsSegmentsTags: SEEDED_LISTS.length, piParticipants: 6,
     },
   };
 }
@@ -418,6 +561,9 @@ const SEEDED = [
   ...SEEDED_LISTS,
   // segment-board world (seeded docs carry testrunid; app-written segment docs are removed by name below)
   ...SEEDED_SEGMENT_BOARD,
+  // participant-intelligence.spec.ts (PI world). 'event collection', 'participant metadata', 'participant
+  // list', 'segments' and 'participant tags' are already listed above.
+  'event participation request', 'searchquery', 'segmentboardconfig', 'segmentboardlist',
 ];
 const SEEDED_FORMS_DB = ['formsByClient'];
 
@@ -445,7 +591,7 @@ async function teardownProfiles() {
   return n;
 }
 
-module.exports = { TESTRUNID, ID, LIST_IDS, SB_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, seedProfiles, teardownProfiles };
+module.exports = { TESTRUNID, ID, LIST_IDS, SB_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, PI, PI_NAME, PI_SEARCH, resetPiMutables, seedProfiles, teardownProfiles };
 
 if (require.main === module) {
   const mode = process.argv[2];

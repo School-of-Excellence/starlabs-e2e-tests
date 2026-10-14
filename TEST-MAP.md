@@ -151,14 +151,14 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 | Group | Config | pass | fixme | skip | Covers |
 |---|---|---:|---:|---:|---|
 | **queue** | `playwright.queue.config.ts` | ~191 | 3 | meta | Queue Manager: staging, stage-log, assignment, dashboards; B!G leaderboard (BLD-01..03) |
-| **appointments** | `playwright.appointments.config.ts` | 18 | 1 | 0 | Booking join-chain, slots, roster, team-hours, studio |
+| **appointments** | `playwright.appointments.config.ts` | 27 | 6 | 0 | Booking join-chain, slots, roster, team-hours, studio; Specialist Appointment Studio `/specialistappointmentstudio` (SAS-01..09: A&H vs CW views, Home hours maths with cancelled/pending/other-host/other-week excluded, Pending/Completed/Cancelled past filter, disableCancel in the detail dialog, add-availability gate, delete-only-unbooked, view-only delivery types; SAS-ADDR1..5 fixme register the remaining hooks) |
 | **events** | `playwright.events.config.ts` | 21 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones, event-editor eligibility (UED-ELIG-01), Configure CTA (ECTA-01..03), eligibility buckets (EPC-ELIG-01/02) |
 | **modes** | `playwright.modes.config.ts` | 72 +8 engine | 3 | 2 | Mode rollup/arc engine, wishlist, app-engagement; the interim-report dashboard carries IRD-01..18 (counts, per-ATC-model crossover, filters, tagging/resolve, export, multi-select → composers, kept filters, in-dialog send bar, cancelled excluded) |
 | **content** | `playwright.content.config.ts` | 11 | 4 | 4 | Series/episodes, tier access, playlists, HLS, content-analytics-v2 hooks (fixme — not routed) |
 | **workshops** | `playwright.workshops.config.ts` | 14 | 4 | 0 | Workshop authoring, scheduling, attendance |
 | **comms** | `playwright.comms.config.ts` | 10 | 2 | 7 | Notifications, templates, broadcasts |
 | **support** | `playwright.support.config.ts` | 12 | 3 | 3 | Tickets, support chat, blocked messages |
-| **profiles** | `playwright.profiles.config.ts` | 91 | 13 | 0 | Profile data, analytics, `*_to_pmd` CF effects, bulk-add-products, view-participants-form filters, participant-intelligence, segment board (SGB-01..06 + 3 ADDR, added 2026-10-12, auto ids + history 2026-10-13; emulator 2026-09-25; PA-CF-* need the functions emulator) |
+| **profiles** | `playwright.profiles.config.ts` | 91 +13 unrun | 13 | 0 | Profile data, analytics, `*_to_pmd` CF effects, bulk-add-products, view-participants-form filters, participant-intelligence v5 (PI-01..17 against a seeded six-person world: rail filters incl. tri-state, age, product-count rules, journey segments, merged same-name events Attended/Confirmed, round-5 insight cards, lists/segments/saved filters, tag remove-from-all → delete, bulk filtered∩selected scope; PI-ADDR1 parks count/date filters — authored 2026-10-14, not yet executed; the gate is its first run) (emulator 2026-09-25; PA-CF-* need the functions emulator); segment board (SGB-01..06 + 3 ADDR, 2026-10-12/13) |
 | **evomap** | `playwright.evomap.config.ts` | 13 | 1 | 0 | Evolution mapping authoring + render |
 | **authroles** | `playwright.authroles.config.ts` | 18 | 1 | 2 | Login gate, data-driven authGuard, nav visibility |
 | **journey** | `playwright.journey.config.ts` | 90 | 28 | 0 | Purchase/onboard, sales-lead, product-delivery*, JC health, FTO / team-evolution dashboard (JTED), delivery-dashboard stuck cases (DDC-STK), JE Assured Sales journey fallback (JCD-04), delivery-dashboard All tab + filters (DDC-FLT), FTO initiated ordering (JTED-09), formtemplate multi-line description (JP-33), remark attachment upload (JCD-05), JE product fallback via PJP (JCD-06) |
@@ -167,7 +167,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 \* the journey product-delivery cases (JP-PD/JP-EDIT) **validate two real production source fixes** end-to-end
 (`delivery-sequence.component.ts` null-guard `16b578a`; `product-delivery.component.ts` fresh-per-emit view-model).
 
-**Totals:** ~249 component-group cases (incl. the modes 8-case engine) + ~188 queue ≈ **~437 passing**, with **23 fixme** + **~18 CF-skip** documented in-file.
+**Totals:** ~258 component-group cases (incl. the modes 8-case engine) + ~188 queue ≈ **~446 passing**, with **28 fixme** + **~18 CF-skip** documented in-file.
 
 ### Legend
 
