@@ -1020,6 +1020,9 @@ test.describe('Workshops — eiflix operations dashboard: paid total amount (no 
     await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }), 'WS-62: the panel lists the moved person')
       .toHaveCount(1, { timeout: 15_000 });
     await expect(panel.getByTestId('eif-mc-amount'), 'WS-62: no Watson -> no per-person amount').toHaveCount(0);
+    // Hover card (2026-10-14): only rows carrying a Watson schedule open it — so none here.
+    await panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }).hover();
+    await expect(page.getByTestId('eif-plan-tip'), 'WS-62: no Watson -> no payment-schedule card on hover').toHaveCount(0);
 
     // Export without Watson: the people are there, the Total Amount column is not (never a column of blanks or zeros).
     const [paidDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
