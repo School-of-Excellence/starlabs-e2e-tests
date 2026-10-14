@@ -716,3 +716,15 @@ test.fixme('PI-ADDR1 count and subscription-date filter hooks addressable (defer
   expect(page.getByTestId('pi-filter-sub-legacy')).toBeTruthy();
   expect(page.getByTestId('pi-filter-sub-clear')).toBeTruthy();
 });
+
+// PI-ADDR2 — hooks restored on 2026-10-14 to controls v5 shipped without one (the rollout gate's "interactive element
+// with no data-testid"). PI-02/03/04 already drive these controls by role/label; registered here by id.
+test.fixme('PI-ADDR2 restored search-clear / checklists / refresh / checklist hooks addressable (driven by role in PI-02..04)', async ({ page }) => {
+  await page.goto('/participant-intelligence', { waitUntil: 'domcontentloaded' });
+  expect(page.getByTestId('pi-search-clear')).toBeTruthy();
+  expect(page.getByTestId('pi-checklists')).toBeTruthy();
+  expect(page.getByTestId('pi-refresh')).toBeTruthy();
+  expect(page.getByTestId('pi-checklists-watson-heading')).toBeTruthy();
+  expect(page.getByTestId('pi-checklists-recon-heading')).toBeTruthy();
+  expect(page.getByTestId('pi-checklist-item')).toBeTruthy();
+});
