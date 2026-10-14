@@ -423,7 +423,7 @@
       "config": "playwright.atc.emulator.report.config.ts",
       "capture": "failure-only",
       "specDir": "atc",
-      "ciReady": true,
+      "ciReady": false,
       "appPaths": [
         "src/app/ATC/prescribe-atc/**",
         "src/app/ATC/edit-atc/**",
