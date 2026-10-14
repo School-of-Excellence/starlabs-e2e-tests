@@ -25,6 +25,7 @@ import {
   setupOverviewShape, teardownOverviewShape,
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
   wsProfileIds, seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
+  setDashWorkshopType, clearDashWorkshopType,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -767,6 +768,50 @@ test.describe('Workshop dashboard — WhatsApp send carries the profileid', () =
     expect(body.type, 'WDC-14: a WhatsApp send').toBe('whatsapp');
     expect(body.participants, 'WDC-14: only the ticked person is sent').toHaveLength(1);
     expect(body.participants[0].profileid, 'WDC-14: the participant carries their profileid').toBe(wsProfileIds.p0);
+  });
+});
+
+// =============================================================================================
+// WDC-15 — Sale Achieved card, live workshops only (2026-10-14)
+//
+// The card lists enrolled people who bought in Watson ParticipantPurchases between registration start and
+// one month after the workshop end. The emulator build has NO Watson (by design — tests never reach the
+// finance project), so what CI can prove is the shell: the card appears ONLY when workshoptype is
+// 'liveworkshop', reads "—" rather than a misleading 0 without Watson, and its panel opens with the window
+// and no buyers. The Watson matching and window are unit-tested in the app (watson-purchases.spec.ts).
+// =============================================================================================
+test.describe('Workshop dashboard — Sale Achieved card (live workshops)', () => {
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    await alignWorkshopMetadataNames();
+    await clearDashWorkshopType();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => { await clearDashWorkshopType(); });
+
+  test('WDC-15 Sale Achieved appears only on a live workshop, and without Watson its amount reads "—" with an empty panel', async ({ page }) => {
+    // [NEGATIVE CONTROL] W_DASH as seeded has no workshoptype -> no card.
+    await openDashboard(page);
+    await expect(page.getByText('Total Enrolled').first(), 'WDC-15: the dashboard rendered').toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId('wdash-sale-card'), 'WDC-15: not a live workshop -> no Sale Achieved card').toHaveCount(0);
+
+    // Live workshop -> the card is there.
+    await setDashWorkshopType('liveworkshop');
+    await page.reload({ waitUntil: 'domcontentloaded' });   // already signed in — just reload
+    const card = page.getByTestId('wdash-sale-card');
+    await expect(card, 'WDC-15: a live workshop shows Sale Achieved').toBeVisible({ timeout: 45_000 });
+    // The amount is the headline (2026-10-14): without Watson it reads "—", never a misleading ₹0,
+    // and the buyer count only appears once a lookup has answered.
+    await expect(page.getByTestId('wdash-sale-total'), 'WDC-15: no Watson in this build -> "—"').toHaveText('—');
+    await expect(page.getByTestId('wdash-sale-count'), 'WDC-15: no Watson -> no buyer count').toHaveCount(0);
+
+    // The panel opens on the window, with nobody in it.
+    await card.click();
+    const panel = page.locator('.participant-panel.panel-visible');
+    await expect(panel.locator('h3').first(), 'WDC-15: the panel heading reads "Sale Achieved", not the raw key').toHaveText('Sale Achieved', { timeout: 15_000 });
+    await expect(panel, 'WDC-15: the panel states the purchase window').toContainText('Bought');
+    await expect(page.getByTestId('wdash-sale-amount'), 'WDC-15: no buyers without Watson').toHaveCount(0);
+    await expect(page.getByTestId('wdash-sale-tip'), 'WDC-15: no purchases hover card without buyers').toHaveCount(0);
   });
 });
 

@@ -1708,3 +1708,20 @@ export async function pickWatiTemplate(page: Page, composer: Locator): Promise<v
   await composer.locator('mat-select[formcontrolname="templateName"]').click();
   await page.locator('mat-option').filter({ hasText: wsWatiTemplate }).click();
 }
+
+// =================================================================================================
+// 2026-10-14 — Sale Achieved card (live workshops only) on the workshop dashboard (WDC-15).
+// =================================================================================================
+
+/** Make W_DASH a live workshop for one case (`workshoptype` is the root creation field). */
+export async function setDashWorkshopType(value: string): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH).set({ workshoptype: value }, { merge: true });
+}
+
+/** Put W_DASH back as seeded — no `workshoptype` at all. */
+export async function clearDashWorkshopType(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH)
+    .set({ workshoptype: admin.firestore.FieldValue.delete() }, { merge: true });
+}
