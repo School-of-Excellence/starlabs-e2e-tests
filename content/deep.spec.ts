@@ -23,7 +23,7 @@
 import { test, expect, Page } from '@playwright/test';
 import {
   contentText, contentIds, tierProfiles, bufferProfiles,
-  installContentStubs, installStorageStub, loginAsContentAdmin, TINY_PNG,
+  installContentStubs, installStorageStub, loginAsContentAdmin, TINY_PNG, STORAGE_HOST,
   resetSeriesEpisode, deleteCreatedSeries, resetTierAccessConfigForTier2,
   resetRecommendedMix, createRecommendedMix, resetHlsEpisode, resetHlsContentUrl,
   deleteCreatedAdsPlaylist, deleteCreatedLearningMaterial, resetContentUrlTitle,
@@ -556,8 +556,11 @@ test.describe('Content — deep write/CF cases (real UI / component / CF, anti-c
     expect(d.available, 'CN-14: the form default the test never touched (ts:63)').toBe(true);
     expect(typeof d.startdate?.toMillis, 'CN-14: startdate stored as a Timestamp').toBe('function');
     expect(typeof d.enddate?.toMillis, 'CN-14: enddate stored as a Timestamp').toBe('function');
+    // The download URL's host is whichever Storage the SDK is connected to (the real host, or the Storage
+    // EMULATOR in the emulator build); the stub's token proves the URL came back through installStorageStub.
     expect(String(d.adsthumbnail), 'CN-14: adsthumbnail is the getDownloadURL the app read back (ts:129)')
-      .toMatch(/^https:\/\/firebasestorage\.googleapis\.com\//);
+      .toMatch(STORAGE_HOST);
+    expect(String(d.adsthumbnail), 'CN-14: …served by the Storage stub (no real object was created)').toContain('token=e2e-stub-token');
 
     await deleteCreatedAdsPlaylist(NEW_AD); // tidy the app-created doc
   });

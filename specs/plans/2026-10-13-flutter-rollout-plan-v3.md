@@ -43,7 +43,7 @@ FEATURE BRANCH ──push──► 2 APK (dev-env + prod-env) ──► Firebase
 | L4 | Suite check + test run | not in v2 | **parallel with the builds** | Stage 2 and stage 3 of the new-flow card. Stage 3 is MANDATORY, not advisory — see §4. |
 | L5 | iOS | both envs, both stages, ad-hoc + TestFlight | **prod-env only, on merge to `development` only** → TestFlight | Three reasons. (a) Xcode Cloud's free tier is 25 h/month and a Flutter iOS archive runs ~15–25 min; per-push iOS would exhaust it. (b) One bundle id means one App Store Connect app record and ONE TestFlight build list — four developers pushing feature branches would make that list unreadable, since build number and "what to test" notes are the only discriminator. Restricting TestFlight to `development` gives the lane exactly one meaning. (c) No second signing set, no second app record, no ad-hoc UDID tax. ACCEPTED COST: iOS is never exercised before merge, and never against `starlabs-test` at all — see §9. |
 | L6 | Dev-merge delivery | prod AAB → Play Internal; iOS → TestFlight | **2 APK → Storage** + **1 prod iOS → TestFlight** | The `development` branch gets the same two-APK treatment as a feature branch, so testers can validate the merged state on either backend. |
-| L7 | After dev-merge | Play Internal track, then manual promote | **NOTHING automated.** `development` is terminal | Operator directive 2026-10-13: "development is the ultimate final boss branch". Production rollout is manual, on the operator's own schedule, and its design is DEFERRED to a later session. See §8 — this leaves a known, deliberate gap. |
+| L7 | After dev-merge | Play Internal track, then manual promote | **NOTHING automated.** `development` is terminal; the Play Internal upload is **REMOVED** (2026-10-14) | Operator directive 2026-10-13: "development is the ultimate final boss branch". Production rollout is manual, on the operator's own schedule, and its design is DEFERRED to a later session. See §8 — this leaves a known, deliberate gap. |
 | L8 | Artifact URL lifetime | n/a | **valid as long as the APK exists** | Operator directive 2026-10-13. This rules out V4 signed URLs (7-day maximum). See §5. |
 
 ---
@@ -167,7 +167,10 @@ Unchanged from the new flow, and shared with Angular:
 
 ## 7. Dev-merge delivery (on push to `development`)
 
-- Android: 2 APKs (dev-env + prod-env) → `apks/development/{dev,prod}.apk`, same mechanism as §3.
+- Android: 2 APKs (dev-env + prod-env) → `apks/development/{dev,prod}.apk`.
+  **The same workflow as §3 handles this** — `development` is just another branch name, and the
+  artifact shape is identical, so its push trigger simply does not exclude `development`. ONE
+  Android workflow total, which is the "easy build maintenance" the operator asked for.
 - iOS: ONE prod-env archive → **TestFlight** (internal group). Option A, locked 2026-10-13.
 
 **The iOS path is broken today and must be fixed first.** `ios/ci_scripts/ci_post_clone.sh`
@@ -175,6 +178,18 @@ installs `flutterfire_cli` (line 34) but never calls `flutterfire configure`, an
 `lib/firebase_options.dart` is gitignored while `lib/main.dart:20` imports it. A fresh Xcode Cloud
 clone therefore cannot compile — a hard failure on a missing import, not a silent degradation. The
 script needs `flutterfire configure --project fir-sample-aae4a` added.
+
+**WHERE THE TestFlight RESULT IS STORED — a projection defect to avoid.** `mobileDelivery` is
+read by `deriveStatus` (`projection.ts:85-92`), and an ENVIRONMENT candidate has no `headSha`
+(protected-branch pushes are skipped, `index.ts:359`), so its `covers()` gate returns true
+unconditionally. Writing `mobileDelivery` on the `development` candidate would therefore make its
+`derivedStatus` fall through to **`PREVIEW_LIVE`** — nonsense for a terminal branch. `previewStatus`
+does NOT have this problem: the projection never reads it (branch-channels D4, 2026-08-19), so the
+two Storage APKs are safe to POST for `development`.
+
+Recommended fix, NEEDS OPERATOR SIGN-OFF because it touches shared projection code: guard the
+preview/mobile lane in `deriveStatus` so environment candidates (`development`/`production`) skip
+it. The guard is a no-op for Angular and CF candidates, which never carry `mobileDelivery`.
 
 **Build number must be injected.** `pubspec.yaml:18` is `version: 1.0.110+121`, hardcoded, and no
 workflow passes `--build-number`. TestFlight rejects a reused build number for a version string.
@@ -196,11 +211,14 @@ Play Store can promote from**. An APK in Firebase Storage cannot be promoted, an
 wants an App Bundle. When the rollout step is designed, it will need either the AAB upload restored
 or a manual AAB build.
 
-**OPEN — one question for the operator (§11).** The existing
-`android-firebase-distribution.yml` does that AAB → Play Internal upload TODAY on every push to
-`development`. L7 says nothing happens after dev-merge, which implies disabling it. Leaving it
-running costs one extra build and keeps the Android store path available; stripping it matches L7
-literally and removes the only such path. **Not actioned either way until the operator confirms.**
+**LOCKED 2026-10-14 — the Play Internal upload is REMOVED.** `android-firebase-distribution.yml`
+exists only to build the prod AAB and push it to `track: internal`; with that removed the file has
+no remaining job and is **deleted**. Consequence, accepted knowingly: until the rollout step is
+designed, the only way to get an Android build into Play is to build an AAB by hand.
+
+WHY delete rather than disable: a workflow left in place but unused is a trap — it still fires on
+every push to `development`, still consumes a runner, and still reads as the intended path to the
+next person who opens the repo.
 
 iOS is unaffected: a TestFlight build is already the thing App Store Connect submits from, so the
 manual iOS path (attach build → submit → Apple review → manual release) stays available.
@@ -260,6 +278,10 @@ Stated plainly so no future session re-litigates them as discoveries.
 11. `mobile-preview.yml` — retire, or rename to drop `preview` from its display name (§3).
     `deployPreview`'s flutter branch (`index.ts:947`) dispatches it; with push-triggering it becomes a
     second writer of the same fields.
+12. **DELETE `android-firebase-distribution.yml`** (§8) — its only job was the removed Play upload.
+
+**Hub — `console/functions/src/projection.ts`**
+13. Guard the preview/mobile lane so environment candidates skip it (§7). Needs sign-off: shared code.
 
 ---
 
@@ -275,11 +297,11 @@ Stated plainly so no future session re-litigates them as discoveries.
 - Xcode Cloud: a workflow on `development` only, with `FIREBASE_TOKEN` available to
   `ci_post_clone.sh`.
 - GitHub branch protection on `development` with the allow-list mergers. No `production` branch.
-- **DECISION NEEDED:** keep or disable the existing AAB → Play Internal upload (§8).
-- **DECISION NEEDED:** where the dev-merge delivery renders. The `development` row in Working
-  Branches has no pipeline — only PR markup. The Preview Channels screen WOULD show it unchanged
-  (its `withPreview` filter has no protected-branch exclusion,
-  `preview-channels.component.ts:86-93`), but "Preview channels" showing `development` reads oddly.
+- **DECISION NEEDED (the only one left):** where the dev-merge delivery renders, and with it the
+  `deriveStatus` guard of §7. The `development` row in Working Branches has no pipeline — only PR
+  markup. The Preview Channels screen WOULD show it unchanged (its `withPreview` filter has no
+  protected-branch exclusion, `preview-channels.component.ts:86-93`), but "Preview channels" showing
+  `development` reads oddly.
 
 ---
 
@@ -290,11 +312,11 @@ Stated plainly so no future session re-litigates them as discoveries.
 3. Flutter: the push build+store workflow (§10.7). Needs the operator secrets.
 4. Flutter: `flutter-e2e.yml` retarget + `recordSuiteRun` (§10.8). Unblocks `approveRollout`.
 5. Flutter: iOS `ci_post_clone.sh` fix + build-number injection (§10.9) — blocks ALL iOS work.
-6. Flutter: dev-merge Android uploads (§10.10).
+6. Flutter: let the §3 workflow cover `development`; DELETE `android-firebase-distribution.yml` (§10.10, §10.12).
 7. Resolve the two §11 decisions, then prove end to end: push → 2 APKs + suite check + test run →
    sign off → approve → PR → merge → 2 APKs for `development` + TestFlight → stop.
 
 ## 13. Open items
 
-Two, both in §11: the Play Internal upload, and where the dev-merge delivery renders.
-Everything else was locked 2026-10-13.
+ONE: where the dev-merge delivery renders, and the `deriveStatus` guard that goes with it (§7, §11).
+Play Internal was resolved 2026-10-14 — removed. Everything else was locked 2026-10-13.

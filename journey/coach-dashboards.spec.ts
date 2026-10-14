@@ -240,7 +240,8 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
   test('JCD-05 an attachment added in the onboarding email is uploaded and linked by its download URL; a failed upload is refused', async ({ page }) => {
     const uploads: string[] = [];
     let failNext = false;
-    await page.route('**/firebasestorage.googleapis.com/**', async (route) => {
+    // Storage is reached on the real host OR the local Storage EMULATOR (emulator build, since 2026-10-13) — stub both.
+    await page.route(/^https?:\/\/(firebasestorage\.googleapis\.com|(localhost|127\.0\.0\.1):9199)\/v0\/b\//i, async (route) => {
       const req = route.request();
       const url = new URL(req.url());
       const name = url.searchParams.get('name') || decodeURIComponent(url.pathname.split('/o/')[1] || '');
@@ -284,7 +285,7 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
     await expect(item, 'JCD-05: the attachment is listed').toHaveCount(1, { timeout: 30_000 });
     expect(uploads.some((n) => /^email-attachments\/manual_welcome-pack\.pdf_\d+$/.test(n)), `JCD-05: uploaded to email-attachments/manual_<name>_<ts> (saw ${uploads.join(', ')})`).toBe(true);
     await expect(item.getByTestId('jorm-a-036'), 'JCD-05: linked by its Storage download URL (a data: URL shows no link)')
-      .toHaveAttribute('href', /firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/email-attachments%2Fmanual_welcome-pack\.pdf_\d+\?alt=media&token=e2e-token/);
+      .toHaveAttribute('href', /(firebasestorage\.googleapis\.com|(localhost|127\.0\.0\.1):9199)\/v0\/b\/[^/]+\/o\/email-attachments%2Fmanual_welcome-pack\.pdf_\d+\?alt=media&token=e2e-token/);
 
     // the control below makes the app log its upload error and the browser log the stubbed 403 — both expected
     expectedErrors = [/onAddAttachment upload error/, /Failed to load resource: the server responded with a status of 403/];
