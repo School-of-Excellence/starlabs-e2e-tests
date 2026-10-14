@@ -423,7 +423,7 @@
       "config": "playwright.atc.emulator.report.config.ts",
       "capture": "failure-only",
       "specDir": "atc",
-      "ciReady": false,
+      "ciReady": true,
       "appPaths": [
         "src/app/ATC/prescribe-atc/**",
         "src/app/ATC/edit-atc/**",
@@ -438,7 +438,7 @@
         "src/app/shared/media-cache.service.ts"
       ],
       "cfPaths": [],
-      "reviewNote": "ADDED 2026-10-13 (plan specs/plans/2026-10-13-atc-prescribe-edit-view.md). ciReady:true 2026-10-13 — suite green 25/25 against offline-ATC (operator order: suite first, then ship). Operator rule: ATC is tested against the EMULATOR ONLY — seed-atc.js refuses to run without the emulator hosts (G1), the specs abort and fail on any real Firestore/Storage request (G2), and emulator-wiring.spec.ts proves firestore-atc reads the emulator (G3). Only these three routes are re-allowed in _support/excluded-routes.ts; every other ATC route stays excluded and unclaimed."
+      "reviewNote": "ADDED 2026-10-13 (plan specs/plans/2026-10-13-atc-prescribe-edit-view.md). ciReady:true 2026-10-13 — suite green 25/25 against offline-ATC (operator order: suite first, then ship). 2026-10-14: Charan set ciReady:false (aba4b287) because the atc specs drive hooks that existed ONLY on offline-ATC, which blocked other cross-cutting releases (app.routes.ts) — a fair call. Re-enabled 2026-10-14 by operator decision (option A) to gate the offline-ATC rollout on a real green run of the merged code; coordinated with Charan. While offline-ATC is not yet in development, any OTHER branch touching a crossCutting file will hit atc drift — merge offline-ATC promptly. Operator rule: ATC is tested against the EMULATOR ONLY — seed-atc.js refuses to run without the emulator hosts (G1), the specs abort and fail on any real Firestore/Storage request (G2), and emulator-wiring.spec.ts proves firestore-atc reads the emulator (G3). Only these three routes are re-allowed in _support/excluded-routes.ts; every other ATC route stays excluded and unclaimed."
     },
     "unit": {
       "title": "Unit tests",
