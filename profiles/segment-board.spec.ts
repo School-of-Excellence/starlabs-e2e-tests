@@ -144,6 +144,8 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     const hist = (action: string) => queryWhere(`segmentboardconfig/${AUTO_ID}/segmenthistory`, [['action', '==', action]]);
     await open(page);
     const archive = async () => {
+      // the card's Edit icon is display:none until the card is hovered (pointer devices), so hover first
+      await card(page, NAMES.AUTO).hover();
       await card(page, NAMES.AUTO).getByTestId('sgb-card-edit').click();
       await page.getByTestId('sgb-dlg-archive').click();
       await pollUntil(() => getDoc('segmentboardconfig', AUTO_ID), (d) => d?.archived === true, { label: 'archived' });
