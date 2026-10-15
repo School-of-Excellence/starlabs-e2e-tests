@@ -15,7 +15,7 @@ import { test, expect } from '@playwright/test';
 import {
   wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, resetWorkshopInactive,
   clearPopupBanner, seedListFilterWorkshops, clearListFilterWorkshops, wsListFilterTitles,
-  countLiveNotCompletedWorkshops, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
+  countLiveNotCompletedWorkshops, wsListFilterIds, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -100,15 +100,15 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(mobile).toBeVisible();
       await expect(done).toBeVisible();
 
-      // A completed workshop shows ONE "Completed" across the Active and Web Active columns, no toggles.
+      // Active, Web Active and EiFlix Mobile share one column; a completed workshop shows ONE label there.
       await expect(done.getByTestId('wor-completed-pill'), 'WS-64: one Completed label on the completed row').toHaveCount(1);
       await expect(done.getByTestId('wor-completed-pill')).toHaveText('Completed');
-      await expect(done.locator('td').filter({ has: page.getByTestId('wor-completed-pill') }), 'WS-64: it spans both columns')
-        .toHaveAttribute('colspan', '2');
       await expect(done.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: no Active toggle when completed').toHaveCount(0);
-      await expect(done.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: no Web Active toggle when completed').toHaveCount(0);
-      await expect(web.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: a live row keeps its toggles').toHaveCount(1);
-      await expect(web.getByTestId('wor-change-on-workshop-web-status-change-15')).toHaveCount(1);
+      await expect(done.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: no Web toggle when completed').toHaveCount(0);
+      await expect(done.getByTestId('wor-change-on-workshop-mobile-status-change'), 'WS-64: no EiFlix Mobile toggle when completed').toHaveCount(0);
+      const liveCell = web.getByTestId('wor-change-on-workshop-status-change-14').locator('xpath=ancestor::td[1]');
+      await expect(liveCell.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: Web sits in the same cell as Active').toHaveCount(1);
+      await expect(liveCell.getByTestId('wor-change-on-workshop-mobile-status-change'), 'WS-64: EiFlix Mobile sits in the same cell').toHaveCount(1);
       await expect(web.getByTestId('wor-completed-pill'), 'WS-64: no label on a live row').toHaveCount(0);
 
       // Active: app, web or mobile switch on, and not completed.
@@ -153,6 +153,34 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
 
       await page.getByTestId('wor-type-filter-all').click();
       await expect(active, 'WS-64: All types brings the rest back').toBeVisible({ timeout: 15_000 });
+    });
+
+    test('WS-65 the EiFlix Mobile toggle writes eiflixmobileactive and moves the workshop between Active and Inactive', async ({ page }) => {
+      const before = await getDoc('workshopconfiguration', wsListFilterIds.MOBILE);
+      expect(before!.eiflixmobileactive, 'WS-65: starts live on EiFlix mobile only').toBe(true);
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      const row = page.locator('table.workshops-table tr.mat-mdc-row').filter({ hasText: wsListFilterTitles.MOBILE });
+      const toggle = row.getByTestId('wor-change-on-workshop-mobile-status-change');
+      await expect(toggle, 'WS-65: the EiFlix Mobile toggle renders').toBeVisible({ timeout: 30_000 });
+      await expect(toggle.locator('button[role="switch"]'), 'WS-65: it shows the stored state').toHaveAttribute('aria-checked', 'true');
+
+      page.once('dialog', (d) => d.accept()); // onWorkshopMobileStatusChange() opens window.confirm
+      await toggle.locator('button[role="switch"]').click();
+      const after = await pollUntil(
+        () => getDoc('workshopconfiguration', wsListFilterIds.MOBILE),
+        (d) => !!d && d.eiflixmobileactive === false,
+        { label: 'WS-65: eiflixmobileactive -> false', timeoutMs: 30_000 },
+      );
+      expect(after!.eiflixmobileactive).toBe(false);
+      expect(after!.active, 'WS-65: Active untouched').toBe(false);
+      expect(after!.webactive, 'WS-65: Web untouched').toBe(false);
+
+      // All three off now: Inactive shows it, Active does not.
+      await page.getByTestId('wor-status-filter-9').click();
+      await expect(row, 'WS-65: switched off everywhere -> Inactive').toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('wor-status-filter-8').click();
+      await expect(row, 'WS-65: no longer Active').toHaveCount(0);
     });
   });
 
