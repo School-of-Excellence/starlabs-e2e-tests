@@ -100,16 +100,12 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(mobile).toBeVisible();
       await expect(done).toBeVisible();
 
-      // Active, Web Active and EiFlix Mobile share one column; a completed workshop shows ONE label there.
-      await expect(done.getByTestId('wor-completed-pill'), 'WS-64: one Completed label on the completed row').toHaveCount(1);
-      await expect(done.getByTestId('wor-completed-pill')).toHaveText('Completed');
-      await expect(done.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: no Active toggle when completed').toHaveCount(0);
-      await expect(done.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: no Web toggle when completed').toHaveCount(0);
-      await expect(done.getByTestId('wor-change-on-workshop-mobile-status-change'), 'WS-64: no EiFlix Mobile toggle when completed').toHaveCount(0);
-      const liveCell = web.getByTestId('wor-change-on-workshop-status-change-14').locator('xpath=ancestor::td[1]');
-      await expect(liveCell.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: Web sits in the same cell as Active').toHaveCount(1);
-      await expect(liveCell.getByTestId('wor-change-on-workshop-mobile-status-change'), 'WS-64: EiFlix Mobile sits in the same cell').toHaveCount(1);
-      await expect(web.getByTestId('wor-completed-pill'), 'WS-64: no label on a live row').toHaveCount(0);
+      // The Active column (Breakthroughs App / Web / EiFlix Mobile switches + the Completed label) is
+      // hidden for now (operator 2026-10-15): none of its controls render on any row.
+      await expect(page.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: Active column hidden').toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-web-status-change-15')).toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-mobile-status-change')).toHaveCount(0);
+      await expect(page.getByTestId('wor-completed-pill')).toHaveCount(0);
 
       // Active: app, web or mobile switch on, and not completed.
       await page.getByTestId('wor-status-filter-8').click();
@@ -155,7 +151,8 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(active, 'WS-64: All types brings the rest back').toBeVisible({ timeout: 15_000 });
     });
 
-    test('WS-65 the EiFlix Mobile toggle writes eiflixmobileactive and moves the workshop between Active and Inactive', async ({ page }) => {
+    // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+    test.skip('WS-65 the EiFlix Mobile toggle writes eiflixmobileactive and moves the workshop between Active and Inactive', async ({ page }) => {
       const before = await getDoc('workshopconfiguration', wsListFilterIds.MOBILE);
       expect(before!.eiflixmobileactive, 'WS-65: starts live on EiFlix mobile only').toBe(true);
       await loginAsWshopAdmin(page);
@@ -187,7 +184,9 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
   // ===========================================================================================
   // WS-04 — toggling a workshop inactive→active WRITES active:true to Firestore (not just optimistic UI)
   // ===========================================================================================
-  test('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
+  // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+  // While it is hidden the row's first switch is Completed, so this case must not run.
+  test.skip('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
     // Precondition (anti-circular): force the pivot workshop back to inactive (idempotent re-runs).
     await resetWorkshopInactive();
     const before = await getDoc('workshopconfiguration', wsIds.W_INACTIVE);
