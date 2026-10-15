@@ -100,6 +100,15 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(mobile).toBeVisible();
       await expect(done).toBeVisible();
 
+      // A completed workshop shows "Completed" in place of its Active and Web Active toggles.
+      await expect(done.getByTestId('wor-completed-pill-active'), 'WS-64: completed row, Active column').toHaveText('Completed');
+      await expect(done.getByTestId('wor-completed-pill-web'), 'WS-64: completed row, Web Active column').toHaveText('Completed');
+      await expect(done.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: no Active toggle when completed').toHaveCount(0);
+      await expect(done.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WS-64: no Web Active toggle when completed').toHaveCount(0);
+      await expect(web.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: a live row keeps its toggles').toHaveCount(1);
+      await expect(web.getByTestId('wor-change-on-workshop-web-status-change-15')).toHaveCount(1);
+      await expect(web.getByTestId('wor-completed-pill-active'), 'WS-64: no pill on a live row').toHaveCount(0);
+
       // Active: app, web or mobile switch on, and not completed.
       await page.getByTestId('wor-status-filter-8').click();
       await expect(web, 'WS-64: web-only is active').toBeVisible({ timeout: 15_000 });
