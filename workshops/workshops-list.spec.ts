@@ -113,6 +113,11 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(active.getByTestId('wor-active-chip'), 'WS-64: app-active shows the Active chip').toHaveText('Active');
       await expect(inactive.getByTestId('wor-active-chip'), 'WS-64: all switches off, no chip').toHaveCount(0);
       await expect(done.getByTestId('wor-active-chip'), 'WS-64: completed, no chip').toHaveCount(0);
+      // The row's green left line follows the same rule as the chip.
+      await expect(web, 'WS-64: web-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(mobile, 'WS-64: mobile-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(inactive, 'WS-64: all switches off, no green line').not.toHaveClass(/\brow-active\b/);
+      await expect(done, 'WS-64: completed, no green line').not.toHaveClass(/\brow-active\b/);
 
       // Active: app, web or mobile switch on, and not completed.
       await page.getByTestId('wor-status-filter-8').click();
