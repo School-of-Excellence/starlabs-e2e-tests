@@ -6,7 +6,7 @@ multi-select "Filter by role" with a search box, a per-role count, and a clear b
 
 ## Why the seed looks like this
 - **A role nobody else holds.** `pltester` is added to the role vocabulary (`starlabs roles/roles`) and
-  given only to p2 through the auth chain. With a real role such as `admin` or `ah`, the filter's output
+  given only to p2 by an `update({pltester:true})` on the doc p2's `role_ref` points at. It can't go through `roster()`: the shared auth chain writes `{participant:true}` for every participant and ignores roster roles. The first CI run (38702939396) found that, with zero holders. With a real role such as `admin` or `ah`, the filter's output
   would move whenever another suite seeds staff. A run-owned role keeps the result exact.
 - **Negative control: p3**, a plain participant. It is visible before filtering and must be gone after.
   Without it, a green test could not tell "the filter ran" from "the table was already small".

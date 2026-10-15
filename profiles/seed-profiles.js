@@ -247,8 +247,7 @@ function roster() {
   const participants = [
     mk('p0', ['participant'], 'participant', NAME.p0),
     mk('p1', ['participant'], 'participant', NAME.p1),
-    // p2 alone holds `pltester` (PL-RF-01: the role filter keeps p2; p3, a plain participant, is the negative).
-    mk('p2', ['participant', 'pltester'], 'participant', NAME.p2),
+    mk('p2', ['participant'], 'participant', NAME.p2),
     mk('p3', ['participant'], 'participant', NAME.p3),
   ];
   return { staff, participants };
@@ -502,6 +501,12 @@ async function seedProfiles() {
     name: ['admin', 'ah', 'mentor', 'floor', 'eventcoordinator', 'pltester'],
     ...tag,
   });
+  // p2 alone holds `pltester` (PL-RF-01: the filter keeps p2; p3, a plain participant, is the negative).
+  // Written on the doc p2's role_ref points at: the shared auth chain gives every PARTICIPANT exactly
+  // {participant:true} and ignores roster roles, so the flag cannot ride in through roster().
+  const p2RoleRef = (await profileRef(PF.p2).get()).get('role_ref');
+  if (!p2RoleRef) throw new Error('seed-profiles: profile_data/' + PF.p2 + ' has no role_ref — auth chain did not run');
+  await p2RoleRef.update({ pltester: true });
 
   // Bulk Add Products History-tab world (bap-*). Result docs are written as the CF leaves
   // them (retry:false, processing:false) so the History tab renders finished jobs. The DONE
