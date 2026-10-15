@@ -216,6 +216,10 @@ test.describe('Profiles — profilelist role filter (ANY-of picked roles, search
     // (ngx-mat-select-search); type with the keyboard, since the library also renders a hidden input.
     await page.getByTestId('pl-role-filter').focus();
     await page.keyboard.press('Enter');
+    // Wait for the library to move focus into its visible box (it does so after the panel animates in);
+    // typing earlier lands on the select itself and the options stay unfiltered (flaked once in CI).
+    await expect(page.getByTestId('pl-role-search').locator('input.mat-select-search-input:not(.mat-select-search-hidden)'),
+      'PL-RF-01: the role search box takes focus when the panel opens').toBeFocused({ timeout: 10_000 });
     await page.keyboard.type('pltest');
     const options = page.getByTestId('pl-role-option');
     await expect(options, 'PL-RF-01: search narrows the options to the one match').toHaveCount(1);
@@ -235,7 +239,7 @@ test.describe('Profiles — profilelist role filter (ANY-of picked roles, search
       .toBeGreaterThan(Math.min(holders, 25));
   });
 
-  // Only the visible search box is driven (by keyboard, above); register its hook.
+  // The search box is driven by keyboard above; its hook is also registered here.
   test.fixme('PL-ADDR1 role search hook addressable (driven by keyboard in PL-RF-01)', async ({ page }) => {
     await page.goto('/profilelist', { waitUntil: 'domcontentloaded' });
     expect(page.getByTestId('pl-role-search')).toBeTruthy();
