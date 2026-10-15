@@ -308,6 +308,9 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     // placeholder, click with the actionability check bypassed, and type — which drives the
     // component's real keyup handler.
     const journeySearch = page.getByPlaceholder('Search journeys');
+    // Wait for the panel's box first: a forced click on a box not yet laid out lands at the page's
+    // top-left — the toolbar's menu button — and the navigation drawer's backdrop then blocks Save.
+    await expect(journeySearch, 'WS-40: the journey search box is open').toBeVisible({ timeout: 15_000 });
     await journeySearch.click({ force: true });
     await page.keyboard.type(wsAudienceNames.journey);
     const journeyOption = page.getByRole('option', { name: wsAudienceNames.journey });
@@ -337,6 +340,9 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
     await tierSelect.click();
     // Same ngx-mat-select-search handling as the journey picker above.
     const tierSearch = page.getByPlaceholder('Search tiers');
+    // Wait for the panel's box first: a forced click on a box not yet laid out lands at the page's
+    // top-left — the toolbar's menu button — and the navigation drawer's backdrop then blocks Save.
+    await expect(tierSearch, 'WS-40: the tier search box is open').toBeVisible({ timeout: 15_000 });
     await tierSearch.click({ force: true });
     await page.keyboard.type(wsAudienceNames.tier);
     const tierOption = page.getByRole('option', { name: wsAudienceNames.tier });

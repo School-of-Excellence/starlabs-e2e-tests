@@ -501,10 +501,12 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
 
       // hasText with a STRING is a case-insensitive SUBSTRING match, and the seed deliberately carries
       // both "Active Workshop <run>" and "Inactive Workshop <run>" — the latter CONTAINS the former, so
-      // the plain string matched two rows and failed on strict mode. Anchor with a case-sensitive regex:
-      // \b does not fire between the "n" and "a" of "Inactive", so only the real active row matches.
+      // the plain string matched two rows and failed on strict mode. Match the TITLE ELEMENT exactly
+      // instead of the row's text: since 2026-10-15 the title cell also carries a green "Active" chip,
+      // so the row reads "Active Workshop <run>Active" and a word-boundary regex on the row no longer
+      // fires after the title. An exact match on the title text is immune to anything else in the row.
       const row = page.locator('tr.mat-mdc-row, tr[mat-row]')
-        .filter({ hasText: new RegExp(`\\b${sourceTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`) });
+        .filter({ has: page.getByText(sourceTitle, { exact: true }) });
       await expect(row, 'WS-13: exactly the active workshop row must render (not the Inactive one)')
         .toHaveCount(1, { timeout: 30_000 });
 
