@@ -247,7 +247,8 @@ function roster() {
   const participants = [
     mk('p0', ['participant'], 'participant', NAME.p0),
     mk('p1', ['participant'], 'participant', NAME.p1),
-    mk('p2', ['participant'], 'participant', NAME.p2),
+    // p2 alone holds `pltester` (PL-RF-01: the role filter keeps p2; p3, a plain participant, is the negative).
+    mk('p2', ['participant', 'pltester'], 'participant', NAME.p2),
     mk('p3', ['participant'], 'participant', NAME.p3),
   ];
   return { staff, participants };
@@ -496,7 +497,9 @@ async function seedProfiles() {
   //     nothing here touches any atc_* data collection.
   await db.collection('starlabs roles').doc('roles').set({
     docid: 'roles',
-    name: ['admin', 'ah', 'mentor', 'floor', 'eventcoordinator'],
+    // `pltester` exists only for the /profilelist role filter (PL-RF-*): one holder (p2), so the filter's
+    // result is run-owned and cannot be moved by other suites' admins/ahs.
+    name: ['admin', 'ah', 'mentor', 'floor', 'eventcoordinator', 'pltester'],
     ...tag,
   });
 

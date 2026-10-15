@@ -5,6 +5,13 @@
 // data-driven authGuard bounced every navigation. seed-profiles.js now grants '/profilelist'.
 //
 //   PA-20  Update Role -> the app writes the users_roles doc named by profile.role_ref.path.
+//   PL-RF-01  Filter by role (starlabs-angular specs/journals/2026-10-15-profilelist-role-filter.md).
+//
+// Prefix: pl — ProfilelistComponent (pl-role-filter / -search / -option / -count / -clear).
+// SEEDED for PL-RF: `pltester` is in the role vocabulary (`starlabs roles/roles`) and held by p2 ONLY
+// (users_roles, written by the auth chain). p3 is a plain participant — the NEGATIVE control.
+// ANTI-CIRCULARITY: the seed writes roles; the APP decides which rows survive the filter and computes
+// each option's count. The oracle is an independent users_roles query (pltester == true).
 //
 // PA-19 (Delete Profile) IS DELIBERATELY ABSENT AND MUST NOT BE ADDED.
 // deleteProfile (profilelist.component.ts:324) pre-flight-queries `atc_alpha` on the `firestore-atc`
@@ -20,7 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { profProfileIds, installProfileStubs, loginAsProfileAdmin } from './support/profiles';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, pollUntil, db } from '../queue/support/firestore-admin';
+import { getDoc, pollUntil, db, countWhere } from '../queue/support/firestore-admin';
 
 const TOLERATE = [/requires an index/i, /Cannot read properties of undefined \(reading 'indexOf'\)/i];
 
@@ -184,5 +191,51 @@ test.describe('Profiles — profilelist role update (deep, real UI, anti-circula
     // is the finding. Recorded here so the absence is deliberate rather than an oversight.
 
     await resetRole(profProfileIds.p0);
+  });
+});
+
+test.describe('Profiles — profilelist role filter (ANY-of picked roles, search, clear)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installProfileStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'profilelist role filter: no fatal console errors / pageerrors', TOLERATE));
+
+  test('PL-RF-01 picking a role keeps only the profiles holding it; search narrows the options; clear restores', async ({ page }) => {
+    const holders = await countWhere('users_roles', [['pltester', '==', true]]);
+    expect(holders, 'PL-RF-01: the seed gives pltester to p2').toBeGreaterThanOrEqual(1);
+
+    await loginAsProfileAdmin(page);
+    await page.goto('/profilelist', { waitUntil: 'domcontentloaded' });
+    const rowOf = (pid: string) => page.locator('tr.tablerow').filter({ has: page.locator(`a[href*="/profilesummary/${pid}"]`) });
+    await expect(rowOf(profProfileIds.p3), 'PL-RF-01: the table loads (p3 visible before filtering)').toHaveCount(1, { timeout: 30_000 });
+
+    // The search box is focused when the panel opens (ngx-mat-select-search); type with the keyboard,
+    // since the library also renders a hidden input beside the visible one.
+    await page.getByTestId('pl-role-filter').click();
+    await page.keyboard.type('pltest');
+    const options = page.getByTestId('pl-role-option');
+    await expect(options, 'PL-RF-01: search narrows the options to the one match').toHaveCount(1);
+    await expect(options.first()).toContainText('PLTESTER');
+    await expect(options.first().getByTestId('pl-role-count'), 'PL-RF-01: the option counts the holders')
+      .toHaveText(String(holders), { timeout: 30_000 });
+    await options.first().click();
+    await page.keyboard.press('Escape');
+
+    await expect(rowOf(profProfileIds.p2), 'PL-RF-01: p2 holds pltester and stays').toHaveCount(1);
+    await expect(rowOf(profProfileIds.p3), 'PL-RF-01: p3 does not hold pltester and is filtered out').toHaveCount(0);
+    await expect(page.locator('tr.tablerow'), 'PL-RF-01: one row per holder').toHaveCount(Math.min(holders, 25));
+
+    await page.getByTestId('pl-role-clear').click();
+    await expect(page.getByTestId('pl-role-clear'), 'PL-RF-01: the clear button goes once nothing is picked').toHaveCount(0);
+    await expect.poll(() => page.locator('tr.tablerow').count(), { message: 'PL-RF-01: clearing brings the other rows back' })
+      .toBeGreaterThan(Math.min(holders, 25));
+  });
+
+  // Only the visible search box is driven (by keyboard, above); register its hook.
+  test.fixme('PL-ADDR1 role search hook addressable (driven by keyboard in PL-RF-01)', async ({ page }) => {
+    await page.goto('/profilelist', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('pl-role-search')).toBeTruthy();
   });
 });
