@@ -107,6 +107,13 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await expect(page.getByTestId('wor-change-on-workshop-mobile-status-change')).toHaveCount(0);
       await expect(page.getByTestId('wor-completed-pill')).toHaveCount(0);
 
+      // Green Active chip: the same rule as the Active filter (any switch on, not completed).
+      await expect(web.getByTestId('wor-active-chip'), 'WS-64: web-only shows the Active chip').toHaveText('Active');
+      await expect(mobile.getByTestId('wor-active-chip'), 'WS-64: mobile-only shows the Active chip').toHaveText('Active');
+      await expect(active.getByTestId('wor-active-chip'), 'WS-64: app-active shows the Active chip').toHaveText('Active');
+      await expect(inactive.getByTestId('wor-active-chip'), 'WS-64: all switches off, no chip').toHaveCount(0);
+      await expect(done.getByTestId('wor-active-chip'), 'WS-64: completed, no chip').toHaveCount(0);
+
       // Active: app, web or mobile switch on, and not completed.
       await page.getByTestId('wor-status-filter-8').click();
       await expect(web, 'WS-64: web-only is active').toBeVisible({ timeout: 15_000 });
