@@ -211,9 +211,11 @@ test.describe('Profiles — profilelist role filter (ANY-of picked roles, search
     const rowOf = (pid: string) => page.locator('tr.tablerow').filter({ has: page.locator(`a[href*="/profilesummary/${pid}"]`) });
     await expect(rowOf(profProfileIds.p3), 'PL-RF-01: the table loads (p3 visible before filtering)').toHaveCount(1, { timeout: 30_000 });
 
-    // The search box is focused when the panel opens (ngx-mat-select-search); type with the keyboard,
-    // since the library also renders a hidden input beside the visible one.
-    await page.getByTestId('pl-role-filter').click();
+    // Open from the keyboard: the outline field's floating <mat-label> sits over the select and takes
+    // the pointer (CI run 38702939396 #2). The search box is focused when the panel opens
+    // (ngx-mat-select-search); type with the keyboard, since the library also renders a hidden input.
+    await page.getByTestId('pl-role-filter').focus();
+    await page.keyboard.press('Enter');
     await page.keyboard.type('pltest');
     const options = page.getByTestId('pl-role-option');
     await expect(options, 'PL-RF-01: search narrows the options to the one match').toHaveCount(1);
