@@ -207,9 +207,17 @@ async function seedComms() {
     ...zoomRow(ID.ZOOM_DONE, `Completed Meeting ${TESTRUNID}`, 'completed', 5, 0),
     meetinguid: `${TESTRUNID}_uuid_not_in_zoom`,
   });
-  await db.collection('zoom recordings backup').doc(ID.ZOOM_FAIL).set(
-    zoomRow(ID.ZOOM_FAIL, `Failed Meeting ${TESTRUNID}`, 'failed', 0, 3),
-  );
+  //    ZRD-11..13 (Zoom vs Dropbox sizes, 2026-10-16): FAIL's one file uploaded 4096 B (the upload committed
+  //    dropboxSize 4096), but its LAST VERIFICATION found 1000 B in Dropbox and 5000 B now in Zoom. The screen
+  //    must prefer the verification (⚠ 1000 B, not a stale ✓ 4096 B) and say Zoom changed since backup.
+  //    VERIFIED's file matches everywhere (✓); DONE has no per-file map, so Dropbox is unknown (—). Sizes
+  //    4096 / 1024 / 512 make the Size sort order (Fail, Done, Verified) differ from name and In Zoom order.
+  await db.collection('zoom recordings backup').doc(ID.ZOOM_FAIL).set({
+    ...zoomRow(ID.ZOOM_FAIL, `Failed Meeting ${TESTRUNID}`, 'failed', 0, 3),
+    files: { f0: { fileType: 'MP4', fileName: 'fail.mp4', fileSize: 4096, status: 'success', dropboxSize: 4096 } },
+    verification: { ok: false, checkedAt: new Date().toISOString(), folderExists: true, zoomPresent: false,
+      files: { f0: { dropboxSize: 1000, zoomSize: 5000 } }, zoomMissing: [] },
+  });
   //    ZRD-* (zoom backup reliability, 2026-10-05): a completed backup the server already VERIFIED and whose
   //    recording is still in Zoom (the spec's stubbed /api/zoom/recordings lists its meetinguid) — the only row
   //    "Move to Zoom trash" may act on. ZOOM_DONE (completed, never verified) and ZOOM_FAIL (failed) are the
@@ -217,7 +225,10 @@ async function seedComms() {
   await db.collection('zoom recordings backup').doc(ID.ZOOM_VERIFIED).set({
     ...zoomRow(ID.ZOOM_VERIFIED, `Verified Meeting ${TESTRUNID}`, 'completed', 2, 0),
     meetinguid: `${TESTRUNID}_uuid_verified`,
-    verification: { ok: true, checkedAt: new Date().toISOString(), folderExists: true, zoomPresent: true, files: {}, zoomMissing: [] },
+    totalSize: 512,
+    files: { f0: { fileType: 'MP4', fileName: 'ok.mp4', fileSize: 512, status: 'success', dropboxSize: 512 } },
+    verification: { ok: true, checkedAt: new Date().toISOString(), folderExists: true, zoomPresent: true,
+      files: { f0: { dropboxSize: 512, zoomSize: 512 } }, zoomMissing: [] },
   });
 
   // 5) SUPPORTCHAT GROUP — CN-08 (send) / CN-09 (sidebar render) / CN-17 (chatxadmin gate). The admin/
