@@ -58,6 +58,10 @@ const ID = {
   // email templates docs (CN-02 approved-vs-pending filter — render-only here).
   EMAIL_APPROVED: `${TESTRUNID}_email_approved`,
   EMAIL_PENDING: `${TESTRUNID}_email_pending`,
+  // communication planner docs (CGP-FLT-01, /communication-grid-planner). Both dated TODAY so they land in
+  // the default month's calendar; the search keeps ALPHA and must drop BRAVO (negative control).
+  CGP_ALPHA: `${TESTRUNID}_cgp_alpha`,
+  CGP_BRAVO: `${TESTRUNID}_cgp_bravo`,
   // CF-side-effect email-templates doc (CN-13 createPostMarkEmailTemplate — starts pending+unvalidated,
   // the CF flips postmarkstatus->approved on the validate write). Distinct from EMAIL_PENDING so the
   // CN-02 render assertion is never disturbed by a CF run.
@@ -116,6 +120,7 @@ const ROUTES = [
   { route: '/group-chat', label: 'Group Chat' },
   { route: '/onewaytemplates', label: 'One-Way Templates' },
   { route: '/channel-templates', label: 'Channel Templates' },   // CN-18..CN-23
+  { route: '/communication-grid-planner', label: 'Communication Grid Planner' },   // CGP-*
 ];
 
 async function seedComms() {
@@ -140,6 +145,15 @@ async function seedComms() {
   // --- date helpers (seed-time Node Date — same machine/TZ as the test browser) ---
   const hoursAgo = (h) => T.fromMillis(Date.now() - h * 3600e3);
   const now = () => T.now();
+
+  // 2b) COMMUNICATION PLANNER (CGP-FLT-01). The grid planner streams `communication planner` where date is
+  //     inside the displayed month and buckets each doc by date.toLocaleDateString(). Today at noon is
+  //     in the default month in any timezone the browser shares with this seeder. Titles are run-unique,
+  //     so the search matches exactly one of them. There is no eventref, so the null event filter keeps both.
+  const noonToday = new Date(); noonToday.setHours(12, 0, 0, 0);
+  for (const [id, title] of [[ID.CGP_ALPHA, `CGP Alpha ${TESTRUNID}`], [ID.CGP_BRAVO, `CGP Bravo ${TESTRUNID}`]]) {
+    await db.collection('communication planner').doc(id).set({ docid: id, title, date: T.fromDate(noonToday), ...tag });
+  }
 
   // 3) NOTIFICATION RECORD — the CN-12 ORACLE doc. The component computes
   //    receivedRate = (profilesuccess.length / profileid.length * 100).toFixed(2)
@@ -433,6 +447,8 @@ const SEEDED = [
   // ambiguous ("Pending Channel comm" also matches "Pending Channel comm (Copy)"). Found by running the
   // suite twice back-to-back; a single green run does NOT catch it.
   'channeltemplates',
+  // CGP-FLT-01 planner docs.
+  'communication planner',
   // auth-chain + dashboard (shared shape; testrunid-scoped so other runs are untouched).
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
