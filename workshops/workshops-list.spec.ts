@@ -18,7 +18,7 @@ import {
   countLiveNotCompletedWorkshops, wsListFilterIds, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
+import { getDoc, countWhere, pollUntil, queryWhere, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -191,6 +191,47 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       await page.getByTestId('wor-status-filter-8').click();
       await expect(row, 'WS-65: no longer Active').toHaveCount(0);
     });
+  });
+
+  // ===========================================================================================
+  // WS-66 — EiFlix Banner: Title and Description are optional (operator 2026-10-16)
+  // ===========================================================================================
+  test('WS-66 the EiFlix Banner dialog saves a banner with no title and no description', async ({ page }) => {
+    // Anti-circular: the app writes the new doc; the test only notes which banners existed before.
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const title = dialog.locator('input[formcontrolname="title"]');
+      const description = dialog.locator('textarea[formcontrolname="description"]');
+      await expect(title, 'WS-66: the banner form opens').toBeVisible({ timeout: 30_000 });
+      await expect(title).toHaveValue('');
+      await expect(description).toHaveValue('');
+      // Neither field is marked required any more (no asterisk on its label).
+      await expect(title.locator('xpath=ancestor::mat-form-field[1]').locator('.mat-mdc-form-field-required-marker'),
+        'WS-66: Title is not marked required').toHaveCount(0);
+      await expect(description.locator('xpath=ancestor::mat-form-field[1]').locator('.mat-mdc-form-field-required-marker'),
+        'WS-66: Description is not marked required').toHaveCount(0);
+
+      await dialog.getByTestId('eb-submit-6').click();
+      await expect(page.getByText('Please fill all fields'), 'WS-66: no "fill all fields" stop').toHaveCount(0);
+
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-66: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).title, 'WS-66: title stored as blank text').toBe('');
+      expect((added[0] as any).description, 'WS-66: description stored as blank text').toBe('');
+    } finally {
+      // Cleanup only what this case created (the post-condition was already asserted).
+      await Promise.all(created.map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
   });
 
   // ===========================================================================================
