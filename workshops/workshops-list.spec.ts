@@ -203,6 +203,7 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
     try {
       await loginAsWshopAdmin(page);
       await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
       await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
 
       const dialog = page.locator('mat-dialog-container');
@@ -232,6 +233,38 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       // Cleanup only what this case created (the post-condition was already asserted).
       await Promise.all(created.map((id) => db().collection('eiflixbanner').doc(id).delete()));
     }
+  });
+
+  // ===========================================================================================
+  // WS-67 — the header has ONE Actions button; the former header buttons are its menu items
+  // ===========================================================================================
+  test('WS-67 the header shows one Actions button whose menu lists every workshop action', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    const trigger = page.getByTestId('wor-actions-menu');
+    await expect(trigger, 'WS-67: the Actions button renders').toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.header-actions > button'), 'WS-67: it is the only header button').toHaveCount(1);
+    // Closed menu: none of the actions are on the page.
+    await expect(page.getByTestId('wor-open-popup-banner-dialog-1'), 'WS-67: actions hidden until opened').toHaveCount(0);
+    await expect(page.getByTestId('wor-route-6')).toHaveCount(0);
+
+    await trigger.click();
+    const items = page.locator('.mat-mdc-menu-panel [mat-menu-item], .mat-mdc-menu-panel .mat-mdc-menu-item');
+    // The admin may create workshops and open New Users, so all six actions are listed, New Workshop first.
+    await expect(items, 'WS-67: six actions for the admin').toHaveText(
+      [/New Workshop/, /Popup Banner/, /New Users/, /Referral Code/, /EiFlix Banner/, /Products/], { timeout: 15_000 });
+    await expect(page.getByTestId('wor-route-6')).toBeVisible();
+    await expect(page.getByTestId('wor-open-new-users-tab-2')).toBeVisible();
+    await expect(page.getByTestId('wor-open-refferalcode-dialog-3')).toBeVisible();
+    await expect(page.getByTestId('wor-route-to-products-5')).toBeVisible();
+
+    // An item still does its job: New Workshop opens the editor on a fresh id in a new tab.
+    const [editor] = await Promise.all([
+      page.context().waitForEvent('page'),
+      page.getByTestId('wor-route-6').click(),
+    ]);
+    await expect(editor, 'WS-67: New Workshop opens the workshop editor').toHaveURL(/\/workshopconfig\/[^/]+$/, { timeout: 30_000 });
+    await editor.close();
   });
 
   // ===========================================================================================
@@ -346,6 +379,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
 
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
@@ -398,6 +432,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
   test('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     const picks = page.getByTestId('pb-select-banner-10');

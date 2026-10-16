@@ -200,10 +200,15 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     const dashRow = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: `Dashboard Workshop ${RUN}` });
     await expect(dashRow, 'WDA-05: the list must render for a signed-in admin').toBeVisible({ timeout: 45_000 });
 
+    // The header actions live in one Actions menu (2026-10-16): open it, prove it rendered (Popup Banner
+    // is open to everyone), then the gated items must be absent from it.
+    await page.getByTestId('wor-actions-menu').click();
+    await expect(page.getByTestId('wor-open-popup-banner-dialog-1'), 'WDA-05: the Actions menu opened').toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('wor-route-6'), 'WDA-05: New Workshop needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-route-18'), 'WDA-05: Edit needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-duplicate-workshop-19'), 'WDA-05: Duplicate needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-open-new-users-tab-2'), 'WDA-05: New Users is its own list').toHaveCount(0);
+    await page.keyboard.press('Escape');   // close the Actions menu before checking the rows
 
     // [ASSERT] the Active / Web switches are hidden with the Active column for now (operator
     // 2026-10-15); the Completed switch still renders (it shows state) but cannot be changed.
