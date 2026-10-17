@@ -917,6 +917,10 @@ test.describe('Workshops — eiflix operations dashboard: Master Class Purchase'
     expect(amountCol, 'WS-60: the export has an Amount column').toBeGreaterThan(-1);
     const mcRow = mcSheet.find((r) => r[0] === wsAddNames.nuAlpha);
     expect(mcRow?.[amountCol], 'WS-60: the new user\'s amount is exported as a number').toBe(wsMasterclassAmounts.capNew);
+    // The export names the workshop each purchase was for (2026-10-17) — same title the row shows.
+    const workshopCol = mcSheet[0].indexOf('Workshop');
+    expect(workshopCol, 'WS-60: the export has a Workshop column').toBeGreaterThan(-1);
+    expect(mcRow?.[workshopCol], 'WS-60: the purchase\'s workshop title is exported').toBe(`Dashboard Workshop ${RUN}`);
 
     const pmRow = panel.locator('.eod-row').filter({ has: page.getByTestId('eif-mc-amount').filter({ hasText: '₹1,500' }) });
     await expect(pmRow, 'WS-60: the participant\'s purchase is listed').toHaveCount(1);
