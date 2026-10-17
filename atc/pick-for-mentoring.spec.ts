@@ -83,9 +83,12 @@ test.describe('ATC — Pick for Mentoring (real UI, emulator only)', () => {
     await tab(page, /Yet to Validated/).click();
     const p = validatePanel(page, ATC2.PF_V2);
     await p.click();
-    await p.getByTestId('pfm-validate').click({ timeout: 30_000 });
+    // Edit / Validate show only while the ATC is still 'atc given' (template :111) — check Edit before validating
+    await expect(p.getByTestId('pfm-edit')).toBeVisible({ timeout: 30_000 });
+    await p.getByTestId('pfm-validate').click();
     const d = await waitFor(async () => { const x = await atcDoc(`atc_to_validate/${ATC2.PF_V2}`); return x?.status === 'validated' ? x : null; }, 'validated');
     expect((d.validator || []).map((r: any) => r.id)).toContain(PF.admin);
-    await expect(p.getByTestId('pfm-edit')).toBeVisible();
+    // the tab lists status 'atc given' only, so a validated ATC leaves it
+    await expect(p, 'validated → no longer Yet to Validated').toHaveCount(0, { timeout: 20_000 });
   });
 });

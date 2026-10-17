@@ -182,3 +182,12 @@ WHY each failed (read from the CI error-context page snapshots, nothing run loca
 
 Not run locally (8080 still held by the Simulator Runner.app). Checked instead: Playwright --list compiles every
 edited spec; readiness simulation vs the app working tree → drift [] · landed-specs skips nothing (atc 14, workshops 20).
+
+## Second CI run (39056198358) — 1 failure left
+
+15/16 suites green (profiles + workshops now pass: VPF-F03 rule refusal and WS-27 rewrite work). atc 77✓ / 1✗.
+**PFM-05:** the first attempt DID validate PF_V2, then asserted `pfm-edit` still visible — but Edit/Validate render
+only while status == 'atc given' (template :111) and the tab lists 'atc given' only, so a validated ATC leaves the
+tab. The retry then failed because PF_V2 was already validated. Fix: assert Edit BEFORE validating; afterwards
+assert the panel has left the tab. (Retries of write tests cannot succeed after a partial first attempt — read the
+FIRST attempt's error, not the retry's.)
