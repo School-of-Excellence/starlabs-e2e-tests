@@ -14,7 +14,8 @@
 import { test, expect } from '@playwright/test';
 import {
   wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, resetWorkshopInactive,
-  clearPopupBanner, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
+  clearPopupBanner, seedListFilterWorkshops, clearListFilterWorkshops, wsListFilterTitles,
+  countLiveNotCompletedWorkshops, wsListFilterIds, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
@@ -62,7 +63,8 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
     // Wait for the table to populate before filtering.
     await expect(page.locator('tr.mat-mdc-row, tr[mat-row]').first()).toBeVisible({ timeout: 30_000 });
 
-    // [REAL-UI] click the "Active" filter chip; applyAllFilters() keeps only w.active && !completed.
+    // [REAL-UI] click the "Active" filter chip; it keeps not-completed workshops with ANY of the app,
+    // web or EiFlix mobile switches on (2026-10-15).
     await page.getByRole('button', { name: /^Active$/ }).click();
 
     // The seeded inactive workshop must DISAPPEAR (the filter is the app computing over its stream).
@@ -71,9 +73,9 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       'WS-03: the inactive workshop must be filtered out of the active view',
     ).toHaveCount(0, { timeout: 15_000 });
 
-    // [ASSERT] the app's active view shows no MORE rows than Firestore's independent count of active
+    // [ASSERT] the app's active view shows no MORE rows than Firestore's independent count of live
     // (non-completed) workshops. Upper-bound only — the stream may lag, but it can't invent actives.
-    const firestoreActive = await countWhere('workshopconfiguration', [['active', '==', true], ['workshopcompleted', '==', false]]);
+    const firestoreActive = await countLiveNotCompletedWorkshops();
     const visibleActive = await page.locator('table.workshops-table tr.mat-mdc-row, table.workshops-table tr[mat-row]').count();
     expect(visibleActive, `WS-03: visible active rows (${visibleActive}) must be <= Firestore active count (${firestoreActive})`).toBeLessThanOrEqual(firestoreActive);
     // And the active workshop we seeded should be present (sanity that the filter didn't nuke everything).
@@ -81,9 +83,122 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
   });
 
   // ===========================================================================================
+  // WS-64 — Status counts web and EiFlix mobile as live; Type filters CP / Workshop / Evergreen
+  // ===========================================================================================
+  test.describe('WS-64 status + type filters', () => {
+    test.beforeEach(async () => { await resetWorkshopInactive(); await seedListFilterWorkshops(); });
+    test.afterEach(async () => { await clearListFilterWorkshops(); });
+
+    test('WS-64 Active includes web-only and mobile-only workshops, Inactive is all switches off, Type narrows the list', async ({ page }) => {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      const rows = page.locator('table.workshops-table tr.mat-mdc-row, table.workshops-table tr[mat-row]');
+      const row = (t: string) => rows.filter({ hasText: t });
+      const web = row(wsListFilterTitles.WEB), mobile = row(wsListFilterTitles.MOBILE), done = row(wsListFilterTitles.DONE);
+      const inactive = row(`Inactive Workshop ${RUN}`), active = row(`Active Workshop ${RUN}`);
+      await expect(web, 'WS-64: the web-only workshop renders under All').toBeVisible({ timeout: 30_000 });
+      await expect(mobile).toBeVisible();
+      await expect(done).toBeVisible();
+
+      // The Active column (Breakthroughs App / Web / EiFlix Mobile switches + the Completed label) is
+      // hidden for now (operator 2026-10-15): none of its controls render on any row.
+      await expect(page.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: Active column hidden').toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-web-status-change-15')).toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-mobile-status-change')).toHaveCount(0);
+      await expect(page.getByTestId('wor-completed-pill')).toHaveCount(0);
+
+      // Green Active chip: the same rule as the Active filter (any switch on, not completed).
+      await expect(web.getByTestId('wor-active-chip'), 'WS-64: web-only shows the Active chip').toHaveText('Active');
+      await expect(mobile.getByTestId('wor-active-chip'), 'WS-64: mobile-only shows the Active chip').toHaveText('Active');
+      await expect(active.getByTestId('wor-active-chip'), 'WS-64: app-active shows the Active chip').toHaveText('Active');
+      await expect(inactive.getByTestId('wor-active-chip'), 'WS-64: all switches off, no chip').toHaveCount(0);
+      await expect(done.getByTestId('wor-active-chip'), 'WS-64: completed, no chip').toHaveCount(0);
+      // The row's green left line follows the same rule as the chip.
+      await expect(web, 'WS-64: web-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(mobile, 'WS-64: mobile-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(inactive, 'WS-64: all switches off, no green line').not.toHaveClass(/\brow-active\b/);
+      await expect(done, 'WS-64: completed, no green line').not.toHaveClass(/\brow-active\b/);
+
+      // Active: app, web or mobile switch on, and not completed.
+      await page.getByTestId('wor-status-filter-8').click();
+      await expect(web, 'WS-64: web-only is active').toBeVisible({ timeout: 15_000 });
+      await expect(mobile, 'WS-64: mobile-only is active').toBeVisible();
+      await expect(active, 'WS-64: app-active is still active').toBeVisible();
+      await expect(inactive, 'WS-64: all switches off is not active').toHaveCount(0);
+      await expect(done, 'WS-64: completed is not active').toHaveCount(0);
+
+      // Inactive: every switch off and not completed.
+      await page.getByTestId('wor-status-filter-9').click();
+      await expect(inactive, 'WS-64: all switches off is inactive').toBeVisible({ timeout: 15_000 });
+      await expect(web, 'WS-64: web-only is not inactive').toHaveCount(0);
+      await expect(mobile, 'WS-64: mobile-only is not inactive').toHaveCount(0);
+      await expect(done, 'WS-64: completed is not inactive').toHaveCount(0);
+
+      // Type, with Status back on All.
+      await page.getByTestId('wor-status-filter-7').click();
+      await page.getByTestId('wor-type-filter-cp').click();
+      await expect(web, 'WS-64: CP Workshop shows the cpworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(mobile).toHaveCount(0);
+      await expect(done).toHaveCount(0);
+      await expect(inactive).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-evergreen').click();
+      await expect(mobile, 'WS-64: Evergreen shows the evergreenworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(web).toHaveCount(0);
+      await expect(done).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-live').click();
+      await expect(done, 'WS-64: Workshop shows the liveworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(inactive, 'WS-64: a seed with no type falls back to Workshop').toBeVisible();
+      await expect(web).toHaveCount(0);
+      await expect(mobile).toHaveCount(0);
+
+      // Status and Type combine: Active + CP is the web-only workshop alone among ours.
+      await page.getByTestId('wor-status-filter-8').click();
+      await page.getByTestId('wor-type-filter-cp').click();
+      await expect(web).toBeVisible({ timeout: 15_000 });
+      await expect(active).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-all').click();
+      await expect(active, 'WS-64: All types brings the rest back').toBeVisible({ timeout: 15_000 });
+    });
+
+    // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+    test.skip('WS-65 the EiFlix Mobile toggle writes eiflixmobileactive and moves the workshop between Active and Inactive', async ({ page }) => {
+      const before = await getDoc('workshopconfiguration', wsListFilterIds.MOBILE);
+      expect(before!.eiflixmobileactive, 'WS-65: starts live on EiFlix mobile only').toBe(true);
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      const row = page.locator('table.workshops-table tr.mat-mdc-row').filter({ hasText: wsListFilterTitles.MOBILE });
+      const toggle = row.getByTestId('wor-change-on-workshop-mobile-status-change');
+      await expect(toggle, 'WS-65: the EiFlix Mobile toggle renders').toBeVisible({ timeout: 30_000 });
+      await expect(toggle.locator('button[role="switch"]'), 'WS-65: it shows the stored state').toHaveAttribute('aria-checked', 'true');
+
+      page.once('dialog', (d) => d.accept()); // onWorkshopMobileStatusChange() opens window.confirm
+      await toggle.locator('button[role="switch"]').click();
+      const after = await pollUntil(
+        () => getDoc('workshopconfiguration', wsListFilterIds.MOBILE),
+        (d) => !!d && d.eiflixmobileactive === false,
+        { label: 'WS-65: eiflixmobileactive -> false', timeoutMs: 30_000 },
+      );
+      expect(after!.eiflixmobileactive).toBe(false);
+      expect(after!.active, 'WS-65: Active untouched').toBe(false);
+      expect(after!.webactive, 'WS-65: Web untouched').toBe(false);
+
+      // All three off now: Inactive shows it, Active does not.
+      await page.getByTestId('wor-status-filter-9').click();
+      await expect(row, 'WS-65: switched off everywhere -> Inactive').toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('wor-status-filter-8').click();
+      await expect(row, 'WS-65: no longer Active').toHaveCount(0);
+    });
+  });
+
+  // ===========================================================================================
   // WS-04 — toggling a workshop inactive→active WRITES active:true to Firestore (not just optimistic UI)
   // ===========================================================================================
-  test('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
+  // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+  // While it is hidden the row's first switch is Completed, so this case must not run.
+  test.skip('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
     // Precondition (anti-circular): force the pivot workshop back to inactive (idempotent re-runs).
     await resetWorkshopInactive();
     const before = await getDoc('workshopconfiguration', wsIds.W_INACTIVE);

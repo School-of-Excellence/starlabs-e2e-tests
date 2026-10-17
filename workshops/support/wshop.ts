@@ -1708,3 +1708,76 @@ export async function pickWatiTemplate(page: Page, composer: Locator): Promise<v
   await composer.locator('mat-select[formcontrolname="templateName"]').click();
   await page.locator('mat-option').filter({ hasText: wsWatiTemplate }).click();
 }
+
+// =================================================================================================
+// 2026-10-14 — Sale Achieved card (live workshops only) on the workshop dashboard (WDC-15).
+// =================================================================================================
+
+/** Make W_DASH a live workshop for one case (`workshoptype` is the root creation field). */
+export async function setDashWorkshopType(value: string): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH).set({ workshoptype: value }, { merge: true });
+}
+
+/** Put W_DASH back as seeded — no `workshoptype` at all. */
+export async function clearDashWorkshopType(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH)
+    .set({ workshoptype: admin.firestore.FieldValue.delete() }, { merge: true });
+}
+
+/**
+ * Three extra workshops for the /workshops Status and Type filters (WS-64): live on the web only,
+ * live on EiFlix mobile only, and completed with every switch off. No `testrunid`, so WS-01's count of
+ * the three base seeds is untouched; removed by clearListFilterWorkshops. PRECONDITION writes only.
+ */
+export const wsListFilterIds = {
+  WEB: `${RUN}_W_list_web`,
+  MOBILE: `${RUN}_W_list_mobile`,
+  DONE: `${RUN}_W_list_done`,
+};
+export const wsListFilterTitles = {
+  WEB: `Web Only Workshop ${RUN}`,
+  MOBILE: `Mobile Only Workshop ${RUN}`,
+  DONE: `Completed Workshop ${RUN}`,
+};
+
+export async function seedListFilterWorkshops(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  const base = (id: string, title: string) => ({
+    docid: id, atcmodel: null, categorybased: false, created: day(-3),
+    detailpage: { type: 'workshop', title, shortdescription: 'seeded list filter',
+      workshopStartDate: day(1), workshopEndDate: day(8), registrationStartDate: day(-4), registrationEndDate: day(0) },
+  });
+  await Promise.all([
+    db.collection('workshopconfiguration').doc(wsListFilterIds.WEB).set({
+      ...base(wsListFilterIds.WEB, wsListFilterTitles.WEB),
+      active: false, webactive: true, eiflixmobileactive: false, workshopcompleted: false, workshoptype: 'cpworkshop' }),
+    db.collection('workshopconfiguration').doc(wsListFilterIds.MOBILE).set({
+      ...base(wsListFilterIds.MOBILE, wsListFilterTitles.MOBILE),
+      active: false, webactive: false, eiflixmobileactive: true, workshopcompleted: false, workshoptype: 'evergreenworkshop' }),
+    db.collection('workshopconfiguration').doc(wsListFilterIds.DONE).set({
+      ...base(wsListFilterIds.DONE, wsListFilterTitles.DONE),
+      active: false, webactive: false, eiflixmobileactive: false, workshopcompleted: true, workshoptype: 'liveworkshop' }),
+  ]);
+}
+
+export async function clearListFilterWorkshops(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(Object.values(wsListFilterIds).map(id => db.collection('workshopconfiguration').doc(id).delete()));
+}
+
+/**
+ * Independent count for WS-03's upper bound: not-completed workshops with ANY of the three live
+ * switches on, read straight from Firestore.
+ */
+export async function countLiveNotCompletedWorkshops(): Promise<number> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').get();
+  return snap.docs.filter(d => {
+    const x = d.data();
+    return x.workshopcompleted !== true && (x.active === true || x.webactive === true || x.eiflixmobileactive === true);
+  }).length;
+}

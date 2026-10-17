@@ -27,6 +27,13 @@
 // listing → In Zoom), Completed (uuid NOT listed → Not in Zoom), Failed (no uuid → unknown). Ascending must give
 // In Zoom → Not in Zoom → unknown, and the second click the reverse; the default date order differs from both.
 //
+// ZRD-11..14 (Zoom vs Dropbox sizes, 2026-10-16 — starlabs-angular specs/journals/2026-10-16-zoom-dashboard-size-
+// validation.md): Verified matches (✓); Failed's last verification found 1000 B in Dropbox against an upload
+// that committed 4096 B, so the screen must show ⚠ 1000 B, not a stale ✓ (the verification wins). It must
+// also say Zoom now has 5000 B. Completed has no per-file map, so its Dropbox size is unknown (—, never a ✓).
+// Size sorts Failed (4096) → Completed (1024) → Verified (512). Verify all keeps "No longer in Zoom" failures
+// out of the actionable list. Sizes and statuses are seeded; the ✓/⚠ verdict and the order are the app's.
+//
 // NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/; the
 // "Queued…" migrate state (needs the Zoom panel's live recordings list).
 import { test, expect, Page, Route } from '@playwright/test';
@@ -39,7 +46,7 @@ const TOPIC = { done: `Completed Meeting ${RUN}`, fail: `Failed Meeting ${RUN}`,
 let guard: ConsoleGuard;
 let calls: { path: string; body: any }[];
 /** Per-test server behaviour for the duplicate-cleanup paths (ZRD-06/07); reset in stubZoomApi. */
-let mode: { retry: 'queued' | 'duplicate'; batchDuplicateOf?: string; costRates: 'down' | 'live' };
+let mode: { retry: 'queued' | 'duplicate'; batchDuplicateOf?: string; costRates: 'down' | 'live'; batchGone?: boolean };
 
 /** Stub the zoom-to-dropbox API. `recordings` lists only the verified meeting as still present in Zoom. */
 async function stubZoomApi(page: Page) {
@@ -66,7 +73,8 @@ async function stubZoomApi(page: Page) {
         return json({
           success: true,
           results: (body?.docIds ?? []).map((id: string) => id === commsIds.ZOOM_FAIL
-            ? { docId: id, topic: TOPIC.fail, result: 'failed', problems: ['audio: missing in Dropbox'] }
+            ? { docId: id, topic: TOPIC.fail, result: 'failed',
+                problems: mode.batchGone ? ['No longer in Zoom', 'audio: missing in Dropbox'] : ['audio: missing in Dropbox'] }
             : id === mode.batchDuplicateOf
               ? { docId: id, topic: id, result: 'duplicate_removed', problems: [] }
               : { docId: id, topic: id, result: 'verified', problems: [] }),
@@ -196,5 +204,55 @@ test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (s
     await expect.poll(order, { message: 'ZRD-10: ascending — In Zoom, then Not in Zoom, then unknown' }).toEqual([TOPIC.ok, TOPIC.done, TOPIC.fail]);
     await header.click();
     await expect.poll(order, { message: 'ZRD-10: descending — unknown first' }).toEqual([TOPIC.fail, TOPIC.done, TOPIC.ok]);
+  });
+  test('ZRD-11 the Size column shows Zoom and Dropbox bytes: ✓ when they match, ⚠ from the last verification, — when unknown', async ({ page }) => {
+    const ok = rowOf(page, TOPIC.ok);
+    await expect(ok.getByTestId('zrd-size-zoom'), 'ZRD-11: Verified — Zoom total').toContainText('512 B');
+    await expect(ok.getByTestId('zrd-size-dropbox'), 'ZRD-11: Verified — Dropbox matches').toContainText('512 B');
+    await expect(ok.getByTestId('zrd-size-dropbox'), 'ZRD-11: Verified — ✓').toContainText('✓');
+    await expect(ok.getByTestId('zrd-size-dropbox')).toHaveClass(/size-ok/);
+
+    const fail = rowOf(page, TOPIC.fail);
+    await expect(fail.getByTestId('zrd-size-zoom'), 'ZRD-11: Failed — Zoom total').toContainText('4.00 KB');
+    await expect(fail.getByTestId('zrd-size-dropbox'), 'ZRD-11: Failed — the verified Dropbox size, not the upload\'s 4096 B').toContainText('1000 B');
+    await expect(fail.getByTestId('zrd-size-dropbox'), 'ZRD-11: Failed — ⚠').toContainText('⚠');
+    await expect(fail.getByTestId('zrd-size-dropbox')).toHaveClass(/size-bad/);
+
+    const done = rowOf(page, TOPIC.done);
+    await expect(done.getByTestId('zrd-size-zoom'), 'ZRD-11: Completed — Zoom total falls back to totalSize').toContainText('1.00 KB');
+    await expect(done.getByTestId('zrd-size-dropbox'), 'ZRD-11: Completed — no per-file sizes, so no ✓/⚠ claim').toHaveCount(0);
+    await expect(done.getByTestId('zrd-size-dropbox-unknown')).toHaveCount(1);
+  });
+
+  test('ZRD-12 the file list shows Zoom vs Dropbox bytes per file and warns when Zoom changed since the backup', async ({ page }) => {
+    await rowOf(page, TOPIC.fail).getByTestId('zrd-openfilemodel').click();
+    const bytes = page.getByTestId('zrd-file-bytes');
+    await expect(bytes, 'ZRD-12: one successful file').toHaveCount(1);
+    await expect(bytes).toContainText('Zoom 4.00 KB');
+    await expect(bytes, 'ZRD-12: Dropbox from the last verification, flagged').toContainText('Dropbox 1000 B ⚠');
+    await expect(page.getByTestId('zrd-file-zoomnow'), 'ZRD-12: Zoom re-processed the file').toContainText('Zoom now has 4.88 KB');
+  });
+
+  test('ZRD-13 sorting by Size orders the largest Zoom total first, then reverses', async ({ page }) => {
+    const order = async () => (await page.locator('tr.mat-mdc-row, tr[mat-row]').allInnerTexts())
+      .map((t) => [TOPIC.ok, TOPIC.done, TOPIC.fail].find((topic) => t.includes(topic)))
+      .filter(Boolean);
+    // Scope to the backup table — the Zoom panel's own table has a Size column too.
+    const header = page.locator('table').filter({ has: rowOf(page, TOPIC.ok) }).getByRole('columnheader', { name: /^Size/ });
+    await header.click();
+    await expect.poll(order, { message: 'ZRD-13: descending by Zoom size — 4096, 1024, 512' }).toEqual([TOPIC.fail, TOPIC.done, TOPIC.ok]);
+    await header.click();
+    await expect.poll(order, { message: 'ZRD-13: ascending' }).toEqual([TOPIC.ok, TOPIC.done, TOPIC.fail]);
+  });
+
+  test('ZRD-14 Verify all keeps recordings no longer in Zoom out of the actionable failures', async ({ page }) => {
+    mode.batchGone = true;
+    await page.getByTestId('zrd-verifyall').click();
+    await expect(page.getByText('⚠ 1 failed'), 'ZRD-14: still counted as failed').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('zrd-verifyall-problem'), 'ZRD-14: nothing actionable to list').toHaveCount(0);
+    const gone = page.getByTestId('zrd-verifyall-gone');
+    await expect(gone, 'ZRD-14: the gone list names how many').toContainText("1 recording(s) can't be completed");
+    await gone.locator('summary').click();
+    await expect(gone, 'ZRD-14: …and the meeting, without repeating "No longer in Zoom"').toContainText(`${TOPIC.fail} — audio: missing in Dropbox`);
   });
 });
