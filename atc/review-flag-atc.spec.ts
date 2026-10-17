@@ -11,10 +11,13 @@ import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/suppor
 const FLAG_TYPES = ['finalreview', 'flagmandatory', 'flagenhance'];
 const panel = (page: Page, id: string) => page.locator(`[data-testid="rfa-panel"][data-atc="${id}"]`);
 const tab = (page: Page, name: RegExp) => page.getByRole('tab', { name });
-async function open(page: Page) {
+// Each tab pages 10 ATCs newest-first and the RFA ATCs are dated 40+ days ago, so (except RFA-01, which tests the
+// unfiltered counts and the filter itself) filter to the RFA participant first to bring them onto page 1.
+async function open(page: Page, filterToRfa = true) {
   await loginAsAtc(page, 'admin');
   await page.goto('/reviewflagATC');
   await expect(tab(page, /Yet to Validate/)).toBeVisible({ timeout: 45_000 });
+  if (filterToRfa) await pickOptions(page, page.getByTestId('rfa-filter-client'), [NAME.rfa], false);
 }
 
 test.describe('ATC — Review / Flag (real UI, emulator only)', () => {
@@ -35,15 +38,17 @@ test.describe('ATC — Review / Flag (real UI, emulator only)', () => {
     const alpha = (await atcDb().collection('atc_alpha').where('isdelete', '==', false).where('type', '==', 'online').get())
       .docs.map((d) => d.data());
     const validated = alpha.filter((d) => !FLAG_TYPES.includes(d.flagtype)).length;
-    await open(page);
+    await open(page, false);
     await expect(tab(page, /Yet to Validate/)).toHaveText(new RegExp(`\\(${tov}\\)`), { timeout: 20_000 });
     await expect(tab(page, /Validated By Arena Mentor/)).toHaveText(new RegExp(`\\(${validated}\\)`));
+
+    await pickOptions(page, page.getByTestId('rfa-filter-client'), [NAME.rfa], false);
+    const tovRfa = (await atcDb().collection('atc_to_validate').where('isdelete', '==', false).where('type', '==', 'online')
+      .where('status', '==', 'atc given').where('profileid', '==', PF.rfa).get()).size;
+    await expect(tab(page, /Yet to Validate/)).toHaveText(new RegExp(`\\(${tovRfa}\\)`), { timeout: 20_000 });
     await expect(panel(page, ATC2.RF_V)).toBeVisible();
     await panel(page, ATC2.RF_V).click();
     await expect(panel(page, ATC2.RF_V).getByTestId('rfa-adj').first()).toContainText(`RF_V adjustment ${RUN}`, { timeout: 20_000 });
-
-    await pickOptions(page, page.getByTestId('rfa-filter-client'), [NAME.rfa], false);
-    await expect(tab(page, /Yet to Validate/)).toHaveText(/\(1\)/, { timeout: 20_000 });
     await page.getByTestId('rfa-reset').click();
     await expect(tab(page, /Yet to Validate/)).toHaveText(new RegExp(`\\(${tov}\\)`), { timeout: 20_000 });
   });
@@ -98,8 +103,9 @@ test.describe('ATC — Review / Flag (real UI, emulator only)', () => {
 
   test('RFA-05 Edit ATC opens the edit screen for the right collection', async ({ page }) => {
     await open(page);
-    const v = await popupFrom(page, () => panel(page, ATC2.RF_V).getByTestId('rfa-edit').click());
-    expect(new URL(v.url()).pathname).toBe(`/editATC/${ATC2.RF_V}/validation`);
+    // RF_E, not RF_V: RFA-02 validates RF_V, which moves it off the Yet to Validate tab
+    const v = await popupFrom(page, () => panel(page, ATC2.RF_E).getByTestId('rfa-edit').click());
+    expect(new URL(v.url()).pathname).toBe(`/editATC/${ATC2.RF_E}/validation`);
     await v.close();
     await tab(page, /Validated By Arena Mentor/).click();
     const a = await popupFrom(page, () => panel(page, ATC2.RF_A).getByTestId('rfa-edit').click());

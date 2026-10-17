@@ -149,9 +149,13 @@ export async function pickOptions(page: Page, select: Locator, labels: (string |
   // Click the enclosing mat-form-field (its container click opens the select): an empty outline field's
   // floating <mat-label> sits over the select and intercepts a direct click.
   const field = select.locator('xpath=ancestor::mat-form-field[1]');
-  if (await field.count()) await field.click(); else await select.click();
   const panel = page.locator('.cdk-overlay-pane .mat-mdc-select-panel').last();
-  await expect(panel).toBeVisible();
+  // A mat-select with no options yet does not open at all, so a click made before the screen's list has loaded
+  // is lost — retry the click until the panel shows (ATE-01: the queue list loads after getRoles()).
+  await expect(async () => {
+    if (!(await panel.isVisible())) { if (await field.count()) await field.click(); else await select.click(); }
+    await expect(panel).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
   for (const l of labels) {
     await panel.locator('mat-option').filter({ hasText: l }).first().click();
   }

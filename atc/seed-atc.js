@@ -117,7 +117,7 @@ const ATC2 = {
   VPA1: `${RUN}_VPA1`, VPA2: `${RUN}_VPA2`, VPA3: `${RUN}_VPA3`,        // VPA — participant history
   PV_A: `${RUN}_PV_A`, PV_V: `${RUN}_PV_V`, PV_V2: `${RUN}_PV_V2`,     // PVA — preview (alpha / validation)
   AS1: `${RUN}_AS1`,                                                    // VAA — change-agent work queue
-  RF_V: `${RUN}_RF_V`, RF_A: `${RUN}_RF_A`, RF_F1: `${RUN}_RF_F1`, RF_F2: `${RUN}_RF_F2`, RF_F3: `${RUN}_RF_F3`, // RFA
+  RF_V: `${RUN}_RF_V`, RF_E: `${RUN}_RF_E`, RF_A: `${RUN}_RF_A`, RF_F1: `${RUN}_RF_F1`, RF_F2: `${RUN}_RF_F2`, RF_F3: `${RUN}_RF_F3`, // RFA
   PF_A: `${RUN}_PF_A`, PF_V: `${RUN}_PF_V`, PF_V2: `${RUN}_PF_V2`, PF_M: `${RUN}_PF_M`, // PFM
   ATE_A: `${RUN}_ATE_A`, ATE_V: `${RUN}_ATE_V`, ATE_C: `${RUN}_ATE_C`, ATE_U: `${RUN}_ATE_U`, // ATE (queue-scoped)
   TV1: `${RUN}_TV1`, TP1: `${RUN}_TP1`, TP2: `${RUN}_TP2`, TE1: `${RUN}_TE1`, TE2: `${RUN}_TE2`, TE3: `${RUN}_TE3`, // triple atc
@@ -335,6 +335,8 @@ async function seedPhase2({ db, adb, tag, daysAgo, pref, writeATC, base, simpleA
 
   // RFA — one per tab action
   await writeATC('atc_to_validate', ATC2.RF_V, { ...base(PF.rfa, PF.admin, MODEL.beta, 40), status: 'atc given' }, simpleAdj(`RF_V adjustment ${RUN}`));
+  // RF_E — Edit link only (RFA-05); RF_V is validated by RFA-02 and leaves the Yet to Validate tab
+  await writeATC('atc_to_validate', ATC2.RF_E, { ...base(PF.rfa, PF.admin, MODEL.beta, 40), status: 'atc given' }, simpleAdj(`RF_E adjustment ${RUN}`));
   for (const id of [ATC2.RF_A, ATC2.RF_F1, ATC2.RF_F2, ATC2.RF_F3]) {
     await writeATC('atc_alpha', id, base(PF.rfa, PF.admin, MODEL.alpha, 41), simpleAdj(`${id} adjustment ${RUN}`));
   }

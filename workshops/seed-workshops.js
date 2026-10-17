@@ -330,8 +330,8 @@ async function seedAddendum(db, T, tag, at) {
   // (showcontent stays false) and in fact THROWS at ngAfterViewInit:260, which dereferences
   // `this.participantformtemplateid.formid` when no `?id=` is present. The ONE path that stays in the
   // DEFAULT db is `?id=<delivery forms docid>` with no `patchdata` (ts:260-290) — that is what WS-26
-  // drives. The temporary_forms / formsByClient paths go through getFirestore('firestore-forms'), a
-  // NAMED db the emulator cannot give rules to (Risk #11), so WS-27 skips there.
+  // drives. The temporary_forms / formsByClient paths go through getFirestore('firestore-forms'), a NAMED db the
+  // emulator build connects since 2026-10-17 — WS-27 types into the question and reads the autosaved draft there.
   //
   // Shape is dictated by the template: formname (h1), formdescription (p), and formarray[] — the
   // component walks formarray and registers a FormControl per non-label/video/audio entry (ts:270-284),
@@ -343,7 +343,8 @@ async function seedAddendum(db, T, tag, at) {
     formfor: 'workshop',
     formarray: [
       { type: 'label', fieldname: `WS Form Section ${TESTRUNID}`, fielddescription: 'seeded section' },
-      { type: 'text', fieldname: `WS Form Question ${TESTRUNID}`, fielddescription: 'seeded question', required: false },
+      // type 'Text' (capital T): the template renders an input only for ['Text','number','email'] (WS-27 types here)
+      { type: 'Text', fieldname: `WS Form Question ${TESTRUNID}`, fielddescription: 'seeded question', required: false },
     ],
     ...tag,
   });

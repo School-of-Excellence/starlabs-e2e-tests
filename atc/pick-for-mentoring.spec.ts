@@ -4,7 +4,7 @@
 // `mentoringid`, so it never showed "Picked" and a re-click created a duplicate mentoring doc.
 import { test, expect, Page } from '@playwright/test';
 import {
-  ATC2, PF, PFM_M, RUN, installAtcGuards, assertNoRealDb, loginAsAtc, defaultDb, atcDoc, waitFor, AtcGuard,
+  ATC2, PF, PFM_M, NAME, RUN, installAtcGuards, assertNoRealDb, loginAsAtc, defaultDb, atcDoc, waitFor, pickOptions, AtcGuard,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -13,10 +13,13 @@ const alphaPanel = (page: Page, id: string) => page.locator(`[data-testid="pfm-p
 const validatePanel = (page: Page, id: string) => page.locator(`[data-testid="pfm-panel-validate"][data-atc="${id}"]`);
 const mentorPanel = (page: Page, id: string) => page.locator(`[data-testid="pfm-panel-mentor"][data-atc="${id}"]`);
 const picksFor = async (atcid: string) => (await defaultDb().collection('pick_for_mentoring').where('atcid', '==', atcid).get()).docs;
+// Every tab pages 10 ATCs newest-first and the PFM ATCs are dated 40+ days ago, so filter to the PFM participant
+// first (the screen's own Filter Client — it narrows all three tabs) to bring them onto page 1.
 async function open(page: Page) {
   await loginAsAtc(page, 'admin');
   await page.goto('/pickformentoring');
   await expect(tab(page, /^Validated ATC/)).toBeVisible({ timeout: 45_000 });
+  await pickOptions(page, page.getByRole('combobox', { name: 'Filter Client' }), [NAME.pfm], false);
 }
 
 test.describe('ATC — Pick for Mentoring (real UI, emulator only)', () => {

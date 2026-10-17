@@ -145,3 +145,40 @@ Firestore emulator cannot start. Not killed (the operator's process).
 
 - Operator: free port 8080 → run the full atc suite (28 phase-1 + 41 phase-2), fix what fails.
 - Operator: push the D2 rule fix (hub) and the phase-2 hub + app changes.
+
+## First CI run of phase 2 + forms (offline-ATC run 39045456775) — 13 failures, root causes
+
+Hub deploy (suites-deploy) green. Branch suite: atc 67✓/11✗, profiles 110✓/1✗, workshops 120✓/1✗ (+WS-40 flaky,
+unrelated). All 28 phase-1 ATC cases passed; D2 ran (landed-specs kept every spec — nothing skipped).
+
+WHY each failed (read from the CI error-context page snapshots, nothing run locally — port 8080 still held):
+- **Pagination (PFM-01/02/03/05, RFA-03/04).** Both screens page 10 ATCs newest-first; phase-2 data is dated 40+
+  days ago (to stay out of phase-1 windows), so it sat on page 3. Fix: filter to the screen's own participant
+  (Filter Client) first — the same control RFA-01 already drove successfully. Lesson: "old data" + "paged list" →
+  always narrow first.
+- **Order dependence (RFA-05).** RFA-02 validates RF_V, removing it from Yet to Validate → new RF_E for RFA-05;
+  RFA-01's filtered count is now computed from the emulator, and its RF_V check moved after the filter.
+- **Prefilled author (TRA-01).** add-triple-atc.component.ts:163 pre-selects the logged-in user; picking it again
+  toggled it OFF → "Choose the author names". Now asserts the prefill.
+- **Hidden column (EIA-01).** displayedColumns omits 'version' → eia-version never rendered. Check dropped and the
+  hook removed from the app (else readiness flags an unreferenced hook).
+- **Load race (ATE-01).** A mat-select with zero options does not open; the click came before the queue list
+  loaded. pickOptions now retries the open until the panel shows (helps every caller).
+- **App bug (VAA-02), operator: fix.** "Filter by Participant" was built from the staff-only users_roles query
+  (changeagent/eis/ah/admin) — no participant could ever be picked. Now its own query: all users_roles by name, as
+  Review/Flag and Pick for Mentoring list clients. Change Agent list unchanged.
+- **WS-27, operator: rewrite.** Never finished (only ever ran skipped): seeded field type 'text' — the template
+  renders inputs only for 'Text'/'number'/'email'; there is no Save button (autosave on keyup); it asserted
+  nothing in the forms db. Now: type into the question (pressSequentially — fill() fires no keyup) and read the
+  draft back from firestore-forms/temporary_forms in the EMULATOR; drafts are untagged → the test deletes them.
+  The afterEach allowlist for forms "permission denied" was removed (it covered the misdiagnosis).
+  Found, not changed: drafts are written to firestore-forms (form-assignment.component.ts:836) but read back from
+  the DEFAULT db (:854) → a saved draft is never offered for restore.
+- **VPF-F03, operator: "emulator refuses the read".** Aborting the browser's forms-db requests does NOT produce
+  an error: the SDK treats it as offline and getDocs resolves EMPTY from cache, so "Could not fetch forms" never
+  showed. Now a REAL server refusal: ci/overlay/firestore.rules (emulator-only, staged by setup-emulator-config.sh)
+  denies firestore-forms reads to a token carrying `e2eDenyForms`; profiles/seed-profiles.js seeds one extra
+  admin-roled user `formsdenied` with that claim; VPF-F03 signs in as it. Every other user/db stays fully open.
+
+Not run locally (8080 still held by the Simulator Runner.app). Checked instead: Playwright --list compiles every
+edited spec; readiness simulation vs the app working tree → drift [] · landed-specs skips nothing (atc 14, workshops 20).

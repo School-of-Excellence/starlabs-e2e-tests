@@ -1781,3 +1781,16 @@ export async function countLiveNotCompletedWorkshops(): Promise<number> {
     return x.workshopcompleted !== true && (x.active === true || x.webactive === true || x.eiflixmobileactive === true);
   }).length;
 }
+
+/** temporary_forms drafts the app autosaved for a delivery form, read from the firestore-forms EMULATOR db (WS-27). */
+export async function formDraftsFor(formid: string): Promise<any[]> {
+  const forms = seed.getFormsDb(seed.initAdmin());
+  return (await forms.collection('temporary_forms').where('formid', '==', formid).get()).docs.map((d: any) => d.data());
+}
+
+/** Remove those drafts (the app writes them untagged, so the run-tag teardown cannot catch them). */
+export async function deleteFormDraftsFor(formid: string): Promise<void> {
+  const forms = seed.getFormsDb(seed.initAdmin());
+  const snap = await forms.collection('temporary_forms').where('formid', '==', formid).get();
+  await Promise.all(snap.docs.map((d: any) => d.ref.delete()));
+}

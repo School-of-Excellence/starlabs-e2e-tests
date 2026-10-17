@@ -18,6 +18,7 @@ export const PASSWORD = 'Test!1234';
 /** Seeded profiles actors (seed-profiles.js roster). */
 export const profActors = {
   admin: `admin+${RUN}@example.com`,            // roles {admin, ah, developer} — fullAccess super-role
+  formsDenied: `formsdenied+${RUN}@example.com`, // admin roles; emulator rules refuse its firestore-forms reads (VPF-F03)
   p0: `participant0+${RUN}@example.com`,
   p1: `participant1+${RUN}@example.com`,
   p2: `participant2+${RUN}@example.com`,
@@ -65,6 +66,11 @@ export async function installProfileStubs(page: Page): Promise<void> {
 /** Log in via the real Angular login form as the seeded super-role admin. */
 export async function loginAsProfileAdmin(page: Page): Promise<void> {
   await loginAs(page, profActors.admin, PASSWORD);
+}
+
+/** The admin-roled user whose firestore-forms reads the EMULATOR rules refuse (custom claim e2eDenyForms). */
+export async function loginAsFormsDenied(page: Page): Promise<void> {
+  await loginAs(page, profActors.formsDenied, PASSWORD);
 }
 
 // CommonJS — reuse the allowlist-guarded admin init (only ever the test project).

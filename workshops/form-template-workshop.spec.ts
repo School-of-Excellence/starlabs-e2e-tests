@@ -12,13 +12,11 @@
 //    misleading — the route does not mount without a param.
 //
 // 2. The draft/submit paths go through `getFirestore('firestore-forms')` (ts:102-103), a NAMED
-//    database. The Firestore EMULATOR does not support multiple databases or per-named-db rules, so
-//    client reads/writes there hard-DENY (Admin-SDK seeds still land, rules-bypassed) — this is
-//    recorded in firebase.emulator.json itself. WS-27 therefore skips on the emulator, exactly as the
-//    profiles suite already does for the same database in profiles/analytics.spec.ts:98 and
-//    profiles/view-form-deep.spec.ts:33. Writing it to "pass" on the emulator would be a false green.
+//    database. Since 2026-10-17 the emulator build connects it (src/main.ts), so WS-27 runs on the
+//    emulator: the draft lands in the firestore-forms EMULATOR db. (The old skip — "the emulator cannot
+//    serve a named DB, client access is denied" — was a misdiagnosis: the app simply never connected it.)
 import { test, expect } from '@playwright/test';
-import { wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin } from './support/wshop';
+import { wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, formDraftsFor, deleteFormDraftsFor } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
 test.describe('Workshops — form template workshop (real UI, anti-circular)', () => {
@@ -27,15 +25,7 @@ test.describe('Workshops — form template workshop (real UI, anti-circular)', (
     guard = attachConsoleGuard(page);
     await installWshopStubs(page);
   });
-  test.afterEach(() =>
-    // The component eagerly constructs a firestore-forms handle and generates a draft id at ts:118;
-    // on the emulator any incidental traffic to that named DB is denied. That denial is the documented
-    // environment limitation (Risk #11), not the default-DB behaviour WS-26 is asserting.
-    assertNoFatal(guard, 'formtemplateworkshop: no fatal console errors / pageerrors', [
-      /firestore-forms/i,
-      /temporary_forms/i,
-      /permission[- ]denied/i,
-    ]));
+  test.afterEach(() => assertNoFatal(guard, 'formtemplateworkshop: no fatal console errors / pageerrors'));
 
   // ===========================================================================================
   // WS-26 — the default-DB path: ?id=<delivery forms docid> renders that form's content
@@ -69,25 +59,29 @@ test.describe('Workshops — form template workshop (real UI, anti-circular)', (
   // ===========================================================================================
   // WS-27 — draft save writes a temporary_forms doc in the firestore-forms NAMED DB
   // ===========================================================================================
-  test('WS-27 saving a draft writes to the firestore-forms named database', async ({ page }) => {
-    // 2026-10-17: the emulator build now connects the `firestore-forms` named DB (src/main.ts), so this draft write
-    // runs on the emulator too. The old skip ("multi-db unsupported → denied") was a misdiagnosis.
+  test('WS-27 typing an answer autosaves a draft to the firestore-forms named database', async ({ page }) => {
+    // The template autosaves on every keyup — autoSave() setDoc's firestore-forms/temporary_forms/<draftDocid>
+    // with each field's value (form-assignment.component.ts:804-837). No Save button exists.
+    await deleteFormDraftsFor(wsAddIds.DF_A);   // precondition: no draft for this form yet
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto(`/formtemplateworkshop?id=${wsAddIds.DF_A}`, { waitUntil: 'domcontentloaded' });
+      await expect(page.locator('.form-container')).toBeVisible({ timeout: 45_000 });
 
-    await loginAsWshopAdmin(page);
-    await page.goto(`/formtemplateworkshop?id=${wsAddIds.DF_A}`, { waitUntil: 'domcontentloaded' });
-    await expect(page.locator('.form-container')).toBeVisible({ timeout: 45_000 });
+      const question = `WS Form Question ${process.env.WSHOP_RUNID || 'wshop'}`;
+      const answer = `WS27 draft ${Date.now()}`;
+      // pressSequentially, not fill(): the save is bound to (keyup), which fill() never fires
+      await page.getByPlaceholder(`Enter ${question}`).pressSequentially(answer);
 
-    // Fill the seeded text field and trigger the draft save (setDoc into
-    // firestore-forms/temporary_forms/<draftDocid>, ts:836-837).
-    const input = page.locator('.form-content input[matInput], .form-content input').first();
-    await input.fill(`WS27 draft ${Date.now()}`);
-    await page.getByRole('button', { name: /Save|Draft/i }).first().click();
-
-    // On the cloud config the named-DB handle is reachable; assert the app created a draft doc there.
-    // (Left as an explicit expectation rather than a silent pass so the cloud run has something to prove.)
-    await expect(
-      page.locator('.form-container'),
-      'WS-27: the form must still be mounted after the draft save',
-    ).toBeVisible();
+      // [ASSERT] the app wrote the draft — read back from the firestore-forms EMULATOR db, not the page.
+      await expect.poll(async () => {
+        const drafts = await formDraftsFor(wsAddIds.DF_A);
+        return drafts.flatMap((d) => d.formarray || []).find((f: any) => f.fieldname === question)?.value ?? null;
+      }, { message: 'WS-27: the draft in firestore-forms/temporary_forms holds the typed answer', timeout: 30_000 }).toBe(answer);
+      const [draft] = await formDraftsFor(wsAddIds.DF_A);
+      expect(draft.formname, 'WS-27: the draft is a copy of the seeded delivery form').toBe(wsAddNames.deliveryForm);
+    } finally {
+      await deleteFormDraftsFor(wsAddIds.DF_A);   // the app writes drafts untagged — clean up here
+    }
   });
 });

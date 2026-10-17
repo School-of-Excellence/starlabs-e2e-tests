@@ -4,8 +4,15 @@ rules_version = '2';
 // Referenced only by firebase.emulator.json. Production rules live in the Firebase console / a separate, reviewed file.
 service cloud.firestore {
   match /databases/{database}/documents {
+    // The ONE refusal: reads of the firestore-forms db by a test user whose token carries e2eDenyForms (seeded by
+    // profiles/seed-profiles.js for VPF-F03 only), so the "Could not fetch forms" path gets a real server refusal.
+    // Blocking the browser's requests instead does not work — the SDK goes offline and resolves EMPTY from cache.
+    function deniedFormsReader() {
+      return database == 'firestore-forms' && request.auth != null && request.auth.token.get('e2eDenyForms', false) == true;
+    }
     match /{document=**} {
-      allow read, write: if true;
+      allow write: if true;
+      allow read: if !deniedFormsReader();
     }
   }
 }

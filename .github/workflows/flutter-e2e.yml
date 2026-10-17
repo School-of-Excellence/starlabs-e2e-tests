@@ -63,15 +63,24 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      - name: Analyze (advisory)
-        continue-on-error: true
-        run: flutter analyze || echo "analyze findings (advisory)"
+      # HARD GATE, errors only (2026-10-17). `flutter analyze` fails on ANY finding by default, which
+      # made it unusable here: the project reports ~1,850 issues, nearly all `info`-level lints. The two
+      # --no-fatal flags narrow the gate to `error` — "this does not compile" — which is 0 today and is
+      # the signal worth blocking on. It earned its keep immediately: it caught appointments_test.dart
+      # asserting on CalendarMonthCard, a class the redesigned Calendar screen no longer has.
+      #
+      # Depends on the `analyzer: exclude: packages/**` block in the app's analysis_options.yaml —
+      # without it the vendored flutter_icons_null_safety package contributes ~38,100 findings.
+      - name: Analyze (hard gate — errors only)
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Unit / widget tests (hard gate)
         run: flutter test
 
-      - name: Build web (hard gate)
-        run: flutter build web --release
+      # `flutter build web --release` was REMOVED (2026-10-17). It existed as a whole-app compile check
+      # from when web was the intended integration-test host; it is not, and cannot be — the app depends
+      # on 7+ plugins with no web implementation. Compilation is proven instead by branch-apks.yml, which
+      # builds two real Android APKs on every push. Dropping it saves minutes per run.
 
       # ── OPT-IN: emulator-backed integration_test smoke on web ──────────────────────────────────────────
       - name: Set up Java (emulator JRE)
@@ -112,7 +121,7 @@ jobs:
             -d web-server --release || echo "integration smoke advisory result recorded"
 
       - name: Upload web build + any integration artifacts
-        if: always()
+        if: ${{ always() && inputs.run_integration }}
         uses: actions/upload-artifact@v4
         with:
           name: flutter-web-build

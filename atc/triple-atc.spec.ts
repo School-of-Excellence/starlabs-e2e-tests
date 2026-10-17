@@ -35,7 +35,9 @@ test.describe('ATC — Triple ATC (real UI, emulator only)', () => {
     await loginAsAtc(page, 'admin');
     await page.goto('/addtripleATC');
     await pickOptions(page, page.getByTestId('tra-participant'), [NAME.tra], false);
-    await pickOptions(page, page.getByTestId('tra-author'), [NAME.admin]);
+    // The logged-in user is pre-filled as the author (add-triple-atc.component.ts:163) — picking it again would
+    // toggle it OFF ("Choose the author names").
+    await expect(page.getByTestId('tra-author')).toContainText(NAME.admin);
     await pickOptions(page, page.getByTestId('tra-queue'), [TRIPLE_QUEUE_NAME], false);
     await pickOptions(page, page.getByTestId('tra-product'), [MODEL.alpha], false);
     await expect(page.getByTestId('tra-directive')).toHaveText(MODEL_DIRECTIVE.alpha);

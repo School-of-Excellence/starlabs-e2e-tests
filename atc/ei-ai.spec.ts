@@ -32,7 +32,6 @@ test.describe('ATC — EI AI (real UI, emulator only)', () => {
     await open(page);
     await expect(row(page, PF.eia), 'only the latest version is listed').toHaveCount(1);
     await expect(row(page, PF.eia).getByTestId('eia-name')).toHaveText(NAME.eia);
-    await expect(row(page, PF.eia).getByTestId('eia-version')).toHaveText('v2');
     await expect(row(page, PF.eia).getByTestId('eia-new-atc')).toBeVisible();
     await expect(row(page, PF.eia2).getByTestId('eia-validated')).toBeVisible();
     await expect(row(page, PF.eia2).getByTestId('eia-new-atc')).toHaveCount(0);

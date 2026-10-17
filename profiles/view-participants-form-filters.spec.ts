@@ -11,8 +11,10 @@
 // connects that db (src/main.ts) — the old "multi-db unsupported → read denied" note was a misdiagnosis — so:
 //   VPF-F01  both lanes (no fetch involved: the active count is pure panel state)
 //   VPF-F02  both lanes (needs a successful fetch to set the applied snapshot)
-//   VPF-F03  both lanes — the read failure is now FORCED (failFormsDbReads aborts the browser's requests to
-//            the firestore-forms database only), instead of relying on the unconnected handle being denied
+//   VPF-F03  emulator: signs in as the seeded `formsdenied` admin, whose firestore-forms reads the EMULATOR-ONLY
+//            rules refuse (ci/overlay/firestore.rules, custom claim e2eDenyForms) — a real server refusal, the
+//            path a production read failure takes. (Aborting the browser's requests does NOT work: the SDK goes
+//            offline and getDocs resolves EMPTY from cache, so no error and no notice — CI 2026-10-17.)
 //
 // SEEDED WORLD: none of its own — the profiles seed's admin + the /view-participants-form grant. These cases
 // assert the panel's own state machine, not form data: toggles are query filters that only take effect on
@@ -22,20 +24,14 @@
 // computed by the component (activeFilterCount / hasPendingChanges vs the last-applied snapshot). The
 // negative control is the round-trip: toggling back to the applied state must remove the pill without a
 // fetch — proving the pill compares against the snapshot rather than latching on any click.
-import { test, expect, Page } from '@playwright/test';
-import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
-
-/** Abort the browser's requests to the firestore-forms database ONLY (default-db traffic is untouched), so the
- *  screen's formsByClient read fails deterministically on either lane. */
-async function failFormsDbReads(page: Page) {
-  await page.route((url) => /databases(%2F|\/)firestore-forms/i.test(url.toString()), (r) => r.abort());
-}
+import { test, expect } from '@playwright/test';
+import { installProfileStubs, loginAsProfileAdmin, loginAsFormsDenied } from './support/profiles';
 
 test.describe('View Participants Form — filter panel (active count, pending changes, fetch)', () => {
   test.beforeEach(async ({ page }) => {
     await installProfileStubs(page);
-    if (test.info().title.startsWith('VPF-F03')) await failFormsDbReads(page); // before the on-load fetch
-    await loginAsProfileAdmin(page);
+    if (test.info().title.startsWith('VPF-F03')) await loginAsFormsDenied(page); // its on-load forms read is refused
+    else await loginAsProfileAdmin(page);
     await page.goto('/view-participants-form', { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('vpf-filter-panel'), 'the filter panel must render').toBeVisible({ timeout: 30_000 });
     // The screen fetches on load; wait for that fetch to settle (success or failure) before clicking.

@@ -218,6 +218,7 @@ async function seedPiWorld(db) {
 // Actors. profileids are run-prefixed; emails follow the actors.ts convention `<role>+<run>@example.com`.
 const PF = {
   admin: `${TESTRUNID}_pf_admin`,
+  formsdenied: `${TESTRUNID}_pf_formsdenied`,   // VPF-F03 only: the emulator rules refuse this user's forms-db reads
   p0: `${TESTRUNID}_pf_p0`,
   p1: `${TESTRUNID}_pf_p1`,
   p2: `${TESTRUNID}_pf_p2`,
@@ -225,6 +226,7 @@ const PF = {
 };
 const EMAIL = {
   admin: `admin+${TESTRUNID}@example.com`,
+  formsdenied: `formsdenied+${TESTRUNID}@example.com`,
   p0: `participant0+${TESTRUNID}@example.com`,
   p1: `participant1+${TESTRUNID}@example.com`,
   p2: `participant2+${TESTRUNID}@example.com`,
@@ -243,7 +245,12 @@ function roster() {
   const mk = (key, roles, role, name) => ({
     uid: `${TESTRUNID}_u_${key}`, profileid: PF[key], email: EMAIL[key], role: role || key, roles, name,
   });
-  const staff = [mk('admin', ['admin', 'ah', 'developer'], 'admin', `Profiles Admin ${TESTRUNID}`)];
+  const staff = [
+    mk('admin', ['admin', 'ah', 'developer'], 'admin', `Profiles Admin ${TESTRUNID}`),
+    // Same roles as admin; its token carries e2eDenyForms (set below) so ci/overlay/firestore.rules refuses its
+    // firestore-forms reads — a REAL server refusal for VPF-F03's "Could not fetch forms" path, emulator only.
+    mk('formsdenied', ['admin', 'ah', 'developer'], 'admin', `Profiles Forms Denied ${TESTRUNID}`),
+  ];
   const participants = [
     mk('p0', ['participant'], 'participant', NAME.p0),
     mk('p1', ['participant'], 'participant', NAME.p1),
@@ -304,6 +311,8 @@ async function seedProfiles() {
   //    actor (name = the email) — we OVERWRITE the participants' profile_data below with our friendly
   //    NAME + the fields the profile screens read (number/participantmode/customerstatus).
   await seed.seedAuthChain(db, auth, TESTRUNID, { staff, operators: [], participants });
+  // setCustomUserClaims REPLACES the claims, so keep the two seedAuthChain wrote.
+  await auth.setCustomUserClaims(`${TESTRUNID}_u_formsdenied`, { testrunid: TESTRUNID, role: 'admin', e2eDenyForms: true });
 
   // 2) Dashboard grants for THIS group's routes.
   const staffProfileIds = staff.map((s) => s.profileid);
