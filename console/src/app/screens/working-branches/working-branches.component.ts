@@ -331,6 +331,31 @@ export class WorkingBranchesComponent {
     return ps[env] ?? null;
   }
 
+  /**
+   * A flutter candidate stores the Storage OBJECT PATH for its APKs, not a URL (v3 plan §5), so the
+   * stage-1 link cannot be a plain href — it is resolved on click, behind the org-email Storage
+   * rule. Web repos still store a real channel URL and keep the plain anchor.
+   */
+  isApkRef(ch: ChannelFacet): boolean {
+    return !!ch.url && !/^https?:\/\//i.test(ch.url);
+  }
+
+  /** Resolve the stored APK path to a download URL and hand it to the browser. */
+  async openApk(ch: ChannelFacet, env: 'dev' | 'prod'): Promise<void> {
+    if (!ch.url) return;
+    const url = await this.fb.artifactUrl(ch.url);
+    if (!url) {
+      this.toast.show(
+        false,
+        this.fb.useMock
+          ? 'Mock mode — no APK is actually stored.'
+          : `Could not resolve the ${env} APK. A newer push may have replaced it.`,
+      );
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
   bcChannelTone(ch: ChannelFacet): string {
     return ch.status === 'SUCCESS' ? 'ok' : ch.status === 'FAILED' ? 'bad' : 'active';
   }

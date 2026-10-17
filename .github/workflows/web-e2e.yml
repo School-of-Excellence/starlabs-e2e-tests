@@ -212,9 +212,29 @@ jobs:
           for i in $(seq 1 120); do curl -sf http://localhost:4200 >/dev/null 2>&1 && break; sleep 3; done
           if ! curl -sf http://localhost:4200 >/dev/null 2>&1; then echo "::error::app failed to serve on :4200"; tail -60 /tmp/app.log; exit 1; fi
 
+      # ── HUB-AHEAD RULE, run-time half (operator decision D2, 2026-10-17) ──────────────────────────
+      # Drop spec files that reference data-testid hooks THIS app checkout does not declare: their
+      # feature is still on another branch (its tests reached hub main first) and can only fail here.
+      # Real drift (a hook this branch removed) is blocked earlier by readiness (NEEDS_UPDATE), so a skip
+      # is never a hidden breakage. Skips are listed in the job summary. When every spec is skipped,
+      # LANDED_NONE=1 stops the gate from falling back to run-isolated's "whole directory" default.
+      - name: Skip specs whose hooks have not landed on this branch
+        id: landed
+        if: inputs.suite != 'unit'
+        run: |
+          SPECS="${ONLY:-$(cd e2e && find "${SUITE_DIR:-queue}" -name '*.spec.ts' | sort | tr '\n' ' ')}"
+          KEPT="$(node e2e/scripts/readiness/landed-specs.cjs --hub e2e --app "$GITHUB_WORKSPACE" --specs "$SPECS")"
+          if [ -z "$KEPT" ]; then
+            echo "LANDED_NONE=1" >> "$GITHUB_ENV"
+            echo "No spec in this suite can run on this branch — gate skipped."
+          else
+            echo "ONLY=$KEPT" >> "$GITHUB_ENV"
+            echo "Running: $KEPT"
+          fi
+
       - name: Run isolated e2e suite (the gate)   # ── CHANGE 4 (was "Run isolated queue e2e suite") ──
         id: gate
-        if: inputs.suite != 'unit'
+        if: inputs.suite != 'unit' && env.LANDED_NONE != '1'
         run: cd e2e && EMU_REUSE=1 EMU_REUSE_APP=1 TESTRUNID=run1 bash scripts/run-isolated.sh
         # ↑ run-isolated.sh now reads CONFIG + SUITE_DIR from the env (set above). No per-suite change here.
 
@@ -284,7 +304,7 @@ jobs:
           STAGE="${STAGE:-gate}" \
           CF_REPO="${CF_REPO:-starlabs-cloud-function}" \
           CF_BRANCH="${CF_BRANCH:-development}" \
-          RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
+          RESULT="${{ steps.gate.outcome == 'success' && 'pass' || (env.LANDED_NONE == '1' && 'unknown' || 'fail') }}" \
           REPORT_DIR=playwright-report \
           ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \

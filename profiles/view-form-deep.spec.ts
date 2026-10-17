@@ -26,11 +26,9 @@ test.describe('Profiles — view-participants-form like toggle (deep, forms-DB w
   // PA-14 — like toggle writes liked:true to formsByClient (forms DB)
   // ===========================================================================================
   test('PA-14 clicking the like button writes liked:true to formsByClient (the app wrote to the forms DB)', async ({ page }) => {
-    // EMULATOR LIMITATION: this drives the app's CLIENT read + write of `formsByClient` in the `firestore-forms`
-    // NAMED DB. The Firestore emulator does not support named databases / per-named-db rules yet, so the named
-    // db has no permissive rules → client access defaults to DENY (Admin seeds still reach it). The real
-    // toggleLike forms-DB write is validated against the CLOUD test project (playwright.profiles.config.ts).
-    test.skip(!!process.env.FIRESTORE_EMULATOR_HOST, 'EMULATOR LIMITATION: firestore-forms named DB has no rules in the emulator (multi-db unsupported) → client read/write denied; runs on the cloud config.');
+    // 2026-10-17: the emulator build now connects the `firestore-forms` named DB (src/main.ts), so the forms-DB read + toggleLike write runs on the
+    // emulator too. The old skip ("multi-db unsupported → client read denied") was a misdiagnosis: the emulator
+    // serves named DBs to the client fine — the app simply never pointed this handle at it.
     // Precondition (anti-circular): reset the seeded row's `liked` to a KNOWN baseline (false) in the
     // forms DB, and verify it — the value we then assert is what the APP writes on the real click.
     await resetFormLike(profDocIds.FBC0, false);

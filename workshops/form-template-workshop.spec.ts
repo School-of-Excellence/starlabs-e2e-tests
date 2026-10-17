@@ -70,10 +70,8 @@ test.describe('Workshops — form template workshop (real UI, anti-circular)', (
   // WS-27 — draft save writes a temporary_forms doc in the firestore-forms NAMED DB
   // ===========================================================================================
   test('WS-27 saving a draft writes to the firestore-forms named database', async ({ page }) => {
-    test.skip(
-      !!process.env.FIRESTORE_EMULATOR_HOST,
-      'EMULATOR LIMITATION: firestore-forms named DB has no rules in the emulator (multi-db unsupported) → client read/write denied; runs on the cloud config.',
-    );
+    // 2026-10-17: the emulator build now connects the `firestore-forms` named DB (src/main.ts), so this draft write
+    // runs on the emulator too. The old skip ("multi-db unsupported → denied") was a misdiagnosis.
 
     await loginAsWshopAdmin(page);
     await page.goto(`/formtemplateworkshop?id=${wsAddIds.DF_A}`, { waitUntil: 'domcontentloaded' });

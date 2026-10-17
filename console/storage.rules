@@ -22,6 +22,21 @@ service firebase.storage {
       allow write: if false;   // server-only (record-run.cjs Admin SDK)
     }
 
+    // Branch APKs (flutter v3 plan 2026-10-13). One object per branch per env, replaced on every
+    // push:  apks/<branch>/{dev,prod}.apk
+    //
+    // READ is the console's own gate, nothing more: the console calls getDownloadURL() at click time
+    // and hands the tester the result. WHY not a public/token URL instead — the PROD-env APK is built
+    // from unreviewed feature code against fir-sample-aae4a (live customer data), and it is a signed,
+    // redistributable binary. A capability URL for that is a worse trade than one auth hop.
+    //
+    // WRITE stays server-only: CI uploads with a bearer token straight to the GCS JSON API, which
+    // bypasses these rules entirely — the same path scripts/history/record-run.cjs already takes.
+    match /apks/{allPaths=**} {
+      allow read: if orgEmail();
+      allow write: if false;
+    }
+
     // Default deny for every other object in the bucket.
     match /{allPaths=**} {
       allow read, write: if false;

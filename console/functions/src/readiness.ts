@@ -53,8 +53,21 @@ const GITHUB_APP_INSTALLATION_ID = process.env.GITHUB_APP_INSTALLATION_ID ?? 'TO
  */
 const BRANCH_SUITES_WORKFLOW = 'branch-suites.yml';
 
-/** Mirrors INGEST_REPO_ALLOWLIST in index.ts — kept local so this module has no import cycle. */
-const REPO_ALLOWLIST = new Set(['starlabs-angular', 'starlabs-cloud-function', 'starlabs-e2e-tests']);
+/**
+ * Repos allowed to post to the NEW-flow ingest endpoints. Kept local so this module has no import
+ * cycle with index.ts.
+ *
+ * This is NOT the same list as index.ts's INGEST_REPO_ALLOWLIST, which gates the WEB-preview-URL
+ * ingest and deliberately EXCLUDES flutter (it has no hosting channel). `breakthroughs-flutter`
+ * belongs here and only here (v3 plan 2026-10-13): it publishes branch APKs and suite results
+ * through these endpoints, never a preview URL.
+ */
+const REPO_ALLOWLIST = new Set([
+  'starlabs-angular',
+  'starlabs-cloud-function',
+  'starlabs-e2e-tests',
+  'breakthroughs-flutter',
+]);
 
 /**
  * A channel URL must be a real Firebase Hosting preview channel on one of OUR sites:
@@ -64,6 +77,27 @@ const REPO_ALLOWLIST = new Set(['starlabs-angular', 'starlabs-cloud-function', '
  * PREVIEW_URL_RE only knows the dev form, which is why these endpoints validate their own.
  */
 const CHANNEL_URL_RE = /^https:\/\/(breakthroughs-test|star-labs)--[a-z0-9-]+\.web\.app\/?$/;
+
+/**
+ * breakthroughs-flutter has no hosting channel. It publishes one APK per env and stores the Storage
+ * OBJECT PATH, not a URL (v3 plan §5): a V4 signed URL expires after 7 days, and a pinned download
+ * token would be a PUBLIC capability URL for a signed binary built against live customer data. The
+ * console mints a download URL at click time behind the org-email Storage rule, so a path is what
+ * lands here. Shape: `apks/<branch>/<env>.apk` — the branch keeps its slashes.
+ */
+const APK_OBJECT_RE = /^apks\/[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.apk$/;
+
+/**
+ * A channel ref is EITHER a real hosting channel URL (web repos) OR an `apks/` object path
+ * (flutter). The wire field stays `url` so the Angular workflows need no change.
+ */
+function channelRefOk(v: string): boolean {
+  if (CHANNEL_URL_RE.test(v)) return true;
+  if (!APK_OBJECT_RE.test(v)) return false;
+  // The per-segment charset allows a literal '..' (dot is legal in a filename), so reject traversal
+  // explicitly rather than relying on the regex to have excluded it.
+  return !v.split('/').includes('..');
+}
 
 const RUN_STATES = new Set(['RUNNING', 'PASSED', 'FAILED']);
 
@@ -191,8 +225,8 @@ export const recordBranchChannel = onRequest(
     }
 
     const url = str(body.url, 300);
-    if (url && !CHANNEL_URL_RE.test(url)) {
-      res.status(400).json({ ok: false, error: 'invalid channel url' });
+    if (url && !channelRefOk(url)) {
+      res.status(400).json({ ok: false, error: 'invalid channel url or apk path' });
       return;
     }
     if (status === 'SUCCESS' && !url) {

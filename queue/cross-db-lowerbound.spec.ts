@@ -211,7 +211,8 @@ test.describe('Cross-DB lower bound — SS-07 live-panel widget shows the EXACT 
   //   and reads 0 by design regardless).
   // ===========================================================================================
   test('Forms widget renders the EXACT seeded non-zero count from firestore-forms (catches secondary-DB silent zero)', async ({ page }) => {
-    test.skip(!!process.env.FIRESTORE_EMULATOR_HOST, 'EMULATOR LIMITATION: src/main.ts connects only the (default) Firestore to the emulator, not the firestore-forms named DB, so this cross-DB read escapes to no backend (widget = 0) — this case runs on the cloud target where the named DB is reachable.');
+    // 2026-10-17: FIXED as this note prescribed — src/main.ts now connects the firestore-forms named DB in the
+    // emulator build, so the skip is removed and the assertion runs unchanged (it must NOT be loosened).
     // --- PRECONDITION SETUP (allowed: configure the queue + token so the product's real cross-DB
     //     forms path executes against the seeded fixture; the spec then asserts what the APP rendered). ---
 

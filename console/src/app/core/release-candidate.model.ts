@@ -67,7 +67,15 @@ export type ChannelStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
 /** One hosting channel built from a branch commit. */
 export interface ChannelFacet {
   status: ChannelStatus;
-  /** The REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED. */
+  /**
+   * WEB repos: the REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED.
+   *
+   * FLUTTER (v3 plan 2026-10-13 §5): the Storage OBJECT PATH of the branch APK,
+   * `apks/<branch>/<env>.apk` — NOT a URL. A signed URL would expire and a pinned download token
+   * would be a public capability URL for a binary built against live data, so the console resolves
+   * the path to a download URL at click time. Tell them apart by shape: an http(s) prefix means
+   * anchor, anything else means resolve-then-open (`isApkRef` in working-branches).
+   */
   url?: string | null;
   project?: string | null;
   site?: string | null;

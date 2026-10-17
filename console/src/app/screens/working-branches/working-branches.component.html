@@ -77,10 +77,15 @@
                     @for (env of BC_ENVS; track env) {
                       @if (bcChannel(ps, env); as ch) {
                         @if (ch.url) {
-                          <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener"
-                             [title]="env + ' channel · ' + (ch.project || '')">{{ env }} ↗</a>
+                          @if (isApkRef(ch)) {
+                            <button class="ghlink sm" (click)="openApk(ch, env)"
+                                    [title]="env + '-env APK · ' + ch.url">{{ env }} apk ↓</button>
+                          } @else {
+                            <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener"
+                               [title]="env + ' channel · ' + (ch.project || '')">{{ env }} ↗</a>
+                          }
                         } @else {
-                          <span class="st-fail" [title]="env + ' channel failed'">{{ env }} ✕</span>
+                          <span class="st-fail" [title]="env + ' build failed'">{{ env }} ✕</span>
                         }
                       }
                     }

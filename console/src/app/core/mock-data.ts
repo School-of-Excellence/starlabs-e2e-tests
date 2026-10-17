@@ -188,6 +188,53 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     updatedAt: '2026-06-21T12:16:00Z',
   },
 
+  // 4b) FLUTTER on the v3 flow (plan 2026-10-13): two branch APKs in Storage, suite check n/a,
+  //      suites passed → approvable. Stage 1 renders DOWNLOAD BUTTONS rather than anchors, because
+  //      previewStatus carries the Storage OBJECT PATH instead of a URL (§5). No mobileDelivery and
+  //      no web preview facet: v3 drives stage 1 from previewStatus alone.
+  {
+    id: 'breakthroughs-flutter__feature/offline-cache',
+    repo: 'breakthroughs-flutter',
+    branch: 'feature/offline-cache',
+    headSha: 'f1f1aaa',
+    headCommit: { msg: 'Cache lesson media offline', author: 'mobile@soexcellence.com', at: '2026-10-12T09:00:00Z' },
+    preview: { buildState: 'NONE' },
+    previewStatus: {
+      sha: 'f1f1aaa',
+      commitMsg: 'Cache lesson media offline',
+      author: 'mobile@soexcellence.com',
+      runId: '910007',
+      runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910007',
+      updatedAt: 1760259600000,
+      dev: { status: 'SUCCESS', url: 'apks/feature/offline-cache/dev.apk', project: 'starlabs-test', deployedAt: 1760259600000 },
+      prod: { status: 'SUCCESS', url: 'apks/feature/offline-cache/prod.apk', project: 'fir-sample-aae4a', deployedAt: 1760259600000 },
+    },
+    testSuiteStatus: {
+      state: 'NOT_APPLICABLE',
+      canProceed: true,
+      sha: 'f1f1aaa',
+      checkedAt: 1760259600000,
+      suites: [],
+      run: {
+        state: 'PASSED',
+        sha: 'f1f1aaa',
+        passed: 18,
+        failed: 0,
+        startedAt: 1760259900000,
+        finishedAt: 1760260140000,
+        runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910008',
+      },
+    },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
+    derivedStatus: 'NO_ACTION',
+    lastActivity: { type: 'push', sha: 'f1f1aaa', actor: 'mobile@soexcellence.com', at: '2026-10-12T09:00:00Z' },
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-10-12T09:09:00Z',
+  },
+
   // 5) Tester signed off for dev — developer may open PR → dev.
   {
     id: 'starlabs-angular__feature/profile-cohorts',

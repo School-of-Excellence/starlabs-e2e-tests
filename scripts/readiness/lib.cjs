@@ -218,21 +218,69 @@ function appSelectorIndex(appRoot) {
 }
 
 /**
- * Selectors a suite drives that the app no longer declares.
- * Two passes: the direct `data-testid="x"` index, then a quoted-literal search so bound forms
- * (`[attr.data-testid]="'x'"`) still resolve.
+ * Is `id` declared by the app index? Two passes: the direct `data-testid="x"` index, then a
+ * quoted-literal search so bound forms (`[attr.data-testid]="'x'"`) still resolve.
+ */
+function isDeclared(index, id) {
+  if (index.declared.has(id)) return true;
+  const quoted = [`"${id}"`, `'${id}'`];
+  return index.blobs.some((b) => quoted.some((q) => b.includes(q)));
+}
+
+/**
+ * Selectors a suite drives that the app under test does not declare.
+ * Returns `{ checked, drifted, notLanded }` — `notLanded` is always [] here; use splitByBase() to move
+ * "never existed on the base" selectors out of `drifted`.
  */
 function findDriftedSelectors(hubRoot, appRoot, manifest, suiteKeys) {
   const used = selectorsUsedBySuites(hubRoot, manifest, suiteKeys);
-  const { declared, blobs } = appSelectorIndex(appRoot);
+  const index = appSelectorIndex(appRoot);
   const drifted = [];
   for (const [id, specFiles] of used) {
-    if (declared.has(id)) continue;
-    const quoted = [`"${id}"`, `'${id}'`];
-    if (blobs.some((b) => quoted.some((q) => b.includes(q)))) continue;
+    if (isDeclared(index, id)) continue;
     drifted.push({ id, usedBy: specFiles.map((f) => path.relative(hubRoot, f)) });
   }
-  return { checked: used.size, drifted };
+  return { checked: used.size, drifted, notLanded: [] };
+}
+
+/**
+ * HUB-AHEAD RULE (operator decision D2, 2026-10-17 — specs/plans/2026-10-17-atc-live-screens.md).
+ * A selector missing from this branch is real DRIFT only if the BASE (development) declares it — i.e.
+ * this diff removed or renamed it. A selector the base never had belongs to a feature that has not
+ * landed on development yet (its specs were pushed to hub main ahead of the app code, from ANOTHER
+ * branch); that is not this branch's doing, so it is reported as `notLanded` and does not block.
+ * Without this, one team's hub tests block every other team's cross-cutting branch, and switching the
+ * suite off blocks the owner instead (both happened in the week of 2026-10-13).
+ *
+ * `baseHas(id)` → true when the base declares `id`. When it is null/undefined (the base could not be
+ * read) every missing selector stays in `drifted` — the conservative, blocking direction.
+ */
+function splitByBase(drift, baseHas) {
+  if (typeof baseHas !== 'function') return { ...drift, notLanded: drift.notLanded || [] };
+  const drifted = [];
+  const notLanded = [...(drift.notLanded || [])];
+  for (const d of drift.drifted) (baseHas(d.id) ? drifted : notLanded).push(d);
+  return { checked: drift.checked, drifted, notLanded };
+}
+
+/**
+ * The spec-file half of the HUB-AHEAD RULE: of `specFiles` (paths relative to `hubRoot`), which use only
+ * hooks the app under test declares (`kept`), and which reference at least one hook it does not
+ * (`skipped`, with the missing ids). Run time drops `skipped` so a not-landed feature's specs never run
+ * against a branch that cannot have them. Literal references only (`data-testid="x"`, `getByTestId('x')`),
+ * the same forms the readiness check reads.
+ */
+function partitionSpecsByLandedHooks(hubRoot, appRoot, specFiles) {
+  const index = appSelectorIndex(appRoot);
+  const kept = [];
+  const skipped = [];
+  for (const rel of specFiles) {
+    const abs = path.join(hubRoot, rel);
+    if (!fs.existsSync(abs)) { kept.push(rel); continue; } // let the runner report a bad path itself
+    const missing = [...hooksIn(fs.readFileSync(abs, 'utf8'))].filter((id) => !isDeclared(index, id));
+    (missing.length ? skipped : kept).push(missing.length ? { spec: rel, missing } : rel);
+  }
+  return { kept, skipped };
 }
 
 // --- element-level coverage --------------------------------------------------
@@ -447,6 +495,10 @@ module.exports = {
   classifyChanges,
   selectorsUsedBySuites,
   findDriftedSelectors,
+  splitByBase,
+  partitionSpecsByLandedHooks,
+  appSelectorIndex,
+  isDeclared,
   findUntestedNewComponents,
   hooksIn,
   allSpecHookRefs,

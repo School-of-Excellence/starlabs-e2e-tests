@@ -29,6 +29,22 @@ export const MODEL_DIRECTIVE = S.MODEL_DIRECTIVE;
 export const ATC = S.ATC;
 export const QUEUE_NAME: string = S.QUEUE_NAME;
 export const RECOMMEND_NAME = `Recommend Self ${S.RUN}`;
+// phase 2 (2026-10-17) — the 14 live ATC screens
+export const ATC2 = S.ATC2;
+export const PA = S.PA;
+export const PFM_M: string = S.PFM_M;
+export const LRX_DRAFT: string = S.LRX_DRAFT;
+export const TRA2_DRAFT: string = S.TRA2_DRAFT;
+export const EIA = S.EIA;
+export const ATE_QUEUE_NAME: string = S.ATE_QUEUE_NAME;
+export const TRIPLE_QUEUE_NAME: string = S.TRIPLE_QUEUE_NAME;
+export const AI_ADJ: string = S.AI_ADJ;
+/** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
+export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
+  const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);
+  await popup.waitForLoadState('domcontentloaded');
+  return popup;
+}
 export const PASSWORD = 'Test!1234';
 
 /** users_roles.name == the actor's email (seedAuthChain), so that is the label every picker renders. */
@@ -83,20 +99,36 @@ export async function installAtcGuards(page: Page, opts: { confirmAnswer?: boole
   await installProdFirewall(page);
   installAllExternalStubs(page);
   // G2 — EVERY request to a real Firestore/Storage backend is aborted. Database-shaped ones fail the test.
-  await page.route(REAL_DB, (route) => {
+  const g2 = (route) => {
     const req = route.request();
     if (req.method() === 'GET' && STATIC_ASSET.test(req.url())) guard.staticAssetBlocks.push(req.url());
     else guard.realDbHits.push(`${req.method()} ${req.url()}`);
     return route.abort();
-  });
+  };
   // Connectivity probes the ATC screens poll (NetworkStatusService / ConnectivityGuardService). A sandbox
   // that blocks them would show "You're offline" and block submit — stub both as healthy.
-  await page.route(/jsonplaceholder\.typicode\.com/i, (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' }));
-  await page.route(/gstatic\.com\/generate_204/i, (r) => r.fulfill({ status: 204, body: '' }));
-  page.on('dialog', async (d) => {
+  const json200 = (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  const ok204 = (r) => r.fulfill({ status: 204, body: '' });
+  const onDialog = async (d) => {
     guard.dialogs.push(`${d.type()}: ${d.message()}`);
     try { d.type() === 'confirm' && !guard.confirmAnswer ? await d.dismiss() : await d.accept(); } catch { /* already handled */ }
-  });
+  };
+  // PAGE level: registered after the prod firewall's page-level catch-all, so these win for this page.
+  await page.route(REAL_DB, g2);
+  await page.route(/jsonplaceholder\.typicode\.com/i, json200);
+  await page.route(/gstatic\.com\/generate_204/i, ok204);
+  page.on('dialog', onDialog);
+  // CONTEXT level (2026-10-17): POPUPS (window.open — Edit links, version buttons, preview links) are new pages
+  // with no page routes, so G2 + stubs + the dialog handler must also cover the whole context. (Page routes take
+  // precedence over context routes, which is why the page-level copies above are kept for the main page.)
+  const ctx: any = page.context();
+  if (!ctx.__atcGuarded) {
+    ctx.__atcGuarded = true;
+    await ctx.route(REAL_DB, g2);
+    await ctx.route(/jsonplaceholder\.typicode\.com/i, json200);
+    await ctx.route(/gstatic\.com\/generate_204/i, ok204);
+    ctx.on('page', (p) => { if (p !== page) p.on('dialog', onDialog); });
+  }
   return guard;
 }
 

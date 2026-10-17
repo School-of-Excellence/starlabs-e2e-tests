@@ -455,7 +455,14 @@ export class FirebaseService {
     }
   }
 
-  /** Resolve a gs:// artifact (failure screenshot / video) to a tokened download URL. */
+  /**
+   * Resolve a Storage object path to a tokened download URL.
+   *
+   * Used for gs:// test artifacts (failure screenshot / video) AND for branch APKs, which store the
+   * object path `apks/<branch>/<env>.apk` rather than a URL (flutter v3 plan §5) — a signed URL
+   * would expire and a pinned token would be a public capability URL for a binary built against
+   * live data. Both reads are gated by the org-email rule in storage.rules.
+   */
   async artifactUrl(gsPath: string): Promise<string | null> {
     if (this.useMock) return null;
     try {
