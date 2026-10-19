@@ -35,6 +35,9 @@ on:
         required: false
       STARLABS_CICD_SA:
         required: false
+      FIREBASE_TOKEN:
+        description: 'firebase login:ci token — generates lib/firebase_options.dart, which is gitignored'
+        required: false
       CONSOLE_INGEST_URL:
         description: 'Base URL of the console ingest functions (recordSuiteStatus / recordSuiteRun)'
         required: false
@@ -101,6 +104,39 @@ jobs:
 
       - name: flutter pub get
         run: flutter pub get
+
+      # lib/firebase_options.dart is GITIGNORED (public repo, operator directive 2026-07-15) and
+      # main.dart, Services/BackgroundService.dart and two integration tests import it. A clean CI
+      # clone therefore has no such file and `flutter analyze` fails with 8 uri_does_not_exist /
+      # undefined_identifier errors — which is exactly what the first real run did (2026-10-19).
+      #
+      # Generate it, the same way branch-apks.yml does, so there is ONE mechanism rather than two.
+      # The project here is immaterial to analysis — the gate only needs the file to exist and declare
+      # DefaultFirebaseOptions — so it points at the non-production project. Android only: the gate
+      # never builds for iOS, and each extra platform costs time for nothing.
+      - name: Install FlutterFire CLI
+        run: |
+          dart pub global activate flutterfire_cli
+          npm install -g firebase-tools
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Generate lib/firebase_options.dart
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "::error::FIREBASE_TOKEN is not set. The gate cannot generate lib/firebase_options.dart,"
+            echo "::error::which main.dart imports — analyze would fail with 8 undefined-identifier errors."
+            echo "::error::Add FIREBASE_TOKEN to the calling repository's secrets (firebase login:ci)."
+            exit 1
+          fi
+          flutterfire configure \
+            --project=starlabs-test \
+            --platforms=android \
+            --android-package-name=com.soe.launchyourlegacy \
+            --out=lib/firebase_options.dart \
+            --yes
+          test -f lib/firebase_options.dart && echo "generated lib/firebase_options.dart"
 
       # HARD GATE, errors only (2026-10-17). `flutter analyze` fails on ANY finding by default, which
       # made it unusable here: the project reports ~1,850 issues, nearly all `info`-level lints. The two
