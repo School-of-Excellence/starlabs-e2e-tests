@@ -493,7 +493,17 @@ export interface ActivityLogEntry {
  * on Overview. A candidate for one of these only exists to hold deploy health.
  */
 export function isProtectedBranch(branch: string): boolean {
-  return branch === 'development' || branch === 'production';
+  return (
+    branch === 'development' ||
+    branch === 'production' ||
+    // NOT deployment environments — out of the flow entirely (2026-10-19). A push to `main` can still
+    // create a candidate (a webhook for any branch does), and without this it would render in Working
+    // Branches as if it were someone's feature branch, with stage badges nobody will ever act on.
+    // Every caller uses this as `!isProtectedBranch(...)`, i.e. "is this a feature candidate?", so
+    // widening it here hides these branches from every feature-facing list at once.
+    branch === 'main' ||
+    branch === 'master'
+  );
 }
 
 /**
