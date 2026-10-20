@@ -214,7 +214,9 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       canProceed: true,
       sha: 'f1f1aaa',
       checkedAt: 1760259600000,
-      suites: [],
+      // Mirrors what the gate posts: NOT_APPLICABLE (no per-suite mapping for flutter yet) but with
+      // the checks that DID run named, so the card says something rather than just "n/a".
+      suites: ['analyze', 'flutter test'],
       run: {
         state: 'PASSED',
         sha: 'f1f1aaa',

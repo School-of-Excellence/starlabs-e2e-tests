@@ -83,7 +83,8 @@ jobs:
           }
           post recordSuiteStatus "$(jq -nc --arg r "$REPO" --arg b "$BRANCH" --arg s "$SHA" \
             --arg ri '${{ github.run_id }}' --arg ru "$RUN_URL" \
-            '{repo:$r,branch:$b,state:"NOT_APPLICABLE",canProceed:true,sha:$s,runId:$ri,runUrl:$ru,suites:[]}')"
+            '{repo:$r,branch:$b,state:"NOT_APPLICABLE",canProceed:true,sha:$s,runId:$ri,runUrl:$ru,
+               suites:["analyze","flutter test"]}')"
           post recordSuiteRun "$(jq -nc --arg r "$REPO" --arg b "$BRANCH" --arg s "$SHA" \
             --arg ri '${{ github.run_id }}' --arg ru "$RUN_URL" \
             '{repo:$r,branch:$b,state:"RUNNING",sha:$s,reportRunId:$ri,runUrl:$ru}')"

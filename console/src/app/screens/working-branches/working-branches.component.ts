@@ -472,7 +472,13 @@ export class WorkingBranchesComponent {
     if (!ts) return { text: 'Waiting for the first push to report.', tone: 'none' };
     if (ts.state === 'CHECKING') return { text: 'Checking suite coverage…', tone: 'active' };
     if (ts.state === 'NOT_APPLICABLE') {
-      return { text: 'No app code changed — nothing to test.', tone: 'none' };
+      // For a web repo this genuinely means a docs/CI-only diff. For FLUTTER it means something else
+      // entirely: the gate DID run (analyze + flutter test over the whole project), there is simply no
+      // per-suite coverage mapping yet (v3 plan D10 — deferred to the native-suite work). Saying
+      // "nothing to test" there is wrong on both counts and reads as "the console has no data".
+      return this.isFlutter(rc)
+        ? { text: 'Analyze and unit tests ran over the whole project. No per-suite coverage mapping for Flutter yet.', tone: 'none' }
+        : { text: 'No app code changed — nothing to test.', tone: 'none' };
     }
     if (!ts.canProceed) return { text: `Blocked — ${this.bcSuiteDetail(ts)}`, tone: 'bad' };
     if (!run) return { text: 'Coverage matched. Dispatching the test suites…', tone: 'active' };
