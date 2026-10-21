@@ -108,6 +108,8 @@ const PI = {
   LIST2: `${TESTRUNID}_PI_LIST2`,             // [Echo]
   SEG: `${TESTRUNID}_PI_SEG`,                 // segment = LIST ∪ LIST2
   SQ: `${TESTRUNID}_PI_SQ`,                   // saved filter: customerstatus [non active]
+  SQ2: `${TESTRUNID}_PI_SQ2`,                 // saved filter: financialstatus [regular] — the 2nd pipeline (PI-19)
+  SQ_DEL: `${TESTRUNID}_PI_SQ_DEL`,           // throwaway saved filter the soft-delete case deletes (PI-22)
   SB_ON: `${TESTRUNID}_PI_SB_on`,             // live journey segment, saved list [Bravo, Delta]
   SB_OFF: `${TESTRUNID}_PI_SB_off`,           // INACTIVE segment, saved list [Alpha] — never an option
 };
@@ -118,8 +120,24 @@ const PI_NAME = {
   TAG_HELD: `${PI_SEARCH}Held Tag`, TAG_KEEP: `${PI_SEARCH}Keep Tag`,
   LIST: `${PI_SEARCH}List`, LIST2: `${PI_SEARCH}List Two`, SEG: `${PI_SEARCH}Segment`,
   SQ: `${PI_SEARCH}Saved Non Active`,
+  // SQ2 / SQ_DEL deliberately do NOT start with PI_SEARCH: PI-13 asserts the rail's saved-filter search
+  // finds exactly one filter for it.
+  SQ2: `PIPE-${TESTRUNID}-Regular`, SQ_DEL: `PIDEL-${TESTRUNID}-Throwaway`,
   SB_ON: `${PI_SEARCH}Board Segment`, SB_OFF: `${PI_SEARCH}Retired Segment`,
 };
+
+// ---- Product subscription world (PI-21) — its OWN four people, never the six above. ------------------
+// Writing participantsproduct fires productsdata_to_pmd, which RECOMPUTES the holder's activeproduct /
+// consumedproducts from their rows. That would overwrite Bravo's seeded consumedproducts [P1,P1] that PI-11
+// and PI-18 count on, so these rows hang off people that exist only for this case. Product = ID.P1; dates
+// are local whole days relative to today, the spec's range is [today-15, today-5], relation "Start between":
+//   PS_A  one ongoing doc, starts today-10                  → IN
+//   PS_B  starts today-10 but status 'Cancelled' (mixed case) → OUT (cancelled / shifted are ignored)
+//   PS_C  starts today-40                                    → OUT (outside the range)
+//   PS_D  TWO ongoing docs, start today-8 and today-12       → IN, one row (profile ids are deduplicated)
+const PSUB_SEARCH = `PSUB-${TESTRUNID}-`;
+const PSUB = { A: `${TESTRUNID}_psub_a`, B: `${TESTRUNID}_psub_b`, C: `${TESTRUNID}_psub_c`, D: `${TESTRUNID}_psub_d` };
+const PSUB_NAME = { A: `${PSUB_SEARCH}Alpha`, B: `${PSUB_SEARCH}Bravo`, C: `${PSUB_SEARCH}Charlie`, D: `${PSUB_SEARCH}Delta` };
 
 /** A date of birth exactly `years` years and 10 days ago (clear of the birthday boundary). */
 function piDob(years) {
@@ -145,6 +163,14 @@ async function resetPiMutables(db) {
   await md.doc(PI.AL).set({ profiletags: [PI.TAG_HELD], remarks: [] }, { merge: true });
   await md.doc(PI.BR).set({ profiletags: [PI.TAG_HELD] }, { merge: true });
   await md.doc(PI.CH).set({ profiletags: [PI.TAG_KEEP], remarks: [] }, { merge: true });
+  // PI-22 soft-deletes this one; a full set() brings it back (drops isdeleted / deletedby / deleteddate).
+  await db.collection('searchquery').doc(PI.SQ_DEL).set({
+    docid: PI.SQ_DEL, label: PI_NAME.SQ_DEL, createdby: PF.admin,
+    customerstatus: ['discontinued'], financialstatus: [], activejourney: [], lastcompletedjourney: [],
+    activeproduct: [], profiletags: [], tier: [], registereduser: [], atccount: null,
+    subscriptionstart: { start: null, end: null }, subscriptionend: { start: null, end: null },
+    ...tag,
+  });
   // the analytics-shaped saved filter (top-level keys, no pifilter) — what both screens read back
   await db.collection('searchquery').doc(PI.SQ).set({
     docid: PI.SQ, label: PI_NAME.SQ, createdby: PF.admin,
@@ -211,6 +237,38 @@ async function seedPiWorld(db) {
   await db.collection('segmentboardconfig').doc(PI.SB_OFF).set({ docid: PI.SB_OFF, name: PI_NAME.SB_OFF, status: 'inactive', displayIndex: 9002, ...tag });
   await db.collection('segmentboardlist').doc(PI.SB_ON).set({ segmentid: PI.SB_ON, profilelist: [PI.BR, PI.DE], lastupdated: now, ...tag });
   await db.collection('segmentboardlist').doc(PI.SB_OFF).set({ segmentid: PI.SB_OFF, profilelist: [PI.AL], lastupdated: now, ...tag });
+
+  // The second pipeline (PI-19): Watson "regular" = Alpha, Bravo, Charlie, Delta. With SQ (non active =
+  // Charlie, Foxtrot): in every pipeline = Charlie only; not in every = Alpha, Bravo, Delta, Foxtrot;
+  // Echo is in neither and must never appear.
+  await db.collection('searchquery').doc(PI.SQ2).set({
+    docid: PI.SQ2, label: PI_NAME.SQ2, createdby: PF.admin,
+    customerstatus: [], financialstatus: ['regular'], activejourney: [], lastcompletedjourney: [],
+    activeproduct: [], profiletags: [], tier: [], registereduser: [], atccount: null,
+    subscriptionstart: { start: null, end: null }, subscriptionend: { start: null, end: null },
+    ...tag,
+  });
+
+  // Product subscription world (see PSUB above).
+  const dayAt = (offset) => { const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() + offset); return d; };
+  for (const k of ['A', 'B', 'C', 'D']) {
+    await db.collection('participant metadata').doc(PSUB[k]).set({
+      docid: PSUB[k], profileid: PSUB[k], name: PSUB_NAME[k], email: `psub-${k.toLowerCase()}+${TESTRUNID}@example.com`,
+      phonenumber: '9999000060', countrycode: '+91', participantmode: 'Discovery Mode', customerstatus: 'active',
+      activeproduct: [], consumedproducts: [], unconsumedproducts: [], profiletags: [], remarks: [], productevent: {},
+      atccount: null, atcmodel: null, ...tag,
+    });
+  }
+  const p1 = db.collection('products').doc(ID.P1);
+  const psubDoc = (id, pid, start, end, status) => db.collection('participantsproduct').doc(id).set({
+    docid: id, profileid: pid, productref: p1, status, mode: 'Priority Mode', sequenceorder: 1,
+    subscriptionstart: dayAt(start), subscriptionend: dayAt(end), ...tag,
+  });
+  await psubDoc(`${TESTRUNID}_psub_pp_a`, PSUB.A, -10, 20, 'ongoing');
+  await psubDoc(`${TESTRUNID}_psub_pp_b`, PSUB.B, -10, 20, 'Cancelled');
+  await psubDoc(`${TESTRUNID}_psub_pp_c`, PSUB.C, -40, -20, 'ongoing');
+  await psubDoc(`${TESTRUNID}_psub_pp_d1`, PSUB.D, -8, 22, 'ongoing');
+  await psubDoc(`${TESTRUNID}_psub_pp_d2`, PSUB.D, -12, 18, 'ongoing');
 
   await resetPiMutables(db);
 }
@@ -608,7 +666,7 @@ async function teardownProfiles() {
   return n;
 }
 
-module.exports = { TESTRUNID, ID, LIST_IDS, SB_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, PI, PI_NAME, PI_SEARCH, resetPiMutables, seedProfiles, teardownProfiles };
+module.exports = { TESTRUNID, ID, LIST_IDS, SB_IDS, PF, EMAIL, NAME, ROUTES, SEEDED, UP_LIFE_REPORT_FORMID, PI, PI_NAME, PI_SEARCH, PSUB, PSUB_NAME, PSUB_SEARCH, resetPiMutables, seedProfiles, teardownProfiles };
 
 if (require.main === module) {
   const mode = process.argv[2];

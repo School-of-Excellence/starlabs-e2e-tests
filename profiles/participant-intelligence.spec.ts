@@ -27,6 +27,17 @@
 // from its holders and deleted, the saved filter's new statuses and label, a tag's new "tag for", a remark
 // on the one participant the bulk scope allowed. resetPiMutables() only restores PRECONDITIONS.
 //
+// 2026-10-21 (rounds 1–5 of the audiences / pipelines work — starlabs-angular specs/journals/2026-10-21-
+// participant-intelligence-audiences-columns-anyall.md; hub journal 2026-10-21-participant-intelligence-
+// pipelines-psub.md):
+//   • option rows are no longer one click-to-cycle button: the label (and an Include pill) includes, an
+//     Exclude pill excludes, clicking the active pill clears. PI-05 drives the pills; every other case
+//     includes through the Include pill (`include()`), never a row click.
+//   • "Update with current filters" asks first, showing what is saved now vs after (PI-13, PI-20).
+//   • PI-18 consumed rules Match all / Match any. PI-19 pipelines (two saved filters → columns, in every /
+//     not in every as unique names, select + Communication menu, never sent). PI-21 product subscription
+//     (its own four people — see PSUB in the seed). PI-22 soft delete: the doc stays, flagged isdeleted.
+//
 // NOT DRIVEN (registered in PI-ADDR1, see there): ATC / uP! / CPM count conditions and the subscription
 // date-range picker. NOT SEEDED on purpose: queue tokens (the queue suite's data — onQueueStageChange fires
 // on every queue_token write), so the queue section's switch is covered, its narrowing is not.
@@ -36,7 +47,7 @@ import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/suppor
 import { getDoc, pollUntil, db } from '../queue/support/firestore-admin';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { ID, PI, PI_NAME, PI_SEARCH, TESTRUNID, resetPiMutables } = require('./seed-profiles');
+const { ID, PI, PI_NAME, PI_SEARCH, PSUB_NAME, PSUB_SEARCH, PF, TESTRUNID, resetPiMutables } = require('./seed-profiles');
 
 const N = PI_NAME as Record<string, string>;
 const TOLERATE = [/requires an index/i];
@@ -77,6 +88,9 @@ const section = (page: Page, label: RegExp) =>
 /** A checkbox option inside a rail section, by its exact label. */
 const option = (sec: Locator, label: string) =>
   sec.getByTestId('pi-filter-option').filter({ has: sec.page().locator('.opt-label', { hasText: new RegExp(`^\\s*${esc(label)}\\b`) }) });
+
+/** Include / exclude an option through its pills (the row itself is a div now). */
+const include = (opt: Locator) => opt.getByTestId('pi-filter-option-include').click();
 
 const chip = (page: Page, text: string) => page.locator('app-active-filter-chips .chip').filter({ hasText: text });
 
@@ -220,7 +234,7 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
   // Filter rail
   // ---------------------------------------------------------------------------------------------
 
-  test('PI-05 a status option cycles include → exclude → off, and the save prompts quote the filtered count', async ({ page }) => {
+  test('PI-05 a status option: Include and Exclude pills set it, clicking the active pill clears it, and the save prompts quote the filtered count', async ({ page }) => {
     await open(page);
     await narrow(page);
     const save = page.getByTestId('pi-filter-save');
@@ -229,8 +243,15 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     const sec = section(page, /^Customer status$/);
     await sec.locator('.sec-head').click();
     const nonActive = option(sec, 'Non active');
-    await nonActive.click();
-    await expect(nonActive).toHaveAttribute('aria-checked', 'true');
+    const inc = nonActive.getByTestId('pi-filter-option-include');
+    const exc = nonActive.getByTestId('pi-filter-option-exclude');
+    await expect(inc).toHaveAttribute('aria-checked', 'false');
+    await expect(exc).toHaveAttribute('aria-checked', 'false');
+
+    // the label is the Include target
+    await nonActive.locator('.opt-text').click();
+    await expect(inc, 'PI-05: clicking the label includes').toHaveAttribute('aria-checked', 'true');
+    await expect(exc).toHaveAttribute('aria-checked', 'false');
     await expectCount(page, 2);
     await expectRows(page, [N.CH, N.FX]);
     await expect(chip(page, 'Status: Non active')).toHaveCount(1);
@@ -246,8 +267,10 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
       await expect(prompt).toHaveCount(0);
     }
 
-    await nonActive.click();
-    await expect(nonActive).toHaveAttribute('aria-checked', 'mixed');
+    // Exclude switches the same option over
+    await exc.click();
+    await expect(exc, 'PI-05: Exclude switches the option over').toHaveAttribute('aria-checked', 'true');
+    await expect(inc).toHaveAttribute('aria-checked', 'false');
     await expectCount(page, 4);
     await expectRows(page, [N.AL, N.BR, N.DE, N.EC]);
     await expect(chip(page, 'Status: not Non active')).toHaveCount(1);
@@ -257,8 +280,9 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     await expect(page.getByTestId('pi-filter-open').locator('.pill')).toHaveText('1');
     await page.getByTestId('pi-filter-open').click();
     await sec.locator('.sec-head').click();
-    await nonActive.click();
-    await expect(nonActive).toHaveAttribute('aria-checked', 'false');
+    await exc.click();
+    await expect(exc, 'PI-05: clicking the active pill clears it').toHaveAttribute('aria-checked', 'false');
+    await expect(inc).toHaveAttribute('aria-checked', 'false');
     await expectCount(page, 6);
   });
 
@@ -332,7 +356,7 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     await expect(shared.locator('.opt-count'), 'PI-08: Alpha (old id) + Bravo (new id) under one option').toHaveText('(2)');
     await expect(opts.filter({ hasText: N.EV_SOLO }).locator('.opt-count')).toHaveText('(1)');
 
-    await shared.click();
+    await include(shared);
     await expectCount(page, 2);
     await expectRows(page, [N.AL, N.BR]); // Charlie attended the other event
     await expect(chip(page, `Attended: ${N.EV_SHARED}`)).toHaveCount(1);
@@ -379,7 +403,7 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     await expect(opts.locator('.opt-hint')).toHaveText(/^\s*updated /);
     await expect(page.locator('app-filter-rail'), 'PI-10: an inactive segment is never an option').not.toContainText(N.SB_OFF);
 
-    await opts.click();
+    await include(opts);
     await expectCount(page, 2);
     await expectRows(page, [N.BR, N.DE]); // Alpha is only in the inactive segment's stale list
 
@@ -448,7 +472,7 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
 
     const sec = section(page, /^Customer status$/);
     await sec.locator('.sec-head').click();
-    await option(sec, 'Non active').click();
+    await include(option(sec, 'Non active'));
     await expectRows(page, [N.CH]);
     await expect(trigger, 'PI-12: the label says the list is refined').toContainText('+ 1 filter');
 
@@ -484,10 +508,23 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
 
     const sec = section(page, /^Customer status$/);
     await sec.locator('.sec-head').click();
-    await option(sec, 'Active').click();
+    await include(option(sec, 'Active'));
     await expectRows(page, [N.AL, N.BR, N.CH, N.FX]);
     await expect(saved).toContainText('modified');
+
+    // Update asks first and shows saved-now vs after; Cancel writes nothing
+    const confirm = page.locator('app-confirm-dialog');
     await page.getByTestId('pi-aud-update').click();
+    await expect(confirm.getByTestId('pi-confirm-before'), 'PI-13: saved now').toContainText('Status: Non active');
+    await expect(confirm.getByTestId('pi-confirm-added'), 'PI-13: the update adds Active').toHaveText(/Status: Active/);
+    await expect(confirm.getByTestId('pi-confirm-removed'), 'PI-13: nothing removed').toHaveCount(0);
+    await confirm.getByTestId('pi-confirm-cancel').click();
+    await expect(confirm).toHaveCount(0);
+    expect((await getDoc('searchquery', PI.SQ))!.customerstatus, 'PI-13: Cancel wrote nothing').toEqual(['non active']);
+    await expect(page.getByTestId('pi-aud-update'), 'PI-13: still modified').toHaveCount(1);
+
+    await page.getByTestId('pi-aud-update').click();
+    await confirm.getByTestId('pi-confirm-ok').click();
 
     const doc = await pollUntil(
       () => getDoc('searchquery', PI.SQ),
@@ -625,7 +662,7 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
 
     const sec = section(page, /^Customer status$/);
     await sec.locator('.sec-head').click();
-    await option(sec, 'Non active').click(); // hides Alpha
+    await include(option(sec, 'Non active')); // hides Alpha
     await expectRows(page, [N.CH, N.FX]);
     await expect(bar.locator('.count .num'), 'PI-17: a selected row hidden by the filter is out of scope').toHaveText('1');
     await expect(bar.locator('.hidden')).toHaveText(/1 hidden by filters/);
@@ -693,6 +730,185 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     await page.getByTestId('pi-bulk-content').click();
     await expect(page.getByText('No content consumption for these participants')).toBeVisible();
   });
+
+  // ---------------------------------------------------------------------------------------------
+  // 2026-10-21: match all / any, pipelines, confirm-before-update, product subscription, soft delete
+  // ---------------------------------------------------------------------------------------------
+
+  test('PI-18 two consumed rules: Match all needs both, Match any either, and the switch only shows with two rules', async ({ page }) => {
+    await open(page);
+    await narrow(page);
+    await section(page, /^Product activity$/).locator('.sec-head').click();
+    const consumed = page.getByTestId('pi-filter-consumed');
+    const all = consumed.getByTestId('pi-filter-rule-match-all');
+    const any = consumed.getByTestId('pi-filter-rule-match-any');
+    const rules = consumed.getByTestId('pi-filter-rule');
+
+    await consumed.getByTestId('pi-filter-rule-add').click();
+    await rules.nth(0).getByTestId('pi-filter-rule-product').selectOption(ID.P1);
+    await rules.nth(0).getByTestId('pi-cond-a').fill('2');
+    await expectRows(page, [N.BR]);
+    await expect(all, 'PI-18: one rule → no match switch').toHaveCount(0);
+
+    await consumed.getByTestId('pi-filter-rule-add').click();
+    await rules.nth(1).getByTestId('pi-filter-rule-product').selectOption(ID.P1);
+    await rules.nth(1).getByTestId('pi-cond-op').selectOption('exact');
+    await rules.nth(1).getByTestId('pi-cond-a').fill('1');
+    await expect(all, 'PI-18: Match all is the default').toHaveClass(/\bon\b/);
+    await expectCount(page, 0); // nobody consumed P1 both twice-or-more and exactly once
+
+    await any.click();
+    await expect(any).toHaveClass(/\bon\b/);
+    await expectRows(page, [N.BR, N.CH]); // Bravo (2) or Charlie (1); the other four consumed none
+    await expect(page.locator('app-active-filter-chips .chip').filter({ hasText: /\(any\)/ }), 'PI-18: each chip says it is one of several').toHaveCount(2);
+
+    await all.click();
+    await expectCount(page, 0);
+  });
+
+  test('PI-19 pipelines: two saved filters become two columns; in every / not in every list unique names to select and message', async ({ page }) => {
+    await open(page);
+    await page.getByTestId('pi-pipelines').click();
+    const dlg = page.locator('app-pipelines-dialog');
+    await expect(dlg.getByTestId('pi-pipe-empty'), 'PI-19: nothing picked yet').toBeVisible();
+
+    await dlg.getByTestId('pi-pipe-filter-search').fill(`-${TESTRUNID}-`);
+    const pick = (name: string) => dlg.getByTestId('pi-pipe-filter').filter({ hasText: exact(name) });
+    await pick(N.SQ).click();
+    await expect(dlg.getByTestId('pi-pipe-mode-every'), 'PI-19: one pipeline → no "every"').toBeDisabled();
+    await expect(dlg.getByTestId('pi-pipe-mode-not-every')).toBeDisabled();
+    await pick(N.SQ2).click();
+    await dlg.getByTestId('pi-pipe-search').fill(PI_SEARCH); // the shared project has other matches; only the six count
+
+    const cols = dlg.getByTestId('pi-pipe-column');
+    await expect(cols, 'PI-19: one column per picked filter').toHaveCount(2);
+    const names = async (col: Locator) => (await col.getByTestId('pi-pipe-name').allInnerTexts()).map((t) => t.trim()).sort();
+    await expect(cols.nth(0).getByTestId('pi-pipe-column-count')).toHaveText('2');
+    expect(await names(cols.nth(0)), 'PI-19: Saved Non Active = Charlie, Foxtrot').toEqual([N.CH, N.FX].sort());
+    await expect(cols.nth(1).getByTestId('pi-pipe-column-count')).toHaveText('4');
+    expect(await names(cols.nth(1)), 'PI-19: Regular = Alpha, Bravo, Charlie, Delta').toEqual([N.AL, N.BR, N.CH, N.DE].sort());
+    await expect(dlg.getByTestId('pi-pipe-total')).toHaveText('5 unique names');
+    await expect(dlg, 'PI-19: Echo is in neither pipeline').not.toContainText(N.EC);
+
+    await dlg.getByTestId('pi-pipe-mode-every').click();
+    const unique = dlg.getByTestId('pi-pipe-unique');
+    await expect(unique.getByTestId('pi-pipe-unique-row'), 'PI-19: only Charlie is in both').toHaveText([new RegExp(esc(N.CH))]);
+    await expect(dlg.getByTestId('pi-pipe-total')).toHaveText('1 unique name');
+
+    await dlg.getByTestId('pi-pipe-mode-not-every').click();
+    const rows = unique.getByTestId('pi-pipe-unique-row');
+    await expect(rows.locator('.u-name'), 'PI-19: the rest, each once, A–Z').toHaveText([N.AL, N.BR, N.DE, N.FX].map(exact));
+    await expect(rows.filter({ hasText: N.FX }).locator('.u-in .tag'), 'PI-19: Foxtrot is only in Saved Non Active').toHaveText([exact(N.SQ)]);
+
+    await expect(dlg.getByTestId('pi-pipe-comm'), 'PI-19: nothing selected → no communication').toBeDisabled();
+    await rows.first().getByTestId('pi-pipe-unique-check').check();
+    await expect(dlg.getByTestId('pi-pipe-selected')).toHaveText('1 selected');
+    await dlg.getByTestId('pi-pipe-select-all').check();
+    await expect(dlg.getByTestId('pi-pipe-selected')).toHaveText('4 selected');
+    await dlg.getByTestId('pi-pipe-comm').click();
+    await expect(page.getByTestId('pi-pipe-email'), 'PI-19: the Communication menu offers the bulk channels').toBeVisible();
+    await expect(page.getByTestId('pi-pipe-whatsapp')).toBeVisible();
+    await page.keyboard.press('Escape'); // nothing is sent
+    await expect(page.getByTestId('pi-pipe-email')).toHaveCount(0);
+
+    // All names brings the columns back (and the unique list's selection footer goes)
+    await dlg.getByTestId('pi-pipe-mode-all').click();
+    await expect(cols, 'PI-19: All names → columns again').toHaveCount(2);
+    await expect(dlg.getByTestId('pi-pipe-unique')).toHaveCount(0);
+    await expect(dlg.getByTestId('pi-pipe-selected')).toHaveCount(0);
+  });
+
+  test('PI-20 Update from Manage audiences shows what it would remove, and says so when nothing changes', async ({ page }) => {
+    await open(page);
+    const manage = page.locator('app-manage-audiences-dialog');
+    const confirm = page.locator('app-confirm-dialog');
+    const row = (name: string) => manage.locator('tbody tr').filter({ has: page.locator('button.link', { hasText: exact(name) }) });
+
+    // no filters applied → updating would drop the saved status
+    await page.getByTestId('pi-rail-saved-manage').click();
+    await row(N.SQ).getByTestId('pi-manage-update').click();
+    await expect(confirm.getByTestId('pi-confirm-removed')).toHaveText(/Status: Non active/);
+    await expect(confirm.getByTestId('pi-confirm-after')).toContainText('No filters');
+    await expect(confirm.getByTestId('pi-confirm-unchanged')).toHaveCount(0);
+    await confirm.getByTestId('pi-confirm-cancel').click();
+    expect((await getDoc('searchquery', PI.SQ))!.customerstatus, 'PI-20: Cancel wrote nothing').toEqual(['non active']);
+    await manage.getByRole('button', { name: 'Done' }).click();
+
+    // the saved filter loaded as-is → nothing would change
+    await page.getByTestId('pi-rail-saved-search').fill(PI_SEARCH);
+    await page.getByTestId('pi-rail-saved-item').click();
+    await page.getByTestId('pi-rail-saved-manage').click();
+    await row(N.SQ).getByTestId('pi-manage-update').click();
+    await expect(confirm.getByTestId('pi-confirm-unchanged'), 'PI-20: same filters → says so').toBeVisible();
+    await expect(confirm.getByTestId('pi-confirm-added')).toHaveCount(0);
+    await expect(confirm.getByTestId('pi-confirm-removed')).toHaveCount(0);
+    await confirm.getByTestId('pi-confirm-cancel').click();
+  });
+
+  test('PI-21 product subscription: Start between keeps one row per person with a live doc starting in the range; cancelled and out-of-range docs drop', async ({ page }) => {
+    await open(page);
+    await topSearch(page).fill(PSUB_SEARCH);
+    await expectCount(page, 4);
+    const sec = section(page, /^Product subscription$/);
+    await sec.locator('.sec-head').click();
+
+    const product = `TEST Product ${TESTRUNID}`;
+    const search = page.getByTestId('pi-filter-psub-product-search');
+    await search.click();
+    await search.fill(product);
+    await page.getByTestId('pi-filter-psub-product-option').filter({ hasText: exact(product) }).click();
+    await expect(sec, 'PI-21: a product alone applies nothing').toContainText('Pick a date range to apply it.');
+    await expectCount(page, 4);
+
+    await page.getByTestId('pi-filter-psub-relation').click();
+    await page.getByTestId('pi-filter-psub-relation-option').filter({ hasText: exact('Start between') }).click();
+
+    // the app's native date adapter reads M/D/YYYY; the seed dated the docs relative to today
+    const day = (offset: number) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
+    await page.getByTestId('pi-filter-psub-from').fill(day(-15));
+    await page.getByTestId('pi-filter-psub-from').press('Tab');
+    await page.getByTestId('pi-filter-psub-to').fill(day(-5));
+    await page.getByTestId('pi-filter-psub-to').press('Tab');
+
+    // Alpha (starts -10) and Delta (two docs, -8 and -12 → one row); Bravo's doc is Cancelled, Charlie's starts -40
+    await expectRows(page, [PSUB_NAME.A, PSUB_NAME.D]);
+    await expect(chip(page, `${product} · Start between:`)).toHaveCount(1);
+
+    await page.getByTestId('pi-filter-psub-clear').click();
+    await expectCount(page, 4);
+  });
+
+  test('PI-22 deleting a saved filter asks first, then soft-deletes it: the doc stays, flagged, and the screen no longer lists it', async ({ page }) => {
+    await open(page);
+    const manage = page.locator('app-manage-audiences-dialog');
+    const confirm = page.locator('app-confirm-dialog');
+    const row = (name: string) => manage.locator('tbody tr').filter({ has: page.locator('button.link', { hasText: exact(name) }) });
+    await page.getByTestId('pi-rail-saved-manage').click();
+    await expect(row(N.SQ_DEL)).toHaveCount(1);
+
+    await row(N.SQ_DEL).getByTestId('pi-manage-delete').click();
+    await expect(confirm).toContainText(N.SQ_DEL);
+    await confirm.getByTestId('pi-confirm-cancel').click();
+    expect((await getDoc('searchquery', PI.SQ_DEL))!.isdeleted, 'PI-22: Cancel deletes nothing').toBeUndefined();
+    await expect(row(N.SQ_DEL)).toHaveCount(1);
+
+    await row(N.SQ_DEL).getByTestId('pi-manage-delete').click();
+    await confirm.getByTestId('pi-confirm-ok').click();
+    await expect(row(N.SQ_DEL), 'PI-22: gone from the dialog').toHaveCount(0);
+    const d = await pollUntil(() => getDoc('searchquery', PI.SQ_DEL), (x) => x?.isdeleted === true,
+      { label: 'PI-22: the doc is flagged isdeleted', timeoutMs: 30_000 });
+    expect(d, 'PI-22: soft — the doc still exists').toBeTruthy();
+    expect(d!.deletedby, 'PI-22: who deleted it').toBe(PF.admin);
+    expect(d!.deleteddate, 'PI-22: when').toBeTruthy();
+    expect(d!.label, 'PI-22: nothing else changed').toBe(N.SQ_DEL);
+
+    await manage.getByRole('button', { name: 'Done' }).click();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Loading participants…')).toHaveCount(0, { timeout: 60_000 });
+    await page.getByTestId('pi-rail-saved-manage').click();
+    await expect(row(N.SQ), 'PI-22: the dialog loaded').toHaveCount(1);
+    await expect(row(N.SQ_DEL), 'PI-22: a soft-deleted filter is skipped on load').toHaveCount(0);
+  });
 });
 
 // ADDR — hooks no case drives yet, and why:
@@ -727,4 +943,24 @@ test.fixme('PI-ADDR2 restored search-clear / checklists / refresh / checklist ho
   expect(page.getByTestId('pi-checklists-watson-heading')).toBeTruthy();
   expect(page.getByTestId('pi-checklists-recon-heading')).toBeTruthy();
   expect(page.getByTestId('pi-checklist-item')).toBeTruthy();
+});
+
+// PI-ADDR3 — 2026-10-21 hooks no case drives: the uP! attendance pills (uP! counts are not seeded), the
+// Subscription-dates relation options (the date-range filter is not driven, see PI-ADDR1), the product
+// subscription's field / range wrappers and its transient loading / index-missing states (the emulator
+// needs no index, so the error never shows), the unticked-row checkbox path and the four remaining
+// Communication menu items (opening one would start a send).
+test.fixme('PI-ADDR3 2026-10-21 controls addressable (deferred behavioral)', async ({ page }) => {
+  await page.goto('/participant-intelligence', { waitUntil: 'domcontentloaded' });
+  expect(page.getByTestId('pi-filter-up-status-include')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-up-status-exclude')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-sub-relation-option')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-psub-product')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-psub-range')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-psub-loading')).toBeTruthy();
+  expect(page.getByTestId('pi-filter-psub-error')).toBeTruthy();
+  expect(page.getByTestId('pi-pipe-notify')).toBeTruthy();
+  expect(page.getByTestId('pi-pipe-wati-messages')).toBeTruthy();
+  expect(page.getByTestId('pi-pipe-broadcast')).toBeTruthy();
+  expect(page.getByTestId('pi-pipe-wati-config')).toBeTruthy();
 });
