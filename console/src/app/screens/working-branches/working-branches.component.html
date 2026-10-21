@@ -199,6 +199,33 @@
                 } @else {
                   <span class="st-val" [title]="bcRolloutBlockReason(rc) || ''">waiting</span>
                 }
+
+                <!-- FLUTTER: what the merge produced on `development`. Shows the branch-wide state,
+                     identical on every feature card of this repo — it is one branch, not per-feature. -->
+                @if (hasDevApks(rc)) {
+                  <span class="st-sub devapks">
+                    <span class="devapks-l">dev branch</span>
+                    @for (env of BC_ENVS; track env) {
+                      <!-- chip + its download stay in ONE inline-flex unit, so the arrow can never
+                           wrap away from the env it belongs to. -->
+                      <span class="apkunit">
+                        <span class="apkchip" [attr.data-tone]="devApkTone(devApkLeg(rc, env))"
+                              [title]="env + '-env APK on development'">
+                          {{ env }} {{ devApkLabel(devApkLeg(rc, env)) }}
+                        </span>
+                        @if (devApkLeg(rc, env); as ch) {
+                          @if (ch.status === 'SUCCESS' && ch.url) {
+                            <button class="apkdl" (click)="openApk(ch, env)"
+                                    [title]="'Download the ' + env + '-env APK · ' + ch.url">↓</button>
+                          }
+                        }
+                      </span>
+                    }
+                    @if (devApkSha(rc); as sha) {
+                      <span class="devapks-sha" [title]="'development built from ' + sha">{{ sha }}</span>
+                    }
+                  </span>
+                }
               </div>
             </div>
           </div>

@@ -356,6 +356,49 @@ export class WorkingBranchesComponent {
     window.open(url, '_blank', 'noopener');
   }
 
+  // --- Stage 4: where the merge actually landed (flutter) -----------------------------------
+  //
+  // Stage 4 used to end at "approved" / "merged", which says what the CONSOLE did but nothing about
+  // what came out the other side. For flutter a merge produces two APKs on `development` and nothing
+  // else, so without this the card went quiet exactly when the interesting part started (2026-10-21).
+  //
+  // Reads the DEVELOPMENT candidate for this feature's repo — so every feature card shows the same,
+  // current development state. That is intentional: it is one branch, not per-feature.
+
+  /** The `development` candidate for this feature's repo, if the console has one. */
+  devCandidate(rc: ReleaseCandidate): ReleaseCandidate | null {
+    return this.rcs().find((r) => r.repo === rc.repo && r.branch === 'development') ?? null;
+  }
+
+  devApkLeg(rc: ReleaseCandidate, env: 'dev' | 'prod'): ChannelFacet | null {
+    return this.devCandidate(rc)?.previewStatus?.[env] ?? null;
+  }
+
+  /** True once development has reported anything at all — otherwise stage 4 stays as it was. */
+  hasDevApks(rc: ReleaseCandidate): boolean {
+    return this.isFlutter(rc) && !!this.devCandidate(rc)?.previewStatus;
+  }
+
+  devApkLabel(ch: ChannelFacet | null): string {
+    if (!ch) return 'not built';
+    if (ch.status === 'BUILDING') return 'building…';
+    if (ch.status === 'FAILED') return 'failed';
+    return 'built';
+  }
+
+  devApkTone(ch: ChannelFacet | null): string {
+    if (!ch) return 'none';
+    if (ch.status === 'BUILDING') return 'active';
+    if (ch.status === 'FAILED') return 'bad';
+    return 'ok';
+  }
+
+  /** The commit development's pair was built from — shows at a glance if it predates this merge. */
+  devApkSha(rc: ReleaseCandidate): string | null {
+    const s = this.devCandidate(rc)?.previewStatus?.sha;
+    return s ? s.slice(0, 7) : null;
+  }
+
   bcChannelTone(ch: ChannelFacet): string {
     return ch.status === 'SUCCESS' ? 'ok' : ch.status === 'FAILED' ? 'bad' : 'active';
   }
