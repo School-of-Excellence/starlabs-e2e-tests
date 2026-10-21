@@ -1862,3 +1862,33 @@ export function readCsvRows(text: string): string[][] {
   if (cell || row.length) { row.push(cell); rows.push(row); }
   return rows.filter(r => r.some(c => c !== ''));
 }
+
+/**
+ * Hot Leads Today (WS-71, 2026-10-21): today's EiFlix viewing for three people. Hot means more than
+ * 3h in total (the dashboard default):
+ *   p0   4h   (participant metadata, journey JRN_BIG)  -> hot
+ *   NU_A 3.5h (new user)                               -> hot
+ *   p1   1h                                            -> NOT hot (negative control)
+ * Removed by id in clearHotLeads. PRECONDITION writes only.
+ */
+export const wsHotLeadLogIds = [1, 2, 3].map(n => `${RUN}_hl_log${n}`);
+
+export async function seedHotLeads(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const at = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 60_000));   // today
+  const log = (id: string, profileid: string, type: string, seconds: number) =>
+    db.collection('content analytics').doc(id).set({
+      profileid, videoid: `${RUN}_hl_video`, type, logdate: at, totaltimespend: seconds, totalruntime: 18000,
+    });
+  await Promise.all([
+    log(wsHotLeadLogIds[0], wsProfileIds.p0, 'eiflix', 4 * 3600),
+    log(wsHotLeadLogIds[1], wsAddIds.NU_A, 'eiflixcontent', 3.5 * 3600),
+    log(wsHotLeadLogIds[2], wsProfileIds.p1, 'eiflix', 3600),
+  ]);
+}
+
+export async function clearHotLeads(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(wsHotLeadLogIds.map(id => db.collection('content analytics').doc(id).delete()));
+}

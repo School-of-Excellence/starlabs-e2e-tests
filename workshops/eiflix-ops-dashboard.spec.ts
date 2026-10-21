@@ -33,9 +33,10 @@ import {
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
   wsAddNames, seedUserTypeLoginLogs, clearUserTypeLoginLogs,
+  seedHotLeads, clearHotLeads, wsAddIds,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { countWhere } from '../queue/support/firestore-admin';
+import { countWhere, getDoc } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -1043,3 +1044,88 @@ test.describe('Workshops — eiflix operations dashboard: paid total amount (no 
   });
 });
 
+// =============================================================================================
+// WS-71 — Hot Leads Today: "Send to Slack" opens the shared People Send dialog (2026-10-21).
+// Hook prefix for the dialog: psd (New-Workshop/people-send-dialog). The dialog only SHOWS what the
+// panel passes (name, email, phone, journey); Send enables on a selection and has no action yet.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slack', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+    await seedHotLeads();
+  });
+  test.afterEach(async () => {
+    await clearHotLeads();
+    assertNoFatal(guard, 'eiflix ops dashboard (send to slack): no fatal console errors / pageerrors');
+  });
+
+  test('WS-71 Send to Slack lists the hot leads with search, sort, select, and Send enabling on a pick', async ({ page }) => {
+    // Oracles from Firestore: p0's stored name and journey name; NU_A is the seeded new user.
+    const p0: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const journey: any = p0?.activejourney ? await getDoc('journey', p0.activejourney) : null;
+    const p0Name = String(p0?.name || '');
+    const nuName = wsAddNames.nuAlpha;
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const hotCard = page.getByTestId('eif-hot-error-15');
+    await expect(hotCard.locator('.eod-hot-count'), 'WS-71: Hot Leads Today counts the two seeded hot leads')
+      .toHaveText('2', { timeout: 60_000 });
+    await hotCard.click();
+
+    const slack = page.getByTestId('eif-send-to-slack');
+    await expect(slack, 'WS-71: the hot leads panel has Send to Slack').toBeEnabled({ timeout: 30_000 });
+    await slack.click();
+
+    const dialog = page.locator('mat-dialog-container');
+    const rows = dialog.getByTestId('psd-row');
+    await expect(rows, 'WS-71: the dialog lists the two hot leads (1h viewer left out)').toHaveCount(2, { timeout: 30_000 });
+    await expect(dialog.getByTestId('psd-paginator'), 'WS-71: pagination is there').toBeVisible();
+
+    // What the panel passed: name, journey (p0's from Firestore; the new user has none).
+    const p0Row = rows.filter({ hasText: p0Name });
+    await expect(p0Row, 'WS-71: p0 is listed by name').toHaveCount(1);
+    if (journey?.journey) await expect(p0Row, 'WS-71: with their journey').toContainText(journey.journey);
+    const nuRow = rows.filter({ hasText: nuName });
+    await expect(nuRow, 'WS-71: the new user is listed').toHaveCount(1);
+    await expect(nuRow).toContainText(`${wsAddIds.NU_A}@example.com`);
+
+    // Send needs a selection.
+    const send = dialog.getByTestId('psd-send');
+    await expect(send, 'WS-71: Send is off with nobody picked').toBeDisabled();
+    await nuRow.getByTestId('psd-select-row').locator('input').check();
+    await expect(send, 'WS-71: one pick enables Send').toBeEnabled();
+    await expect(dialog.getByTestId('psd-count')).toContainText('1 selected');
+    await dialog.getByTestId('psd-select-all').locator('input').check();
+    await expect(dialog.getByTestId('psd-count'), 'WS-71: the header box picks everyone shown').toContainText('2 selected');
+    await dialog.getByTestId('psd-select-all').locator('input').uncheck();
+    await expect(send, 'WS-71: clearing the picks turns Send off again').toBeDisabled();
+
+    // Search narrows; a miss shows the empty line.
+    const search = dialog.getByTestId('psd-search');
+    await search.fill(nuName);
+    await expect(rows).toHaveCount(1);
+    await search.fill('zz-no-such-person');
+    await expect(dialog.getByTestId('psd-empty'), 'WS-71: a miss says so').toBeVisible();
+    await search.fill('');
+    await expect(rows).toHaveCount(2);
+
+    // Sort by name, both ways.
+    const names = async () => (await dialog.getByTestId('psd-cell-name').allInnerTexts()).map((t) => t.trim());
+    const asc = [p0Name, nuName].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: Name sorts A→Z' }).toEqual(asc);
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: and Z→A' }).toEqual([...asc].reverse());
+    // The other sortable headers are there.
+    await expect(dialog.getByTestId('psd-sort-email')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-phone')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-journey')).toBeVisible();
+
+    await dialog.getByTestId('psd-close').click();
+    await expect(dialog, 'WS-71: Close shuts the dialog').toHaveCount(0);
+    await expect(slack, 'WS-71: the hot leads panel is still open underneath').toBeVisible();
+  });
+});
