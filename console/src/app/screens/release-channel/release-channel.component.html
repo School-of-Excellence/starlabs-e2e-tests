@@ -15,8 +15,10 @@
             <div class="ident">
               <div class="branch">development <span class="envtag">{{ rc.repo }}</span></div>
               <div class="sub muted">
-                @if (envUrl('development'); as u) {
-                  <a [href]="u" target="_blank" rel="noopener">{{ u }} ↗</a> ·
+                <!-- environmentUrls is keyed by BRANCH, not by repo, so it would hand a flutter card
+                     the Angular app's hosting URL — a link to someone else's product. Web repos only. -->
+                @if (!isFlutter(rc) && envUrl('development')) {
+                  <a [href]="envUrl('development')" target="_blank" rel="noopener">{{ envUrl('development') }} ↗</a> ·
                 }
                 integrated dev branch → production
               </div>
@@ -43,9 +45,33 @@
                 }
               }
             }
-            @if (!isCfRepo(rc)) {
-            }
           </div>
+
+          <!-- FLUTTER: the development branch's two APKs. A web repo shows a hosting URL + deploy
+               health here; flutter has neither, so without this the card said nothing after a merge
+               even while the build was running. Always shows the LATEST state per env. -->
+          @if (isFlutter(rc)) {
+            <div class="facets apks">
+              <span class="muted sm">development APKs</span>
+              @for (env of APK_ENVS; track env) {
+                <span class="badge" [attr.data-tone]="apkTone(apkLeg(rc, env))">
+                  {{ env }}: {{ apkLabel(apkLeg(rc, env)) }}
+                </span>
+                @if (apkLeg(rc, env); as ch) {
+                  @if (ch.status === 'SUCCESS' && ch.url) {
+                    <button class="ghlink sm" (click)="openApk(ch, env)"
+                            [title]="env + '-env APK · ' + ch.url">{{ env }} apk ↓</button>
+                  }
+                }
+              }
+              @if (apkSha(rc); as sha) {
+                <span class="muted sm">from {{ sha }}</span>
+              }
+              @if (apkBuiltAt(rc); as at) {
+                <span class="muted sm">· {{ at | date: 'MMM d, HH:mm' }}</span>
+              }
+            </div>
+          }
 
           <!-- Incoming feature → development PRs (review & merge on GitHub) -->
           <div class="prlist">
@@ -129,8 +155,8 @@
             <div class="ident">
               <div class="branch">production <span class="envtag">{{ rc.repo }}</span></div>
               <div class="sub muted">
-                @if (envUrl('production'); as u) {
-                  <a [href]="u" target="_blank" rel="noopener">{{ u }} ↗</a> ·
+                @if (!isFlutter(rc) && envUrl('production')) {
+                  <a [href]="envUrl('production')" target="_blank" rel="noopener">{{ envUrl('production') }} ↗</a> ·
                 }
                 receives the development → production promotion
               </div>

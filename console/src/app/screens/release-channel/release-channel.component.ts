@@ -7,7 +7,12 @@ import { ToastService } from '../../shared/toast.service';
 import { ConfirmService } from '../../shared/confirm.service';
 import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
 import { RouterLink } from '@angular/router';
-import { ReleaseCandidate, isProtectedBranch, toMillis } from '../../core/release-candidate.model';
+import {
+  ReleaseCandidate,
+  ChannelFacet,
+  isProtectedBranch,
+  toMillis,
+} from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent } from '../../shared/activity-drawer/activity-drawer.component';
@@ -126,6 +131,66 @@ export class ReleaseChannelComponent {
   }
 
   /** CF-type repos have no gate workflow (plan L13) — no system-test button on their entries. */
+  // --- Flutter: the development branch's two APKs -------------------------------------------
+  //
+  // A web repo's `development` is a DEPLOYED environment, so its card shows a hosting URL and deploy
+  // health. Flutter has neither — merging to development produces two APKs in Storage and nothing
+  // else. Without this the card was silent after a merge, which read as "nothing happened" even while
+  // the build was running (2026-10-21).
+  //
+  // Driven by the same `previewStatus` facet branch-apks.yml writes for feature branches; here it is
+  // the development branch's own candidate, so it always reflects the LATEST merge.
+
+  readonly APK_ENVS: ('dev' | 'prod')[] = ['dev', 'prod'];
+
+  isFlutter(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'flutter';
+  }
+
+  apkLeg(rc: ReleaseCandidate, env: 'dev' | 'prod'): ChannelFacet | null {
+    return rc.previewStatus?.[env] ?? null;
+  }
+
+  apkLabel(ch: ChannelFacet | null): string {
+    if (!ch) return 'not built';
+    if (ch.status === 'BUILDING') return 'building…';
+    if (ch.status === 'FAILED') return 'failed';
+    return 'built';
+  }
+
+  apkTone(ch: ChannelFacet | null): string {
+    if (!ch) return 'none';
+    if (ch.status === 'BUILDING') return 'active';
+    if (ch.status === 'FAILED') return 'bad';
+    return 'ok';
+  }
+
+  /** The commit the current pair was built from — so a stale pair is visible as such. */
+  apkSha(rc: ReleaseCandidate): string | null {
+    const s = rc.previewStatus?.sha;
+    return s ? s.slice(0, 7) : null;
+  }
+
+  apkBuiltAt(rc: ReleaseCandidate): number | null {
+    return rc.previewStatus?.updatedAt ?? null;
+  }
+
+  /** Storage holds the object PATH, so the download URL is minted on click (v3 plan §5). */
+  async openApk(ch: ChannelFacet, env: 'dev' | 'prod'): Promise<void> {
+    if (!ch.url) return;
+    const url = await this.fb.artifactUrl(ch.url);
+    if (!url) {
+      this.toast.show(
+        false,
+        this.fb.useMock
+          ? 'Mock mode — no APK is actually stored.'
+          : `Could not resolve the ${env} APK. A newer build may have replaced it.`,
+      );
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
   isCfRepo(rc: ReleaseCandidate): boolean {
     return repoTypeOf(rc.repo) === 'cloud-function';
   }

@@ -467,6 +467,34 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     updatedAt: '2026-06-15T18:10:00Z',
   },
 
+  // 11b) DEVELOPMENT (flutter) — what a dev-merge produces: two APKs in Storage, nothing deployed.
+  //      One leg still BUILDING so the Release Channel's APK row shows a mid-build state.
+  {
+    id: 'breakthroughs-flutter__development',
+    repo: 'breakthroughs-flutter',
+    branch: 'development',
+    headSha: 'dev7fff',
+    headCommit: { msg: 'Merge feature/offline-cache', author: 'mobile@soexcellence.com', at: '2026-10-21T11:25:00Z' },
+    preview: { buildState: 'NONE' },
+    previewStatus: {
+      sha: 'dev7fff',
+      commitMsg: 'Merge feature/offline-cache',
+      author: 'mobile@soexcellence.com',
+      runId: '910044',
+      runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910044',
+      updatedAt: 1761045900000,
+      dev: { status: 'SUCCESS', url: 'apks/development/dev.apk', project: 'starlabs-test', deployedAt: 1761045900000 },
+      prod: { status: 'BUILDING', project: 'fir-sample-aae4a', deployedAt: 1761045900000 },
+    },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
+    derivedStatus: 'NO_ACTION',
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-10-21T11:25:00Z',
+  },
+
   // 12) DEVELOPMENT — promotion hub. Integrated dev branch, ready to promote → production.
   {
     id: 'starlabs-angular__development',
