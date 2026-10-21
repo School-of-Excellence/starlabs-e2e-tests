@@ -236,6 +236,53 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
   });
 
   // ===========================================================================================
+  // WS-70 — EiFlix Banner: an EiFlix Mobile switch (enableeiflixmobile) beside Web and Mobile (2026-10-21)
+  // ===========================================================================================
+  test('WS-70 EiFlix Mobile is on for a new banner, saved, shown in the list and switchable there', async ({ page }) => {
+    const title = `EiFlix Mobile Banner ${RUN}`;
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const sw = dialog.getByTestId('eb-toggle-eiflixmobile');
+      await expect(sw, 'WS-70: the EiFlix Mobile switch is in Visibility').toBeVisible({ timeout: 30_000 });
+      await expect(sw.locator('button[role="switch"]'), 'WS-70: on by default, like Web and Mobile').toHaveAttribute('aria-checked', 'true');
+
+      await dialog.locator('input[formcontrolname="title"]').fill(title);
+      await dialog.getByTestId('eb-submit-6').click();
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-70: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).enableeiflixmobile, 'WS-70: stored as a boolean true').toBe(true);
+
+      // Banner list: the status pill and the quick switch.
+      await dialog.getByRole('tab', { name: /Banner List/ }).click();
+      const row = dialog.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: title });
+      await expect(row, 'WS-70: the banner is listed').toHaveCount(1, { timeout: 30_000 });
+      await expect(row.getByTestId('eb-status-eiflixmobile'), 'WS-70: EiFlix Mobile reads Active').toContainText('Active');
+      await row.getByTestId('eb-change-toggle-platform-eiflixmobile').locator('button[role="switch"]').click();
+      const after = await pollUntil(
+        () => getDoc('eiflixbanner', created[0]),
+        (d) => !!d && (d as any).enableeiflixmobile === false,
+        { label: 'WS-70: the quick switch writes enableeiflixmobile:false', timeoutMs: 30_000 },
+      );
+      expect((after as any).enable, 'WS-70: Web untouched').toBe(true);
+      expect((after as any).enableapp, 'WS-70: Mobile untouched').toBe(true);
+      await expect(row.getByTestId('eb-status-eiflixmobile'), 'WS-70: and the pill reads Inactive').toContainText('Inactive');
+    } finally {
+      await Promise.all(created.map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
+  });
+
+  // ===========================================================================================
   // WS-67 — the header has ONE Actions button; the former header buttons are its menu items
   // ===========================================================================================
   test('WS-67 the header shows one Actions button whose menu lists every workshop action', async ({ page }) => {
