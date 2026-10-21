@@ -838,7 +838,11 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
 
     // the saved filter loaded as-is → nothing would change
     await page.getByTestId('pi-rail-saved-search').fill(PI_SEARCH);
-    await page.getByTestId('pi-rail-saved-item').click();
+    // wait for the search to narrow the rail (it lists every saved filter until then)
+    const sq = page.getByTestId('pi-rail-saved-item');
+    await expect(sq).toHaveCount(1);
+    await sq.click();
+    await expect(sq).toHaveAttribute('aria-pressed', 'true');
     await page.getByTestId('pi-rail-saved-manage').click();
     await row(N.SQ).getByTestId('pi-manage-update').click();
     await expect(confirm.getByTestId('pi-confirm-unchanged'), 'PI-20: same filters → says so').toBeVisible();
