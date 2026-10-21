@@ -1794,3 +1794,71 @@ export async function deleteFormDraftsFor(formid: string): Promise<void> {
   const snap = await forms.collection('temporary_forms').where('formid', '==', formid).get();
   await Promise.all(snap.docs.map((d: any) => d.ref.delete()));
 }
+
+/**
+ * Total Enrolled export (WS-69, 2026-10-21). Two extra enrollments on W_DASH:
+ *   ENR_NU    — NU_A, a genuine new user (new_user_data, no movedtoexist).
+ *   ENR_MOVED — a person moved to existing (movedtoexist: true) with NO participant metadata doc
+ *               yet. That shape had no `metadata` on its panel row and crashed the export
+ *               ("reading 'email'") in production.
+ * Removed by id in clearEnrolledExportCase. PRECONDITION writes only.
+ */
+export const wsExportIds = {
+  MOVED: `${RUN}_pf_moved_nometa`,
+  ENR_MOVED: `${RUN}_enr_moved_nometa`,
+  ENR_NU: `${RUN}_enr_nu_a`,
+};
+export const wsExportPeople = {
+  moved: { name: `Moved NoMeta ${RUN}`, email: `moved.nometa.${RUN}@example.com`, phone: '9888800001' },
+  nu: { name: `NU Alpha ${RUN}`, email: `${wsAddIds.NU_A}@example.com`, phone: '9999900001' },
+};
+
+export async function seedEnrolledExportCase(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const now = admin.firestore.Timestamp.now();
+  const dashRef = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const p = wsExportPeople.moved;
+  await Promise.all([
+    db.collection('new_user_data').doc(wsExportIds.MOVED).set({
+      docid: wsExportIds.MOVED, name: p.name, email: p.email, phonenumber: p.phone,
+      movedtoexist: true, movedon: now, created: now,
+    }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).set({
+      docid: wsExportIds.ENR_MOVED, profileid: wsExportIds.MOVED, status: 'enrolled', workshopref: dashRef, enrollmentdate: now,
+    }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU).set({
+      docid: wsExportIds.ENR_NU, profileid: wsAddIds.NU_A, status: 'enrolled', workshopref: dashRef, enrollmentdate: now,
+    }),
+  ]);
+}
+
+export async function clearEnrolledExportCase(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([
+    db.collection('new_user_data').doc(wsExportIds.MOVED).delete(),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).delete(),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU).delete(),
+  ]);
+}
+
+/** Minimal CSV reader for the dashboard exports (quoted fields, doubled quotes, CRLF). */
+export function readCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c !== ''));
+}
