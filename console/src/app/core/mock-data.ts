@@ -486,6 +486,16 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
       dev: { status: 'SUCCESS', url: 'apks/development/dev.apk', project: 'starlabs-test', deployedAt: 1761045900000 },
       prod: { status: 'BUILDING', project: 'fir-sample-aae4a', deployedAt: 1761045900000 },
     },
+    // The gate runs on `development` too, so its result lands here. Release Channel reads this
+    // (new flow) rather than gateRun (old flow) — see testBadge().
+    testSuiteStatus: {
+      state: 'NOT_APPLICABLE',
+      canProceed: true,
+      sha: 'dev7fff',
+      checkedAt: 1761045900000,
+      suites: ['analyze', 'flutter test'],
+      run: { state: 'PASSED', sha: 'dev7fff', passed: 6, failed: 0, finishedAt: 1761046000000 },
+    },
     devGate: { verdict: 'NONE' },
     prDev: { state: 'NONE' },
     prodGate: { verdict: 'NONE' },

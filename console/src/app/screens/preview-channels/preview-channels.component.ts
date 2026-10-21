@@ -18,6 +18,7 @@ import {
   MobileEnvDelivery,
   mobileBuildState,
   deliveredPlatforms,
+  rcRecency,
 } from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
@@ -118,7 +119,7 @@ export class PreviewChannelsComponent {
         const wa = this.awaitingDevSignoff(a) ? 1 : 0;
         const wb = this.awaitingDevSignoff(b) ? 1 : 0;
         if (wa !== wb) return wb - wa;
-        return toMillis(b.updatedAt) - toMillis(a.updatedAt);
+        return rcRecency(b) - rcRecency(a);
       }),
   );
 

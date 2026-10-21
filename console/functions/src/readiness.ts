@@ -11,9 +11,16 @@
  * WHAT THIS DELIBERATELY DOES NOT DO
  *   • never writes `preview.*` — that facet belongs to the OLD flow (console Deploy → preview.yml →
  *     recordPreviewUrl). Two flows must never fight over one field.
- *   • never calls mutateCandidate — that would re-project and stamp `updatedAt`. Neither new field
- *     is read by deriveStatus()/reconcileVerdict(), so nothing here can move a status or change a
- *     button, and card ordering in the console is left exactly as it is.
+ *   • never calls mutateCandidate — that would RE-PROJECT. Neither new field is read by
+ *     deriveStatus()/reconcileVerdict(), so nothing here can move a status or change a button.
+ *
+ *     It DOES stamp the doc-level `updatedAt` (2026-10-21). It deliberately did not, back when this
+ *     flow ran BESIDE the old one and must not disturb its card order. That reason expired at the
+ *     Working Branches cutover (2026-09-09): the new flow is now the only writer for flutter, so a
+ *     frozen `updatedAt` meant every push left the card's sort key untouched and "most recent first"
+ *     silently ordered by doc-CREATION time instead. Angular never showed it because its old-flow
+ *     webhooks still call mutateCandidate. Safe: there is no Firestore trigger on release-candidates
+ *     (only onMembersWrite), so a plain set() cannot cause a re-projection loop.
  *
  * Lives in the `console` codebase (one codebase per Firebase project — operator directive
  * 2026-08-19) and is surfaced by a single `export * from './readiness'` in index.ts.
@@ -151,9 +158,12 @@ async function mergeIntoCandidate(
 ): Promise<void> {
   const db = getFirestore();
   const ref = db.collection(PATHS.releaseCandidates).doc(candidateId(repo, branch));
+  // Every ingest IS an update, so it stamps the sort key the console orders cards by. See the
+  // module header for why this used to be omitted and why that no longer holds.
+  const stamped = { ...patch, updatedAt: Date.now() };
   const snap = await ref.get();
   if (snap.exists) {
-    await ref.set(patch, { merge: true });
+    await ref.set(stamped, { merge: true });
     return;
   }
   await ref.set(
@@ -167,8 +177,7 @@ async function mergeIntoCandidate(
       prProd: { state: 'NONE' },
       derivedStatus: 'NO_ACTION',
       reconcile: 'IN_SYNC',
-      updatedAt: Date.now(),
-      ...patch,
+      ...stamped,
     },
     { merge: true },
   );

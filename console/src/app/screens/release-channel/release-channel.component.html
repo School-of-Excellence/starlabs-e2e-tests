@@ -27,16 +27,16 @@
           </div>
 
           <div class="facets">
-            @if (deployLabel(rc); as dl) {
-              <span class="badge" [attr.data-tone]="deployTone(rc)">dev deploy: {{ dl }}</span>
-            }
-            <span class="badge" [attr.data-tone]="rc.promotable ? 'ok' : 'none'">
-              {{ rc.promotable ? 'tester-validated' : 'awaiting tester validation' }}
-            </span>
-            @if (rc.gateRun && rc.gateRun.status !== 'NONE') {
-              <span class="badge" [attr.data-tone]="gateRunTone(rc.gateRun.status)">
-                test suite {{ gateRunLabel(rc.gateRun.status) }}
+            @if (hasPromotionLane(rc)) {
+              @if (deployLabel(rc); as dl) {
+                <span class="badge" [attr.data-tone]="deployTone(rc)">dev deploy: {{ dl }}</span>
+              }
+              <span class="badge" [attr.data-tone]="rc.promotable ? 'ok' : 'none'">
+                {{ rc.promotable ? 'tester-validated' : 'awaiting tester validation' }}
               </span>
+            }
+            @if (testBadge(rc); as tb) {
+              <span class="badge" [attr.data-tone]="tb.tone">test suite {{ tb.label }}</span>
               @if (reportUrl(rc); as url) {
                 @if (reportIsRoute(url)) {
                   <a class="ghlink sm" [routerLink]="url" target="_blank" rel="noopener">▶ report</a>
@@ -80,8 +80,15 @@
               <div class="prrow">
                 <span class="prbranch">{{ f.branch }}</span>
                 <span class="badge sm" [attr.data-tone]="prTone(f.prDev.state)">#{{ f.prDev.number }} · {{ prLabel(f) }}</span>
-                @if (f.gateRun && f.gateRun.status !== 'NONE') {
-                  <span class="badge sm" [attr.data-tone]="gateRunTone(f.gateRun.status)">tests {{ gateRunLabel(f.gateRun.status) }}</span>
+                @if (suiteBlockBadge(f); as sb) {
+                  <span class="badge sm" data-tone="bad">{{ sb }}</span>
+                }
+                @if (testBadge(f); as tb) {
+                  <span class="badge sm" [attr.data-tone]="tb.tone">tests {{ tb.label }}</span>
+                }
+                @if (rolloutBadge(f); as rb) {
+                  <span class="badge sm" [attr.data-tone]="rb.tone"
+                        [title]="'Approved by ' + (f.rollout!.by || '—')">{{ rb.label }}</span>
                 }
                 @if (reportUrl(f); as url) {
                   @if (reportIsRoute(url)) {

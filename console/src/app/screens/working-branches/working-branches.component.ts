@@ -13,6 +13,7 @@ import {
   prHasUnreviewed,
   toMillis,
   isProtectedBranch,
+  rcRecency,
   isMuted,
   shippingBadge,
   MobilePlatform,
@@ -117,7 +118,8 @@ export class WorkingBranchesComponent {
         const pa = pinned.has(a.id) ? 1 : 0;
         const pb = pinned.has(b.id) ? 1 : 0;
         if (pa !== pb) return pb - pa;
-        return toMillis(b.updatedAt) - toMillis(a.updatedAt);
+        // Effective recency, not the doc-level stamp alone — see rcRecency() for why.
+        return rcRecency(b) - rcRecency(a);
       });
   });
 
@@ -148,7 +150,7 @@ export class WorkingBranchesComponent {
       .filter(
         (rc) => rc.repo === devRc.repo && !isProtectedBranch(rc.branch) && rc.prDev.state !== 'NONE',
       )
-      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
+      .sort((a, b) => rcRecency(b) - rcRecency(a));
   }
 
   kind(rc: ReleaseCandidate): BranchKind {

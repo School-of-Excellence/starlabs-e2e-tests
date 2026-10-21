@@ -12,6 +12,7 @@ import {
   ChannelFacet,
   isProtectedBranch,
   toMillis,
+  rcRecency,
 } from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
@@ -62,7 +63,7 @@ export class ReleaseChannelComponent {
   incomingPrs(devRc: ReleaseCandidate): ReleaseCandidate[] {
     return this.rcs()
       .filter((rc) => rc.repo === devRc.repo && !isProtectedBranch(rc.branch) && rc.prDev.state !== 'NONE')
-      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
+      .sort((a, b) => rcRecency(b) - rcRecency(a));
   }
 
   /**
@@ -74,7 +75,7 @@ export class ReleaseChannelComponent {
     if (!devRc.hasUnreleased) return [];
     return this.rcs()
       .filter((rc) => rc.repo === devRc.repo && !isProtectedBranch(rc.branch) && rc.unreleased)
-      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
+      .sort((a, b) => rcRecency(b) - rcRecency(a));
   }
 
   /** True when production is up to date with development (nothing to promote). */
@@ -116,6 +117,56 @@ export class ReleaseChannelComponent {
     if (s === 'in_progress' || s === 'queued' || s === 'pending') return 'active';
     return 'none';
   }
+  // --- NEW-FLOW test state (cutover 2026-10-21) ---------------------------------------------
+  //
+  // This screen read ONLY old-flow fields — gateRun, promotable, derivedStatus — while Working
+  // Branches was cut over to the new flow on 2026-09-09. For flutter, which never touches the old
+  // flow at all, that meant gateRun was permanently NONE and `promotable` permanently false: the two
+  // screens disagreed about the same branch because they were reading different generations of truth.
+  //
+  // Prefer `testSuiteStatus.run` (new flow) and fall back to `gateRun` so repos still on the old lane
+  // are unaffected.
+
+  /** The test result to show, from whichever flow actually reported. Null = nothing ran. */
+  testBadge(rc: ReleaseCandidate): { label: string; tone: string } | null {
+    const run = rc.testSuiteStatus?.run;
+    if (run && run.state) {
+      return { label: this.gateRunLabel(run.state), tone: this.gateRunTone(run.state) };
+    }
+    if (rc.gateRun && rc.gateRun.status !== 'NONE') {
+      return { label: this.gateRunLabel(rc.gateRun.status), tone: this.gateRunTone(rc.gateRun.status) };
+    }
+    return null;
+  }
+
+  /**
+   * The new flow's human gate, as Working Branches shows it. A PR can be open while its approval has
+   * been revoked by a later push (approveRollout pins `rollout.sha` to the commit it approved), and
+   * the admin merging on GitHub needs to see that here rather than on another screen.
+   */
+  rolloutBadge(rc: ReleaseCandidate): { label: string; tone: string } | null {
+    const r = rc.rollout;
+    if (!r || r.state !== 'APPROVED') return null;
+    const stale = !!r.sha && !!rc.headSha && r.sha !== rc.headSha;
+    if (stale) return { label: 'approval superseded', tone: 'bad' };
+    return { label: r.bypass ? 'approved ⚠ bypassed' : 'approved', tone: 'ok' };
+  }
+
+  /** Stage 2 verdict — only shown when it is actually blocking, to keep the row short. */
+  suiteBlockBadge(rc: ReleaseCandidate): string | null {
+    const ts = rc.testSuiteStatus;
+    return ts && !ts.canProceed ? ts.state.toLowerCase().replace(/_/g, ' ') : null;
+  }
+
+  /**
+   * Flutter has no promotion lane and no deploy: `development` is terminal (v3 plan L7), so
+   * "awaiting tester validation" and "dev deploy" are not merely empty there — they describe a
+   * process that does not exist for this repo, which is what made the card read as wrong.
+   */
+  hasPromotionLane(rc: ReleaseCandidate): boolean {
+    return !this.isFlutter(rc);
+  }
+
   gateRunLabel(s: string): string {
     return s === 'RUNNING' ? 'running…' : s === 'QUEUED' ? 'queued' : s === 'PASSED' ? 'passed' : 'failed';
   }
