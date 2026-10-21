@@ -476,6 +476,11 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     headSha: 'dev7fff',
     headCommit: { msg: 'Merge feature/offline-cache', author: 'mobile@soexcellence.com', at: '2026-10-21T11:25:00Z' },
     preview: { buildState: 'NONE' },
+    // STALE, on purpose: left behind by the retired native lane (the deleted
+    // android-firebase-distribution.yml failed on every push to development for weeks). The old-flow
+    // projection turns this into derivedStatus PREVIEW_FAILED — which is why the chip is not rendered
+    // for flutter any more. Kept in the fixture so a regression would be visible.
+    mobileDelivery: { android: { prod: { status: 'FAILED', at: '2026-10-06T10:14:00Z' } } },
     previewStatus: {
       sha: 'dev7fff',
       commitMsg: 'Merge feature/offline-cache',

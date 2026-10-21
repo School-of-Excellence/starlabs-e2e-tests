@@ -23,7 +23,9 @@
                 integrated dev branch → production
               </div>
             </div>
-            <rc-status-chip [status]="rc.derivedStatus" />
+            @if (showStatusChip(rc)) {
+              <rc-status-chip [status]="rc.derivedStatus" />
+            }
           </div>
 
           <div class="facets">
@@ -168,7 +170,9 @@
                 receives the development → production promotion
               </div>
             </div>
-            <rc-status-chip [status]="rc.derivedStatus" />
+            @if (showStatusChip(rc)) {
+              <rc-status-chip [status]="rc.derivedStatus" />
+            }
           </div>
 
           <div class="facets">

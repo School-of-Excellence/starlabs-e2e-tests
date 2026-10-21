@@ -12,7 +12,6 @@ import {
   ChannelFacet,
   isProtectedBranch,
   toMillis,
-  rcRecency,
 } from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
@@ -63,7 +62,7 @@ export class ReleaseChannelComponent {
   incomingPrs(devRc: ReleaseCandidate): ReleaseCandidate[] {
     return this.rcs()
       .filter((rc) => rc.repo === devRc.repo && !isProtectedBranch(rc.branch) && rc.prDev.state !== 'NONE')
-      .sort((a, b) => rcRecency(b) - rcRecency(a));
+      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
   }
 
   /**
@@ -75,7 +74,7 @@ export class ReleaseChannelComponent {
     if (!devRc.hasUnreleased) return [];
     return this.rcs()
       .filter((rc) => rc.repo === devRc.repo && !isProtectedBranch(rc.branch) && rc.unreleased)
-      .sort((a, b) => rcRecency(b) - rcRecency(a));
+      .sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
   }
 
   /** True when production is up to date with development (nothing to promote). */
@@ -126,6 +125,23 @@ export class ReleaseChannelComponent {
   //
   // Prefer `testSuiteStatus.run` (new flow) and fall back to `gateRun` so repos still on the old lane
   // are unaffected.
+
+  /**
+   * Should this card show the old-flow `derivedStatus` chip?
+   *
+   * NO for flutter. deriveStatus() builds that value from `preview.buildState` OR, for flutter,
+   * `mobileBuildState(mobileDelivery)` — and `mobileDelivery` is written by the RETIRED native lane
+   * (recordMobileRelease). breakthroughs-flutter's development card was showing "Preview failed"
+   * because the deleted android-firebase-distribution.yml had been failing on every push since
+   * September and its FAILED reports are still sitting in that facet. The chip was reporting a lane
+   * that no longer exists, about a build that no longer happens.
+   *
+   * The new flow says everything this card needs — the test badge and the APK row — so there is
+   * nothing to replace it with. Stale data stays in Firestore; it just stops being rendered.
+   */
+  showStatusChip(rc: ReleaseCandidate): boolean {
+    return !this.isFlutter(rc);
+  }
 
   /** The test result to show, from whichever flow actually reported. Null = nothing ran. */
   testBadge(rc: ReleaseCandidate): { label: string; tone: string } | null {

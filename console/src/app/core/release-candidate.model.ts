@@ -374,7 +374,9 @@ export interface ReleaseCandidate {
 
   /** Latest pushed commit on the branch. */
   headSha?: string;
-  headCommit?: { msg?: string; author?: string; at?: string };
+  // `at` is epoch millis on live data (handlePush writes toMillis(commit.timestamp)) and an ISO
+  // string in the mock fixtures — same dual shape as `updatedAt`. toMillis() accepts both.
+  headCommit?: { msg?: string; author?: string; at?: string | number };
 
   preview: PreviewFacet;
   devGate: GateFacet;
@@ -514,22 +516,6 @@ export function toMillis(v?: string | number | null): number {
   if (typeof v === 'number') return v;
   if (typeof v === 'string') return Date.parse(v) || 0;
   return 0;
-}
-
-/**
- * Sort key for "most recent first" — the branch's last ACTIVITY (operator, 2026-10-21).
- *
- * `lastActivity` is stamped by mutateCandidate on every webhook (push, PR, deploy) and by the
- * sign-off callables, so it tracks what a human actually did to the branch. Deliberately NOT the
- * doc-level `updatedAt`: the new-flow ingest endpoints do not call mutateCandidate, so for flutter
- * that field sat frozen at doc-creation time and "most recent first" silently ordered by when a card
- * first appeared.
- *
- * Note this means a CI report alone does not re-float a card — only activity does. That is the
- * intent: the list answers "what did someone touch last", not "what did a robot write last".
- */
-export function rcRecency(rc: ReleaseCandidate): number {
-  return toMillis(rc.lastActivity?.at) || toMillis(rc.updatedAt);
 }
 
 /** Preview built from an older commit than HEAD. */

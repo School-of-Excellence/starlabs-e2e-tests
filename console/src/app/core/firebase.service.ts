@@ -31,7 +31,6 @@ import {
   MobilePlatform,
   MobileDeliveryFacet,
   mobileAggregateVerdict,
-  rcRecency,
 } from './release-candidate.model';
 import { Member } from './roles';
 import { AuthService } from './auth.service';
@@ -133,7 +132,7 @@ export class FirebaseService {
   /** Reactive sorted stream for mock mode — re-emits on every applyMock() call. */
   private readonly mockCandidates$ = toObservable(
     computed(() =>
-      [...this.mockStore()].sort((a, b) => rcRecency(b) - rcRecency(a)),
+      [...this.mockStore()].sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt)),
     ),
   );
 
