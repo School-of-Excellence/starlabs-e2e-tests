@@ -515,8 +515,9 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     // Update asks first and shows saved-now vs after; Cancel writes nothing
     const confirm = page.locator('app-confirm-dialog');
     await page.getByTestId('pi-aud-update').click();
-    await expect(confirm.getByTestId('pi-confirm-before'), 'PI-13: saved now').toContainText('Status: Non active');
-    await expect(confirm.getByTestId('pi-confirm-added'), 'PI-13: the update adds Active').toHaveText(/Status: Active/);
+    // diff chips quote the stored value ("non active"), not the rail's capitalised label
+    await expect(confirm.getByTestId('pi-confirm-before'), 'PI-13: saved now').toContainText(/Status: non active/i);
+    await expect(confirm.getByTestId('pi-confirm-added'), 'PI-13: the update adds Active').toHaveText(/Status: active$/i);
     await expect(confirm.getByTestId('pi-confirm-removed'), 'PI-13: nothing removed').toHaveCount(0);
     await confirm.getByTestId('pi-confirm-cancel').click();
     await expect(confirm).toHaveCount(0);
@@ -827,10 +828,11 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     // no filters applied → updating would drop the saved status
     await page.getByTestId('pi-rail-saved-manage').click();
     await row(N.SQ).getByTestId('pi-manage-update').click();
-    await expect(confirm.getByTestId('pi-confirm-removed')).toHaveText(/Status: Non active/);
+    await expect(confirm.getByTestId('pi-confirm-removed')).toHaveText(/Status: non active$/i);
     await expect(confirm.getByTestId('pi-confirm-after')).toContainText('No filters');
     await expect(confirm.getByTestId('pi-confirm-unchanged')).toHaveCount(0);
     await confirm.getByTestId('pi-confirm-cancel').click();
+    await expect(confirm).toHaveCount(0);
     expect((await getDoc('searchquery', PI.SQ))!.customerstatus, 'PI-20: Cancel wrote nothing').toEqual(['non active']);
     await manage.getByRole('button', { name: 'Done' }).click();
 
@@ -889,6 +891,8 @@ test.describe('Participant Intelligence — v5 screen against the seeded PI worl
     await row(N.SQ_DEL).getByTestId('pi-manage-delete').click();
     await expect(confirm).toContainText(N.SQ_DEL);
     await confirm.getByTestId('pi-confirm-cancel').click();
+    // wait for the closing dialog to leave the DOM — otherwise the next one is a second app-confirm-dialog
+    await expect(confirm).toHaveCount(0);
     expect((await getDoc('searchquery', PI.SQ_DEL))!.isdeleted, 'PI-22: Cancel deletes nothing').toBeUndefined();
     await expect(row(N.SQ_DEL)).toHaveCount(1);
 
