@@ -33,7 +33,7 @@ import {
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
   wsAddNames, seedUserTypeLoginLogs, clearUserTypeLoginLogs,
-  seedHotLeads, clearHotLeads, wsAddIds,
+  seedHotLeads, clearHotLeads, wsAddIds, readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { countWhere, getDoc } from '../queue/support/firestore-admin';
@@ -1095,9 +1095,22 @@ test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slac
     // Send needs a selection.
     const send = dialog.getByTestId('psd-send');
     await expect(send, 'WS-71: Send is off with nobody picked').toBeDisabled();
+    const exportBtn = dialog.getByTestId('psd-export');
+    await expect(exportBtn, 'WS-71: Export CSV is off with nobody picked').toBeDisabled();
     await nuRow.getByTestId('psd-select-row').locator('input').check();
     await expect(send, 'WS-71: one pick enables Send').toBeEnabled();
     await expect(dialog.getByTestId('psd-count')).toContainText('1 selected');
+    // Export CSV (2026-10-22): only the selected people, from what the panel passed.
+    await expect(exportBtn, 'WS-71: one pick enables Export CSV').toBeEnabled();
+    const [csvDownload] = await Promise.all([page.waitForEvent('download'), exportBtn.click()]);
+    expect(csvDownload.suggestedFilename(), 'WS-71: named after the dialog title').toMatch(/^send-to-slack-\d{4}-\d{2}-\d{2}\.csv$/);
+    const csvFile = test.info().outputPath('send-to-slack.csv');
+    await csvDownload.saveAs(csvFile);
+    const csv = readCsvRows(readFileSync(csvFile, 'utf8').replace(/^\uFEFF/, ''));
+    expect(csv[0], 'WS-71: CSV header').toEqual(['Name', 'Email', 'Phone', 'Journey']);
+    expect(csv.length, 'WS-71: exactly the one selected person').toBe(2);
+    expect(csv[1][0]).toBe(nuName);
+    expect(csv[1][1]).toBe(`${wsAddIds.NU_A}@example.com`);
     await dialog.getByTestId('psd-select-all').locator('input').check();
     await expect(dialog.getByTestId('psd-count'), 'WS-71: the header box picks everyone shown').toContainText('2 selected');
     await dialog.getByTestId('psd-select-all').locator('input').uncheck();
