@@ -44,6 +44,8 @@ const SB_NAMES = {
   a: `SB Alpha ${TESTRUNID}`, b: `SB Bravo ${TESTRUNID}`, c: `SB Charlie ${TESTRUNID}`, d: `SB Delta ${TESTRUNID}`,
   MANUAL: `SB Manual ${TESTRUNID}`,
   AUTO: `SB Active ${TESTRUNID}`,         // created by the spec through the dialog
+  // segment groups SGB-07 creates through the app (segmentboardgroups docs carry no testrunid)
+  G_REF: `SB Group Ref ${TESTRUNID}`, G_OPS: `SB Group Ops ${TESTRUNID}`, G_OPS2: `SB Group Ops Renamed ${TESTRUNID}`,
 };
 const SB_EMAILS = {
   a: `sb-a+${TESTRUNID}@example.com`, b: `sb-b+${TESTRUNID}@example.com`, c: `sb-c+${TESTRUNID}@example.com`,
@@ -63,6 +65,10 @@ async function cleanupSpecSegments(db) {
   }
   await db.collection('segmentboardlist').doc(SB_IDS.MANUAL).delete().catch(() => {});
   await db.recursiveDelete(db.collection('segmentboardconfig').doc(SB_IDS.MANUAL)).catch(() => {});
+  // SGB-07's groups (+ their grouphistory). The app only soft-deletes a group; the seeder removes it for real.
+  for (const name of [SB_NAMES.G_REF, SB_NAMES.G_OPS, SB_NAMES.G_OPS2]) {
+    for (const g of (await db.collection('segmentboardgroups').where('name', '==', name).get()).docs) await db.recursiveDelete(g.ref);
+  }
 }
 
 async function seedSegmentBoard(db, tag, J1) {
