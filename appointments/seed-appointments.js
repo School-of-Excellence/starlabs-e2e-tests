@@ -157,14 +157,17 @@ async function seedAppointments() {
   // product/delivery is NOT seeded (dashboard must keep showing exactly one type for P1), so it never
   // appears on the dashboard; it is reached only via /bookappointment for p1 (no customer_eismapping).
   await apptTypeRef(ID.AT2R).set({ docid: ID.AT2R, id: ID.AT2R, appointmenttype: 'Test Two-Role', duration: 60, ischangeworkrequired: false, ...tag });
-  await roleRef(ID.R1).set({ docid: ID.R1, role: 'Primary Specialist', experiencestage: 'S1', experiencelevel: 'L1', ...tag });
-  await roleRef(ID.R2).set({ docid: ID.R2, role: 'Secondary Specialist', experiencestage: 'S2', experiencelevel: 'L1', ...tag });
+  await roleRef(ID.R1).set({ docid: ID.R1, id: ID.R1, role: 'Primary Specialist', experiencestage: 'S1', experiencelevel: 'L1', ...tag });
+  await roleRef(ID.R2).set({ docid: ID.R2, id: ID.R2, role: 'Secondary Specialist', experiencestage: 'S2', experiencelevel: 'L1', ...tag });
   await db.collection('Roles-To-EIS').doc(ID.RTE1).set({ docid: ID.RTE1, assigned_role_ref: roleRef(ID.R1), assigned_eis: [profileRef(PF.eis0), profileRef(PF.eis1)], ...tag });
   // R2 → ONLY eis1, so the 2-role appt resolves R1→{eis0,eis1}, R2→{eis1}; the only same-time pair that
   // survives the merge's `eisprofile != eisprofile` filter is (eis0 as R1, eis1 as R2) → exactly 1 slot.
   await db.collection('Roles-To-EIS').doc(ID.RTE2).set({ docid: ID.RTE2, assigned_role_ref: roleRef(ID.R2), assigned_eis: [profileRef(PF.eis1)], ...tag });
   await db.collection('AppointmentType-To-Roles').doc(ID.ATR1).set({ docid: ID.ATR1, assigned_appttype_ref: apptTypeRef(ID.AT1), required_role: [roleRef(ID.R1)], additional_role: [], ...tag });
   await db.collection('AppointmentType-To-Roles').doc(ID.ATR2R).set({ docid: ID.ATR2R, assigned_appttype_ref: apptTypeRef(ID.AT2R), required_role: [roleRef(ID.R1), roleRef(ID.R2)], additional_role: [], ...tag });
+  // The ATC data of the map-appointment-role dialog is NOT seeded here: map-appointment-role-atc.spec.ts adds it
+  // in beforeAll and removes it in afterAll (seedDialogAtc / removeDialogAtc below), so it never lingers on a
+  // shared emulator for the next suite (the ATC suite reads bigactivity + `atc model` app-wide).
   await productRef(ID.P1).set({ docid: ID.P1, product: 'Test WiSH Priority', mode: 'Priority Mode', atcmodel: null, ...tag });
   // Distinct product whose name appears ONLY on the two roster appointments (APROSTER/APFUTURE), so the
   // roster Search box isolates exactly them — the past AP1/AP2 carry P1 and won't match this filter.
@@ -561,12 +564,41 @@ async function seedBookingSlot(db, T, profileRef, apptTypeRef) {
   }, { merge: false });
 }
 
+// ATC section of the map-appointment-role dialog (2026-10-22)
+const ATC_ACT = { author: `${TESTRUNID}_ba_author`, observer: `${TESTRUNID}_ba_observer`, ca: `${TESTRUNID}_ba_ca`, plain: `${TESTRUNID}_ba_plain` };
+const ATC_ACT_NAME = { author: 'Diagnostics Solo', observer: 'Diagnostics Shadow', ca: 'Changework Solo', plain: `Plain Activity ${TESTRUNID}` };
+const ATC_ACT_PROP = { author: 'author', observer: 'observer', ca: 'assigned_to', plain: null };
+const ATC_MODEL = { ei: 'EI Solution', wish: 'WiSH' };
+
+/**
+ * The map-appointment-role dialog's ATC world, owned by map-appointment-role-atc.spec.ts (beforeAll):
+ * bigactivity with an atcproperty (+ one without, which must NOT be offered), the `atc model` names
+ * (reference-only config — safe per CLAUDE.md), and ATR2R prescribing an EI Solution ATC (R1 → author,
+ * R2 → observer + CA) for MARD-ATC-03. EMULATOR ONLY (initAdminAuto: the spec runs under the emulator config).
+ */
+async function seedDialogAtc(db) {
+  const tag = TAG(TESTRUNID);
+  for (const k of Object.keys(ATC_ACT)) {
+    await db.collection('bigactivity').doc(ATC_ACT[k]).set({ docid: ATC_ACT[k], activity: ATC_ACT_NAME[k], atcproperty: ATC_ACT_PROP[k], ...tag });
+  }
+  for (const k of Object.keys(ATC_MODEL)) {
+    await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).set({ atcmodel: ATC_MODEL[k], ...tag });
+  }
+  await db.collection('AppointmentType-To-Roles').doc(ID.ATR2R).update({
+    atcrequired: true, atcmodel: ATC_MODEL.ei, atcrolemap: { [ID.R1]: [ATC_ACT.author], [ID.R2]: [ATC_ACT.observer, ATC_ACT.ca] } });
+}
+/** Removes what seedDialogAtc added (the spec restores ATR2R from its own snapshot). */
+async function removeDialogAtc(db) {
+  for (const k of Object.keys(ATC_ACT)) await db.collection('bigactivity').doc(ATC_ACT[k]).delete().catch(() => {});
+  for (const k of Object.keys(ATC_MODEL)) await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).delete().catch(() => {});
+}
+
 // Collections this seed writes (for teardown).
 const SEEDED = [
   'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
   'productToDeliverySequence', 'participantsproduct', 'participantdeliverysequence', 'deliverables',
   'appointments', 'availability', 'offtime', 'EISzoomcontact', 'customer_eismapping', 'deliverytime',
-  'participant metadata',
+  'participant metadata', 'bigactivity',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
@@ -575,6 +607,12 @@ async function teardownAppointments() {
   const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
+  for (const k of Object.keys(ATC_MODEL)) await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).delete().catch(() => {});
+  // mappings the dialog CREATED for this run's appointment types carry no testrunid — remove them too
+  for (const at of [ID.AT1, ID.AT2, ID.AT2R]) {
+    const made = await db.collection('AppointmentType-To-Roles').where('assigned_appttype_ref', '==', db.collection('appointmenttype').doc(at)).get();
+    for (const d of made.docs) if (!d.data().testrunid) await d.ref.delete();
+  }
   // Also delete the Auth users (emails carry the run id).
   const auth = admin.auth();
   for (const key of Object.keys(PF)) {
@@ -616,6 +654,7 @@ async function resetBookingSubject() {
 
 module.exports = {
   TESTRUNID, ID, PF, EMAIL, ROUTES, SEEDED, seedAppointments, teardownAppointments, resetBookingSubject,
+  ATC_ACT, ATC_ACT_NAME, ATC_MODEL, seedDialogAtc, removeDialogAtc,
   SAS_RUN, SAS_ID, SAS_PF, SAS_EMAIL, SAS_SEEDED, seedStudio, resetStudioWindows,
 };
 

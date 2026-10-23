@@ -62,7 +62,8 @@ test.describe('ATC — Pick for Mentoring (real UI, emulator only)', () => {
     await expect(p.getByTestId('pfm-pick'), 'the Pick button is gone, so a duplicate cannot be created').toHaveCount(0);
     const picks = await waitFor(async () => { const d = await picksFor(ATC2.PF_V); return d.length ? d : null; }, 'pick doc');
     expect(picks).toHaveLength(1);
-    expect((await atcDoc(`atc_to_validate/${ATC2.PF_V}`)).mentoringid).toBe(picks[0].id);
+    // the pick doc (default DB) and the ATC's mentoringid (firestore-atc) are two writes — wait for the second
+    await expect.poll(async () => (await atcDoc(`atc_to_validate/${ATC2.PF_V}`))?.mentoringid ?? null, { timeout: 20_000 }).toBe(picks[0].id);
   });
 
   test('PFM-04 Add Note updates the mentoring note and keeps the old one as a revision', async ({ page }) => {

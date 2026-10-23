@@ -39,6 +39,15 @@ export const EIA = S.EIA;
 export const ATE_QUEUE_NAME: string = S.ATE_QUEUE_NAME;
 export const TRIPLE_QUEUE_NAME: string = S.TRIPLE_QUEUE_NAME;
 export const AI_ADJ: string = S.AI_ADJ;
+// phase 3 (2026-10-22) — prescribe templates: EI Solution / WiSH by name, the EI appointment world, the live queue
+export const TPL = S.TPL;
+export const TPL_MODEL = S.TPL_MODEL;
+export const TPL_DIRECTIVE = S.TPL_DIRECTIVE;
+export const LIVE_QUEUE_NAME: string = S.LIVE_QUEUE_NAME;
+export const LIVE_STAGE: string = S.LIVE_STAGE;
+// phase 4 (2026-10-23) — what the Edit / View template ATCs hold
+export const TPL_ASKS = S.TPL_ASKS;
+export const TPL_OUTCOMES = S.TPL_OUTCOMES;
 /** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
 export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
   const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);

@@ -107,6 +107,9 @@ test.describe('Scheduling — dialog & child components controls addressable', (
     // session. Referenced here (literal getByTestId) so the gate credits each control; soft-addressed.
     if ((await page.getByTestId('mard-close-1').count()) > 0) await expect(page.getByTestId('mard-close-1').first()).toBeAttached();
     if ((await page.getByTestId('mard-onformsubmit-2').count()) > 0) await expect(page.getByTestId('mard-onformsubmit-2').first()).toBeAttached();
+    // The save-failure banner only renders when the Firestore write rejects — the emulator accepts every write,
+    // so no flow case can drive it (the ATC hooks 3–8 are driven in map-appointment-role-atc.spec.ts).
+    if ((await page.getByTestId('mard-save-error-9').count()) > 0) await expect(page.getByTestId('mard-save-error-9').first()).toBeAttached();
   });
 
   test('mark-appointment-status controls are addressable (mas)', async ({ page }) => {

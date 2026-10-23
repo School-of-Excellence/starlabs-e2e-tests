@@ -5,7 +5,7 @@
 // dashboard configuration only. Reached from View Prescribed ATC's version buttons (window.open popup).
 import { test, expect } from '@playwright/test';
 import {
-  ATC2, NAME, PROC_NAME, RUN, installAtcGuards, assertNoRealDb, loginAsAtc, popupFrom, tid, AtcGuard,
+  ATC2, NAME, PROC_NAME, RUN, installAtcGuards, assertNoRealDb, loginAsAtc, pickOptions, popupFrom, tid, AtcGuard,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -24,6 +24,9 @@ test.describe('ATC — Upgraded ATC (real UI, emulator only)', () => {
   test('VUA-01 a version button on View Prescribed opens the retired version with its adjustments', async ({ page }) => {
     await loginAsAtc(page, 'admin');
     await page.goto('/viewprescribedATC');
+    // filter to the vua participant: the unfiltered list shows 25 per page and other specs add newer ATCs
+    await expect(page.getByTestId('vatc-count')).toBeVisible({ timeout: 45_000 });
+    await pickOptions(page, page.getByTestId('vatc-filter-participant'), [NAME.vua]);
     const row = page.locator(tid(`vatc-row-${ATC2.U_NEW}`));
     await expect(row, 'the current version is listed').toBeVisible({ timeout: 45_000 });
     const popup = await popupFrom(page, () => row.getByTestId('vatc-version-btn').first().click());

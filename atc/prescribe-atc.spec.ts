@@ -201,8 +201,14 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     const sel3 = p3.getByTestId('patc-participant');
     await expect(sel3).toHaveAttribute('aria-disabled', 'false', { timeout: 45_000 });
     await pickOptions(p3, sel3, [NAME.p2], false);
+    // 2026-10-22: the dialog's way out when drafts are listed reads "Start fresh"; the fresh ATC then waits for
+    // the product (the form below it stays hidden until participant AND product are chosen)
+    await expect(p3.getByTestId('atco-close')).toContainText('Start fresh', { timeout: 30_000 });
     await p3.getByTestId('atco-close').click({ timeout: 30_000 });
-    await expect(p3.locator(tid('patc-adj-0')).getByTestId('patc-adj-text'), 'Close starts a fresh ATC').toHaveValue('', { timeout: 30_000 });
+    await expect(p3.getByTestId('patc-product'), 'Start fresh: the product is not chosen yet').toHaveAttribute('aria-disabled', 'false', { timeout: 30_000 });
+    await expect(p3.locator(tid('patc-adj-0')), 'form hidden until a product is picked').toHaveCount(0);
+    await pickOptions(p3, p3.getByTestId('patc-product'), [MODEL.alpha], false);
+    await expect(p3.locator(tid('patc-adj-0')).getByTestId('patc-adj-text'), 'Start fresh gives an empty ATC').toHaveValue('', { timeout: 30_000 });
     expect((await drafts(PF.p2)).some((x) => x.data().delete === false && x.data().transcript?.[0]?.adjustment === `PATC-05 draft text ${RUN}`),
       'declining does not delete the existing draft').toBe(true);
     assertNoRealDb(g3);
@@ -238,9 +244,10 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
       await expect.poll(() => selectText(caOf(i, j)), { message: `OK: proc ${i}.${j} got the agent` }).toBe(NAME.agent1);
       expect(await selectText(saOf(i, j)), `OK: proc ${i}.${j} other activity untouched`).toBe('');
     }
-    // a procedure added AFTER Apply starts empty; remove it again so submit validation passes
+    // a procedure row added AFTER Apply starts empty until its changework is chosen (the inherit on choosing is
+    // prescribe-atc-templates PTPL-04); remove it again so submit validation passes
     await proc(page, 1, 0).getByTestId('patc-proc-add').click();
-    expect(await selectText(caOf(1, 1)), 'a new row starts empty (no auto-inheritance)').toBe('');
+    expect(await selectText(caOf(1, 1)), 'a new row starts empty until a changework is picked').toBe('');
     await proc(page, 1, 1).getByTestId('patc-proc-remove').click();
     await expect(proc(page, 1, 1)).toHaveCount(0);
 

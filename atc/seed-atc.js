@@ -43,6 +43,11 @@ const ATC_DB_ID = 'firestore-atc';
 
 // ---- actors -------------------------------------------------------------------------------------------
 const P2_KEYS = ['vua', 'vpa', 'pva', 'vaa', 'rfa', 'pfm', 'ate', 'lrx', 'lrx2', 'tra', 'tra2', 'trv', 'trp', 'tre', 'eia', 'eia2'];
+// phase 3 (2026-10-22, prescribe templates): one participant per case — gating, EI appointment, EI no appointment,
+// bulk-on-new-procedure, live-queue draft
+const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
+  // phase 4 (2026-10-23): Prescribe WiSH · Edit EI / legacy EI / WiSH / bulk · View + Preview
+  'tpw', 'tea', 'tel', 'tew', 'teb', 'tvv'];
 const PF = {
   admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
   eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
@@ -54,7 +59,9 @@ const PF = {
   p5: `${RUN}_pf_p5`, p6: `${RUN}_pf_p6`, p7: `${RUN}_pf_p7`, p8: `${RUN}_pf_p8`,
   // phase 2 (2026-10-17): developer staff user (Add Triple drafts, EI AI View) + one participant per screen
   dev: `${RUN}_pf_dev`,
+  emen: `${RUN}_pf_emen`,         // roles {eis, mentor} — an EIS who also mentors (sees Directives for Micro ATC)
   ...Object.fromEntries(P2_KEYS.map((k) => [k, `${RUN}_pf_${k}`])),
+  ...Object.fromEntries(P3_KEYS.map((k) => [k, `${RUN}_pf_${k}`])),
 };
 const EMAIL = {
   admin: `admin+${RUN}@example.com`, eis: `eis+${RUN}@example.com`,
@@ -64,7 +71,9 @@ const EMAIL = {
   p5: `participant5+${RUN}@example.com`, p6: `participant6+${RUN}@example.com`, p7: `participant7+${RUN}@example.com`,
   p8: `participant8+${RUN}@example.com`,
   dev: `dev+${RUN}@example.com`,
+  emen: `emen+${RUN}@example.com`,
   ...Object.fromEntries(P2_KEYS.map((k) => [k, `${k}+${RUN}@example.com`])),
+  ...Object.fromEntries(P3_KEYS.map((k) => [k, `${k}+${RUN}@example.com`])),
 };
 
 function roster() {
@@ -76,8 +85,9 @@ function roster() {
     mk('agent2', ['changeagent'], 'changeagent'),
     mk('mentor', ['mentor'], 'mentor'),
     mk('dev', ['developer'], 'developer'),
+    mk('emen', ['eis', 'mentor'], 'eis'),   // 2026-10-23: prescriber + mentor (PTPL-07)
   ];
-  const participants = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', ...P2_KEYS].map((k) => ({ uid: `${RUN}_u_${k}`, profileid: PF[k], email: EMAIL[k], role: 'participant' }));
+  const participants = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', ...P2_KEYS, ...P3_KEYS].map((k) => ({ uid: `${RUN}_u_${k}`, profileid: PF[k], email: EMAIL[k], role: 'participant' }));
   return { staff, participants };
 }
 
@@ -153,7 +163,42 @@ const ROUTES = [
 // Default-DB collections this seed owns (testrunid-tagged; teardown sweeps by tag).
 const DEFAULT_SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard', 'bigactivity', 'procedures',
   'procedure_recommend', 'atc model', 'products', 'participant metadata', 'queue generation', 'arena events',
-  'big participants assignments', 'pick_for_mentoring'];
+  'big participants assignments', 'pick_for_mentoring',
+  // phase 3 (prescribe templates)
+  'eisroles', 'appointmenttype', 'AppointmentType-To-Roles', 'appointments', 'live assignment', 'queue stage log'];
+
+// ---- phase 3: prescribe templates (2026-10-22) ------------------------------------------------------------
+// EI Solution / WiSH are matched by name (lowercase) in Prescribe ATC, so the model names are exact.
+const TPL_MODEL = { ei: 'EI Solution', wish: 'WiSH' };
+const TPL_DIRECTIVE = { ei: `EI directive ${RUN}`, wish: `WiSH directive ${RUN}` };
+const TPL = {
+  roleDiag: `${RUN}_role_diag`, roleShadow: `${RUN}_role_shadow`,
+  atEi: `${RUN}_at_ei`, atOther: `${RUN}_at_other`, atrEi: `${RUN}_atr_ei`, atrOther: `${RUN}_atr_other`,
+  // tpe's appointments: ONLY apPast may be picked (closest PAST, not cancelled, admin hosts it, EI type)
+  apPast: `${RUN}_ap_ei_past`,         // 1 day ago  — diag: admin, shadow: agent2   ← the one
+  apOlder: `${RUN}_ap_ei_older`,       // 5 days ago — shadow: agent1 (older)
+  apCancelled: `${RUN}_ap_ei_cancelled`, // 2 h ago   — shadow: mentor (cancelled)
+  apFuture: `${RUN}_ap_ei_future`,     // tomorrow   — shadow: eis (future)
+  apNotMine: `${RUN}_ap_ei_notmine`,   // 3 h ago    — admin is NOT a host
+  apOtherType: `${RUN}_ap_other_type`, // 1 h ago    — a non-ATC appointment type
+  liveQueue: `${RUN}_live_queue`, liveAssignment: `${RUN}_live_la`, liveLog: `${RUN}_live_log`,
+  tpqBetaDraft: `${RUN}_tpq_beta_draft`, // tpq's older NON-queue draft (beta) — "open another draft" must leave queue mode
+  // phase 4 (2026-10-23) — Edit / View with the template sections
+  eEI: `${RUN}_e_ei`,             // tea: EI Solution ATC with two asks
+  eLegacy: `${RUN}_e_legacy`,     // tel: EI Solution ATC from before Ask — no ask, no directive
+  eWishV1: `${RUN}_e_wish_v1`,    // tew: the WiSH ATC's previous version (retired)
+  eWish: `${RUN}_e_wish`,         // tew: WiSH ATC with two outcomes, editedfrom → eWishV1, AI areas only (no summary)
+  eBulk: `${RUN}_e_bulk`,         // teb: plain (alpha) ATC for the new-adjustment change-agent inheritance
+  vEI: `${RUN}_v_ei`,             // tvv: EI ATC shown in View Prescribed + Preview
+  vWish: `${RUN}_v_wish`,         // tvv: WiSH ATC shown in View Prescribed + Preview
+  vPlain: `${RUN}_v_plain`,       // tvv: a plain ATC (no ask / outcomes) — the negative control
+};
+// what the phase-4 ATCs hold (specs compare the screens against these)
+const TPL_ASKS = [{ askedby: 'self', askedfor: `Sleep better ${RUN}` }, { askedby: 'spouse', askedfor: `Calmer evenings ${RUN}` }];
+const TPL_OUTCOMES = [{ outcomearea: `Wish Super Fitness ${RUN}`, outcomeexpected: 'Run 5K by March' },
+  { outcomearea: `Wish Super Career ${RUN}`, outcomeexpected: 'Lead the team by June' }];
+const LIVE_QUEUE_NAME = `Live Queue ${RUN}`;
+const LIVE_STAGE = `Live Stage ${RUN}`;
 const QUEUE_NAME = `ATC Queue ${RUN}`;
 
 function atcDb(admin) { return getFirestore(admin.app(), ATC_DB_ID); }
@@ -296,6 +341,8 @@ async function seedATC() {
   await writeATC('atc_to_validate', ATC.EV1, { ...base(PF.p2, PF.admin, MODEL.beta, 13), status: 'atc given' }, simpleAdj(`EV1 adjustment ${RUN}`));
 
   await seedPhase2({ db, adb, T, tag, daysAgo, pref, procRef, writeATC, base, simpleAdj });
+  await seedPhase3({ db, adb, T, tag, daysAgo });
+  await seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj });
 
   console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
 }
@@ -404,6 +451,77 @@ async function seedPhase2({ db, adb, tag, daysAgo, pref, writeATC, base, simpleA
     output: aiOutput, atcalpharef: adb.doc(`atc_alpha/${ATC.A1}`), atcsubmittedat: daysAgo(10), ...tag });
 }
 
+async function seedPhase3({ db, adb, T, tag, daysAgo }) {
+  const ref = (path) => db.doc(path);
+  const pfRef = (pid) => ref(`profile_data/${pid}`);
+  const hoursFromNow = (h) => T.fromMillis(Date.now() + h * 3600e3);
+  for (const k of Object.keys(TPL_MODEL)) {
+    await db.collection('atc model').doc(`${RUN}_model_${k}`).set({ atcmodel: TPL_MODEL[k], directive: TPL_DIRECTIVE[k], ...tag });
+  }
+  // roles + types + the ATC mapping (role → bigactivity ids; ACT.ca is assigned_to → Prescribe must skip it)
+  await db.collection('eisroles').doc(TPL.roleDiag).set({ docid: TPL.roleDiag, id: TPL.roleDiag, role: `EI Diagnostics Specialist ${RUN}`, ...tag });
+  await db.collection('eisroles').doc(TPL.roleShadow).set({ docid: TPL.roleShadow, id: TPL.roleShadow, role: `EI Shadow ${RUN}`, ...tag });
+  await db.collection('appointmenttype').doc(TPL.atEi).set({ docid: TPL.atEi, id: TPL.atEi, appointmenttype: `EI Solution Session ${RUN}`, ...tag });
+  await db.collection('appointmenttype').doc(TPL.atOther).set({ docid: TPL.atOther, id: TPL.atOther, appointmenttype: `Other Session ${RUN}`, ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(TPL.atrEi).set({
+    id: TPL.atrEi, assigned_appttype_ref: ref(`appointmenttype/${TPL.atEi}`),
+    required_role: [ref(`eisroles/${TPL.roleDiag}`), ref(`eisroles/${TPL.roleShadow}`)], additional_role: [],
+    atcrequired: true, atcmodel: TPL_MODEL.ei,
+    atcrolemap: { [TPL.roleDiag]: [ACT.author], [TPL.roleShadow]: [ACT.observer, ACT.ca] }, ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(TPL.atrOther).set({
+    id: TPL.atrOther, assigned_appttype_ref: ref(`appointmenttype/${TPL.atOther}`),
+    required_role: [ref(`eisroles/${TPL.roleDiag}`)], additional_role: [], atcrequired: false, atcmodel: null, atcrolemap: {}, ...tag });
+
+  const appt = async (id, { type = TPL.atEi, start, cancelled = false, hosts, diag, shadow }) => {
+    await db.collection('appointments').doc(id).set({
+      appointment: ref(`appointmenttype/${type}`), bookedby: pfRef(PF.tpe), starttime: start, endtime: start,
+      cancelled, attended: true, hosts: hosts.map(pfRef),
+      hostRole: { [`eisroles/${TPL.roleDiag}`]: [pfRef(diag)], [`eisroles/${TPL.roleShadow}`]: [pfRef(shadow)] }, ...tag });
+  };
+  await appt(TPL.apPast, { start: daysAgo(1), hosts: [PF.admin, PF.agent2], diag: PF.admin, shadow: PF.agent2 });
+  await appt(TPL.apOlder, { start: daysAgo(5), hosts: [PF.admin, PF.agent1], diag: PF.admin, shadow: PF.agent1 });
+  await appt(TPL.apCancelled, { start: hoursFromNow(-2), cancelled: true, hosts: [PF.admin, PF.mentor], diag: PF.admin, shadow: PF.mentor });
+  await appt(TPL.apFuture, { start: hoursFromNow(24), hosts: [PF.admin, PF.eis], diag: PF.admin, shadow: PF.eis });
+  await appt(TPL.apNotMine, { start: hoursFromNow(-3), hosts: [PF.eis, PF.agent1], diag: PF.eis, shadow: PF.agent1 });
+  await appt(TPL.apOtherType, { type: TPL.atOther, start: hoursFromNow(-1), hosts: [PF.admin, PF.agent1], diag: PF.admin, shadow: PF.agent1 });
+
+  // live queue session for tpq (non-WiSH/EI model → the existing live-queue flow): ongoing queue, a live
+  // assignment pairing admin with tpq (agent1 filled the author activity), and the queue token → product alpha
+  await db.collection('queue generation').doc(TPL.liveQueue).set({ docid: TPL.liveQueue, queuename: LIVE_QUEUE_NAME,
+    queuestartdate: hoursFromNow(-24), queueenddate: hoursFromNow(24), changeworkperson: [], ...tag });
+  await db.collection('live assignment').doc(TPL.liveAssignment).set({
+    queueid: TPL.liveQueue, participantid: PF.tpq, pairing: [PF.admin], status: 'live', created: T.now(),
+    stagename: LIVE_STAGE, queuename: LIVE_QUEUE_NAME, participantsactivity: { [PF.agent1]: ACT.author }, ...tag });
+  await db.collection('queue stage log').doc(TPL.liveLog).set({
+    liveassignmentid: TPL.liveAssignment, productref: ref(`products/${RUN}_product_alpha`), currentstage: LIVE_STAGE, ...tag });
+  // tpq's older non-queue draft (beta)
+  await adb.collection('temporary_ATC').doc(TPL.tpqBetaDraft).set({
+    date: '2026-10-01', product: MODEL.beta, atcdirective: MODEL_DIRECTIVE.beta, profileid: PF.tpq,
+    author: { [ACT.author]: [`profile_data/${PF.admin}`] }, observer: {}, mentor: {}, additionalactivity: [],
+    transcript: [{ adjustment: `TPQ beta draft ${RUN}`, awareness: null, potentialyears: null,
+      procedure: [{ name: null, recommended_to: null, assignedMap: {}, mandatory: false, completed: false }] }],
+    consultationsummary: null, consultationpoint: null, notes: null, mentornotes: null, delete: false,
+    authorprofileid: [PF.admin], accountpid: PF.admin, lastupdated: daysAgo(3), ...tag,
+  });
+}
+
+// Phase 4 (2026-10-23): saved ATCs carrying the template sections, for Edit + View + Preview.
+async function seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj }) {
+  const tpl = (pid, model, d, extra = {}) => ({ ...base(pid, PF.admin, TPL_MODEL[model], d), directive: TPL_DIRECTIVE[model], ...extra });
+  await writeATC('atc_alpha', TPL.eEI, tpl(PF.tea, 'ei', 400, { ask: TPL_ASKS }), simpleAdj(`eEI adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eLegacy, tpl(PF.tel, 'ei', 401, { directive: null }), simpleAdj(`eLegacy adjustment ${RUN}`));
+  const v1 = await writeATC('atc_alpha', TPL.eWishV1, tpl(PF.tew, 'wish', 403, { outcomes: TPL_OUTCOMES, status: 'upgraded', isdelete: true }),
+    simpleAdj(`eWish v1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eWish, tpl(PF.tew, 'wish', 402, { outcomes: TPL_OUTCOMES, editedfrom: v1, lasteditedon: daysAgo(402),
+    areastoexplore: ['Sleep'], aiatcsummary: '' }), simpleAdj(`eWish adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eBulk, base(PF.teb, PF.admin, MODEL.alpha, 404), simpleAdj(`eBulk adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.vEI, tpl(PF.tvv, 'ei', 405, { ask: TPL_ASKS }), simpleAdj(`vEI adjustment ${RUN}`));
+  // dated well in the past so they sort to the END of View Prescribed (25 per page) and never push another
+  // spec's ATC off page 1; the view specs filter by participant instead
+  await writeATC('atc_alpha', TPL.vPlain, base(PF.tvv, PF.admin, MODEL.alpha, 407), simpleAdj(`vPlain adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.vWish, tpl(PF.tvv, 'wish', 406, { outcomes: TPL_OUTCOMES }), simpleAdj(`vWish adjustment ${RUN}`));
+}
+
 async function teardownATC() {
   const admin = initAdminAuto();
   const db = admin.firestore();
@@ -435,7 +553,8 @@ async function teardownATC() {
 }
 
 module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, QUEUE_NAME,
-  ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ, seedATC, teardownATC };
+  ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
+  TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, seedATC, teardownATC };
 
 if (require.main === module) {
   (async () => {
