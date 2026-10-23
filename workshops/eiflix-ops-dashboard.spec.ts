@@ -105,6 +105,45 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix App Logs', () =
   });
   test.afterEach(() => clearLoginLogs());
 
+  // WS-72 — From–To date range on the App Logs (2026-10-23). Seeded logins: today (p0, p1), 3 days
+  // ago (p0, version 2.2.9), 20 days ago (p2), 40 days ago (p0, 2.0.0).
+  test('WS-72 the App Logs From–To range shows only logins inside it, hints until both are picked, and Clear goes back to Today', async ({ page }) => {
+    const day = (ago: number) => { const d = new Date(); d.setDate(d.getDate() - ago); return d; };
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-logs-section');
+    const rows = section.getByTestId('eif-logs-row');
+    const from = section.getByTestId('eif-logs-range-from');
+    const to = section.getByTestId('eif-logs-range-to');
+    await expect(rows.filter({ hasText: wsMetaNames.p0 }), 'WS-72: Today loads first').toHaveCount(1, { timeout: 60_000 });
+
+    // One date alone does nothing yet, and says so.
+    await from.fill(iso(day(25)));
+    await expect(page.getByText('Pick both dates to apply the range'), 'WS-72: half a range shows the hint').toBeVisible();
+    await expect(section.getByTestId('eif-logs-range-today')).toHaveAttribute('aria-pressed', 'true');
+
+    // 25 → 10 days ago: only p2's 20-day-old login.
+    await to.fill(iso(day(10)));
+    await expect(rows, 'WS-72: one login between 25 and 10 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText(wsMetaNames.p2);
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: no preset is active').toHaveAttribute('aria-pressed', 'false');
+    await expect(section.getByTestId('eif-logs-count'), 'WS-72: the count names the range').toContainText('for ');
+
+    // 5 → 1 days ago: only the 3-day-old login (version 2.2.9); today's and older ones stay out.
+    await from.fill(iso(day(5)));
+    await to.fill(iso(day(1)));
+    await expect(rows, 'WS-72: one login between 5 and 1 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText('2.2.9');
+
+    // Clear: back to Today, pickers emptied.
+    await section.getByTestId('eif-logs-range-clear').click();
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: Clear returns to Today').toHaveAttribute('aria-pressed', 'true');
+    await expect(from).toHaveValue('');
+    await expect(to).toHaveValue('');
+    await expect(rows.filter({ hasText: wsMetaNames.p1 }), 'WS-72: today\'s logins are back').toHaveCount(1, { timeout: 60_000 });
+  });
+
   test('WS-31 the logs table honours the range, drops other apps, maps names, filters, sorts and pages', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
