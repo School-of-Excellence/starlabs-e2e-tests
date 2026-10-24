@@ -156,7 +156,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     await expect(readyItem(page, 'Add at least one author')).toHaveClass(/ready-done/);
 
     // clicking the directive TEXT opens the same editor as Edit Directive
-    await page.getByTestId('patc-directive-text').click();
+    await page.getByTestId('patc-directive-open').click();
     await page.getByTestId('dbu-textarea').fill(`PTPL-01 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('patc-directive-text')).toHaveText(`PTPL-01 directive ${RUN}`);

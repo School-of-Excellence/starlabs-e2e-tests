@@ -79,6 +79,12 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     await expect(page.getByTestId('eatc-ai-section')).toHaveCount(0);
     await expect(page.getByTestId('eatc-directive-text')).toHaveText(TPL_DIRECTIVE.ei);
     await expect(page.getByTestId('eatc-directive-btn')).toHaveText(/Update Directive/);
+    // the directive text opens the same editor as the button; Cancel leaves it unchanged
+    await page.getByTestId('eatc-directive-open').click();
+    await expect(page.getByTestId('dbu-textarea')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('dbu-cancel').click();
+    await expect(page.getByTestId('dbu-textarea')).toHaveCount(0);
+    await expect(page.getByTestId('eatc-directive-text')).toHaveText(TPL_DIRECTIVE.ei);
     // the saved asks
     await expect(page.getByTestId('eatc-ask-card')).toContainText('At least one complete ask is required.');
     await expect(page.getByTestId('eatc-ask-by')).toHaveCount(2);
