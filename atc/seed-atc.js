@@ -47,7 +47,9 @@ const P2_KEYS = ['vua', 'vpa', 'pva', 'vaa', 'rfa', 'pfm', 'ate', 'lrx', 'lrx2',
 // bulk-on-new-procedure, live-queue draft
 const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
   // phase 4 (2026-10-23): Prescribe WiSH · Edit EI / legacy EI / WiSH / bulk · View + Preview
-  'tpw', 'tea', 'tel', 'tew', 'teb', 'tvv'];
+  'tpw', 'tea', 'tel', 'tew', 'teb', 'tvv',
+  // phase 5 (2026-10-24): EI Solution Review log
+  'trl'];
 const PF = {
   admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
   eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
@@ -192,7 +194,17 @@ const TPL = {
   vEI: `${RUN}_v_ei`,             // tvv: EI ATC shown in View Prescribed + Preview
   vWish: `${RUN}_v_wish`,         // tvv: WiSH ATC shown in View Prescribed + Preview
   vPlain: `${RUN}_v_plain`,       // tvv: a plain ATC (no ask / outcomes) — the negative control
+  // phase 5 (2026-10-24) — Review log (all EI Solution, participant trl, dated far back)
+  rEI: `${RUN}_r_ei`,             // admin author; one active review (agent2) + one deleted (admin) — View add/delete
+  rEIS: `${RUN}_r_eis`,           // eis is the AUTHOR → eis may add (author path) in View
+  rImpl: `${RUN}_r_impl`,         // admin author; eis is the adjustment's IMPLEMENTATION AGENT → eis may add in Edit
+  rNot: `${RUN}_r_not`,           // admin author + admin agent → eis is NOT involved → read only in Edit
+  rLive: `${RUN}_r_live`,         // Edit shows a review added elsewhere, live
+  rCarry: `${RUN}_r_carry`,       // a review added while Edit is open is on the saved new version
+  rUp: `${RUN}_r_up`,             // saved elsewhere while open → banner + Open latest version
+  rDel: `${RUN}_r_del`,           // deleted while open → banner
 };
+const REVIEW = { active: `Shadow call went well ${RUN}`, deleted: `Duplicate note ${RUN}` };
 // what the phase-4 ATCs hold (specs compare the screens against these)
 const TPL_ASKS = [{ askedby: 'self', askedfor: `Sleep better ${RUN}` }, { askedby: 'spouse', askedfor: `Calmer evenings ${RUN}` }];
 const TPL_OUTCOMES = [{ outcomearea: `Wish Super Fitness ${RUN}`, outcomeexpected: 'Run 5K by March' },
@@ -343,6 +355,7 @@ async function seedATC() {
   await seedPhase2({ db, adb, T, tag, daysAgo, pref, procRef, writeATC, base, simpleAdj });
   await seedPhase3({ db, adb, T, tag, daysAgo });
   await seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase5({ daysAgo, writeATC, base });
 
   console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
 }
@@ -522,6 +535,24 @@ async function seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj }) {
   await writeATC('atc_alpha', TPL.vWish, tpl(PF.tvv, 'wish', 406, { outcomes: TPL_OUTCOMES }), simpleAdj(`vWish adjustment ${RUN}`));
 }
 
+// Phase 5 (2026-10-24): EI Solution Review log — `reviewlog` on the ATC doc.
+async function seedPhase5({ daysAgo, writeATC, base }) {
+  const ei = (author, d, extra = {}) => ({ ...base(PF.trl, author, TPL_MODEL.ei, d), directive: TPL_DIRECTIVE.ei, ask: TPL_ASKS, ...extra });
+  const adj = (name, agent) => [{ name, extra: { implementationagent: [agent] },
+    procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [agent] }, assigned: [agent] }] }];
+  const r = (id, note, by, d, deleted = false) => ({ id, note, createdby: by, createdon: daysAgo(d), isdelete: deleted,
+    deletedby: deleted ? by : null, deletedon: deleted ? daysAgo(d) : null });
+  await writeATC('atc_alpha', TPL.rEI, ei(PF.admin, 410, { reviewlog: [
+    r(`${RUN}_rv1`, REVIEW.active, PF.agent2, 5), r(`${RUN}_rv2`, REVIEW.deleted, PF.admin, 4, true)] }), adj(`rEI adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rEIS, ei(PF.eis, 411), adj(`rEIS adjustment ${RUN}`, PF.agent1));
+  await writeATC('atc_alpha', TPL.rImpl, ei(PF.admin, 412), adj(`rImpl adjustment ${RUN}`, PF.eis));
+  await writeATC('atc_alpha', TPL.rNot, ei(PF.admin, 413), adj(`rNot adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rLive, ei(PF.admin, 414), adj(`rLive adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rCarry, ei(PF.admin, 415), adj(`rCarry adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rUp, ei(PF.admin, 416), adj(`rUp adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rDel, ei(PF.admin, 417), adj(`rDel adjustment ${RUN}`, PF.admin));
+}
+
 async function teardownATC() {
   const admin = initAdminAuto();
   const db = admin.firestore();
@@ -554,7 +585,7 @@ async function teardownATC() {
 
 module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, QUEUE_NAME,
   ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
-  TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, seedATC, teardownATC };
+  TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW, seedATC, teardownATC };
 
 if (require.main === module) {
   (async () => {

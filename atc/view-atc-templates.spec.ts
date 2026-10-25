@@ -7,7 +7,7 @@
 // (A1) is the negative control.
 import { test, expect, Page } from '@playwright/test';
 import {
-  ATC, PA, NAME, TPL, TPL_ASKS, TPL_OUTCOMES, installAtcGuards, assertNoRealDb, loginAsAtc, pickOptions, tid, AtcGuard,
+  ATC, PA, PF, NAME, RUN, TPL, TPL_ASKS, TPL_OUTCOMES, REVIEW, installAtcGuards, assertNoRealDb, loginAsAtc, pickOptions, tid, atcDoc, waitFor, AtcGuard,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -70,6 +70,11 @@ test.describe('ATC — Ask / WiSH outcomes on View Prescribed + Preview (emulato
     const plain = await openFull(page, TPL.vPlain);
     await expect(plain.getByTestId('vatc-ask-card')).toHaveCount(0);
     await expect(plain.getByTestId('vatc-outcome-card')).toHaveCount(0);
+    // the Review log is EI Solution only
+    await expect(ei.getByTestId('vatc-review-card')).toBeVisible();
+    await expect(wish.getByTestId('vatc-review-card')).toHaveCount(0);
+    await expect(plain.getByTestId('vatc-review-card')).toHaveCount(0);
+    await expect(wish.getByTestId('vatc-review-count')).toHaveCount(0);
   });
 
   test('VATT-02 /previewATC: the same cards and labels; a plain ATC shows neither', async ({ page }) => {
@@ -91,5 +96,91 @@ test.describe('ATC — Ask / WiSH outcomes on View Prescribed + Preview (emulato
     await openPreview(page, ATC.A1, false);
     await expect(page.getByTestId('pva-ask-card')).toHaveCount(0);
     await expect(page.getByTestId('pva-outcome-card')).toHaveCount(0);
+  });
+
+  test('VATT-03 Review log (EI): list + show deleted, empty error, add (newest first, counts), delete with confirm, survives a reload', async ({ page }) => {
+    await loginAsAtc(page, 'admin');
+    await page.goto('/viewprescribedATC');
+    await expect(page.getByTestId('vatc-count')).toBeVisible({ timeout: 45_000 });
+    await pickOptions(page, page.getByTestId('vatc-filter-participant'), [NAME.trl]);
+    const sum = page.getByTestId('vatc-sum-reviews');
+    await expect(sum).toHaveText(/\d+/, { timeout: 30_000 });
+    const sumBefore = Number(await sum.innerText());
+    const r = await openFull(page, TPL.rEI);
+    await expect(r.getByTestId('vatc-review-count')).toHaveText('1 reviews');
+    const card = r.getByTestId('vatc-review-card');
+    await expect(card).toContainText('Hidden in the participant app');
+    const rows = card.getByTestId('vatc-review-row');
+    await expect(rows, 'the deleted review is hidden').toHaveCount(1);
+    await expect(rows.nth(0)).toContainText(NAME.agent2);
+    await expect(card.getByTestId('vatc-review-note').nth(0)).toHaveText(REVIEW.active);
+    // Show deleted (1) brings the soft-deleted one back, marked
+    await card.getByTestId('vatc-review-show-deleted').locator('input').check();
+    await expect(rows).toHaveCount(2);
+    await expect(rows.filter({ hasText: REVIEW.deleted })).toContainText('Deleted');
+    await card.getByTestId('vatc-review-show-deleted').locator('input').uncheck();
+    await expect(rows).toHaveCount(1);
+
+    // empty → message; then add → newest first, counts go up, written by me
+    await card.getByTestId('vatc-review-add').click();
+    await expect(card.getByTestId('vatc-review-error')).toHaveText('Write the review first.');
+    await card.getByTestId('vatc-review-text').fill(`  VATT-03 review ${RUN}  `);
+    await card.getByTestId('vatc-review-add').click();
+    await expect(rows).toHaveCount(2, { timeout: 20_000 });
+    await expect(card.getByTestId('vatc-review-note').nth(0), 'newest first, trimmed').toHaveText(`VATT-03 review ${RUN}`);
+    await expect(r.getByTestId('vatc-review-count')).toHaveText('2 reviews');
+    await expect(sum).toHaveText(String(sumBefore + 1));
+    const added = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rEI}`))?.reviewlog || []).find((x: any) => x.note === `VATT-03 review ${RUN}`) || null, 'review on the ATC doc');
+    expect(added).toMatchObject({ createdby: PF.admin, isdelete: false });
+    expect(typeof added.id).toBe('string');
+
+    // delete: Cancel first, then confirm → soft delete (who), counts back down
+    await rows.nth(0).getByTestId('vatc-review-delete').click();
+    await expect(card.getByTestId('vatc-review-confirm')).toContainText("Delete this review? It's hidden from the log but kept on the ATC.");
+    await card.getByTestId('vatc-review-cancel').click();
+    await expect(card.getByTestId('vatc-review-confirm')).toHaveCount(0);
+    await rows.nth(0).getByTestId('vatc-review-delete').click();
+    await card.getByTestId('vatc-review-confirm-delete').click();
+    await expect(rows).toHaveCount(1, { timeout: 20_000 });
+    await expect(r.getByTestId('vatc-review-count')).toHaveText('1 reviews');
+    const gone = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rEI}`))?.reviewlog || []).find((x: any) => x.id === added.id && x.isdelete) || null, 'soft delete on the ATC doc');
+    expect(gone.deletedby).toBe(PF.admin);
+    expect(((await atcDoc(`atc_alpha/${TPL.rEI}`)).reviewlog || []).length, 'never removed').toBe(3);
+
+    // a reload shows the same log
+    await page.reload();
+    await expect(page.getByTestId('vatc-count')).toBeVisible({ timeout: 45_000 });
+    await pickOptions(page, page.getByTestId('vatc-filter-participant'), [NAME.trl]);
+    const r2 = await openFull(page, TPL.rEI);
+    await expect(r2.getByTestId('vatc-review-row')).toHaveCount(1);
+    await expect(r2.getByTestId('vatc-review-show-deleted')).toContainText('Show deleted (2)');
+
+    // undelete (no confirmation): back in the log, counts up, delete fields cleared (no audit trail)
+    await r2.getByTestId('vatc-review-show-deleted').locator('input').check();
+    const mine = r2.getByTestId('vatc-review-row').filter({ hasText: `VATT-03 review ${RUN}` });
+    await expect(mine).toContainText('Deleted');
+    await expect(mine.getByTestId('vatc-review-delete')).toHaveCount(0);
+    await mine.getByTestId('vatc-review-undelete').click();
+    await expect(mine).not.toContainText('Deleted', { timeout: 20_000 });
+    await expect(r2.getByTestId('vatc-review-count')).toHaveText('2 reviews');
+    await expect(r2.getByTestId('vatc-review-show-deleted')).toContainText('Show deleted (1)');
+    const back = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rEI}`))?.reviewlog || []).find((x: any) => x.id === added.id && x.isdelete === false) || null, 'undelete on the ATC doc');
+    expect(back.deletedby).toBeNull();
+    expect(back.deletedon).toBeNull();
+  });
+
+  test('VATT-04 the ATC author (no admin / mentor role) may add a review', async ({ page }) => {
+    await loginAsAtc(page, 'eis');
+    await page.goto('/viewprescribedATC');
+    await expect(page.getByTestId('vatc-count')).toBeVisible({ timeout: 45_000 });
+    const r = await openFull(page, TPL.rEIS);
+    const card = r.getByTestId('vatc-review-card');
+    await expect(card.getByTestId('vatc-review-empty')).toBeVisible();
+    await expect(card.getByTestId('vatc-review-readonly')).toHaveCount(0);
+    await card.getByTestId('vatc-review-text').fill(`VATT-04 author review ${RUN}`);
+    await card.getByTestId('vatc-review-add').click();
+    await expect(card.getByTestId('vatc-review-note').nth(0)).toHaveText(`VATT-04 author review ${RUN}`, { timeout: 20_000 });
+    const log = await waitFor(async () => { const l = (await atcDoc(`atc_alpha/${TPL.rEIS}`))?.reviewlog || []; return l.length ? l : null; }, 'author review written');
+    expect(log[0]).toMatchObject({ createdby: PF.eis, note: `VATT-04 author review ${RUN}` });
   });
 });

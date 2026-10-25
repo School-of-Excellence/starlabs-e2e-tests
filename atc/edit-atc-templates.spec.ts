@@ -14,6 +14,7 @@ import { test, expect, Page, Locator } from '@playwright/test';
 import {
   PF, NAME, ACT, PROC_NAME, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_ASKS, TPL_OUTCOMES,
   installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDoc, waitFor, pickOptions, selectText, tid, AtcGuard,
+  EMAIL,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -48,6 +49,24 @@ async function newVersionOf(oldId: string) {
 async function confirmSave(page: Page, guard: AtcGuard) {
   await page.getByTestId('pabs-submit').click();
   await expect.poll(() => guard.dialogs.some((m) => /Updated Successfully/.test(m)), { message: 'save confirmed by the app', timeout: 60_000 }).toBe(true);
+}
+/** A second device: add a review on the ATC through View Prescribed (as admin). */
+async function addReviewInView(browser: any, atcId: string, text: string) {
+  const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  const p = await ctx.newPage();
+  const g = await installAtcGuards(p);
+  await loginAsAtc(p, 'admin');
+  await p.goto('/viewprescribedATC');
+  await expect(p.getByTestId('vatc-count')).toBeVisible({ timeout: 45_000 });
+  await pickOptions(p, p.getByTestId('vatc-filter-participant'), [NAME.trl]);
+  const r = p.locator(tid(`vatc-row-${atcId}`));
+  await expect(r).toBeVisible({ timeout: 45_000 });
+  await r.getByTestId('vatc-toggle-full').click();
+  await r.getByTestId('vatc-review-text').fill(text);
+  await r.getByTestId('vatc-review-add').click();
+  await waitFor(async () => ((await atcDoc(`atc_alpha/${atcId}`))?.reviewlog || []).some((x: any) => x.note === text), `review "${text}" written`);
+  assertNoRealDb(g);
+  await ctx.close();
 }
 const newadj = (page: Page, i: number) => page.locator(tid(`eatc-newadj-${i}`));
 const newproc = (page: Page, i: number, j: number) => newadj(page, i).locator(tid(`eatc-newproc-${j}`));
@@ -259,5 +278,108 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     await page.getByTestId('eatc-back').click();
     await expect(page).toHaveURL(/\/viewprescribedATC/, { timeout: 30_000 });
     expect((await atcDb().collection('atc_alpha').get()).docs.some((d) => d.data().editedfrom?.id === TPL.vWish), 'nothing saved').toBe(false);
+  });
+
+  test('EATT-06 Edit review log: live from the ATC, delete + add straight to the ATC; change agent may add; others read only', async ({ page, browser }) => {
+    test.setTimeout(240_000);
+    await openEdit(page, TPL.rLive);
+    const card = page.getByTestId('eatc-review-card');
+    await expect(card).toContainText('Hidden in the participant app');
+    await expect(card.getByTestId('eatc-review-empty')).toBeVisible();
+    await expect(page.getByTestId('eatc-review-carry')).toHaveText('0 reviews carry over.');
+
+    // added on another device (View) → appears here, live
+    await addReviewInView(browser, TPL.rLive, `EATT-06 from View ${RUN}`);
+    await expect(card.getByTestId('eatc-review-note').nth(0)).toHaveText(`EATT-06 from View ${RUN}`, { timeout: 20_000 });
+    await expect(page.getByTestId('eatc-review-carry')).toHaveText('1 reviews carry over.');
+
+    // soft delete from Edit (Cancel first, then confirm) — written straight to the ATC, no save needed
+    await card.getByTestId('eatc-review-delete').click();
+    await expect(card.getByTestId('eatc-review-confirm')).toContainText("Delete this review? It's hidden from the log but kept on the ATC.");
+    await card.getByTestId('eatc-review-cancel').click();
+    await expect(card.getByTestId('eatc-review-confirm')).toHaveCount(0);
+    await card.getByTestId('eatc-review-delete').click();
+    await card.getByTestId('eatc-review-confirm-delete').click();
+    await expect(card.getByTestId('eatc-review-row')).toHaveCount(0, { timeout: 20_000 });
+    await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rLive}`))?.reviewlog || []).some((x: any) => x.isdelete && x.deletedby === PF.admin), 'soft delete on the ATC');
+    await card.getByTestId('eatc-review-show-deleted').locator('input').check();
+    await expect(card.getByTestId('eatc-review-row')).toContainText('Deleted');
+    await expect(page.getByTestId('eatc-review-carry')).toHaveText('0 reviews carry over.');
+    // undelete from Edit (no confirmation) → back, counts up, delete fields cleared
+    await card.getByTestId('eatc-review-undelete').click();
+    await expect(card.getByTestId('eatc-review-row')).not.toContainText('Deleted', { timeout: 20_000 });
+    await expect(page.getByTestId('eatc-review-carry')).toHaveText('1 reviews carry over.');
+    const restored = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rLive}`))?.reviewlog || []).find((x: any) => x.isdelete === false) || null, 'undelete on the ATC');
+    expect(restored.deletedby).toBeNull();
+
+    // add from Edit
+    await card.getByTestId('eatc-review-add').click();
+    await expect(card.getByTestId('eatc-review-error')).toHaveText('Write the review first.');
+    await card.getByTestId('eatc-review-text').fill(`EATT-06 from Edit ${RUN}`);
+    await card.getByTestId('eatc-review-add').click();
+    await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rLive}`))?.reviewlog || []).some((x: any) => x.note === `EATT-06 from Edit ${RUN}`), 'review from Edit on the ATC');
+    expect((await atcDb().collection('atc_alpha').get()).docs.some((d) => d.data().editedfrom?.id === TPL.rLive), 'no new version').toBe(false);
+
+    // eis: the adjustment's implementation agent → may add; not involved anywhere → read only
+    const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+    const p = await ctx.newPage();
+    const g = await installAtcGuards(p);
+    await loginAsAtc(p, 'eis');
+    await p.goto(`/editATC/${TPL.rImpl}/alpha`);
+    await expect(p.locator(tid('eatc-exadj-0'))).toBeVisible({ timeout: 45_000 });
+    await p.getByTestId('eatc-review-text').fill(`EATT-06 change agent ${RUN}`);
+    await p.getByTestId('eatc-review-add').click();
+    const impl = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rImpl}`))?.reviewlog || [])[0] || null, 'change agent review');
+    expect(impl).toMatchObject({ createdby: PF.eis, note: `EATT-06 change agent ${RUN}` });
+    await p.goto(`/editATC/${TPL.rNot}/alpha`);
+    await expect(p.locator(tid('eatc-exadj-0'))).toBeVisible({ timeout: 45_000 });
+    await expect(p.getByTestId('eatc-review-readonly')).toContainText("Only this ATC's authors, change agents, mentors and admins");
+    await expect(p.getByTestId('eatc-review-text')).toHaveCount(0);
+    assertNoRealDb(g);
+    await ctx.close();
+  });
+
+  test('EATT-07 a review added while Edit is open is on the saved new version', async ({ page, browser }) => {
+    test.setTimeout(240_000);
+    await openEdit(page, TPL.rCarry);
+    await addReviewInView(browser, TPL.rCarry, `EATT-07 meanwhile ${RUN}`);
+    await expect(page.getByTestId('eatc-review-note').nth(0)).toHaveText(`EATT-07 meanwhile ${RUN}`, { timeout: 20_000 });
+    await page.getByTestId('eatc-submit').click();
+    await confirmSave(page, guard);
+    const v = await newVersionOf(TPL.rCarry);
+    expect((v.data().reviewlog || []).map((x: any) => x.note), 'built on the live ATC, not the copy loaded at open').toContain(`EATT-07 meanwhile ${RUN}`);
+  });
+
+  test('EATT-08 the ATC saved or deleted elsewhere while open: banner, Review and update disabled, Open latest version', async ({ page, browser }) => {
+    test.setTimeout(240_000);
+    await openEdit(page, TPL.rUp);
+    await expect(page.getByTestId('eatc-retired-banner')).toHaveCount(0);
+    // another device saves an edit of the same ATC
+    const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+    const p = await ctx.newPage();
+    const g = await installAtcGuards(p);
+    await loginAsAtc(p, 'admin');
+    await p.goto(`/editATC/${TPL.rUp}/alpha`);
+    await expect(p.locator(tid('eatc-exadj-0'))).toBeVisible({ timeout: 45_000 });
+    await p.getByTestId('eatc-submit').click();
+    await p.getByTestId('pabs-submit').click({ timeout: 30_000 });
+    const v = await newVersionOf(TPL.rUp);
+    await ctx.close().catch(() => {});
+
+    await expect(page.getByTestId('eatc-retired-text')).toContainText('This ATC was updated by someone else on', { timeout: 30_000 });
+    await expect(page.getByTestId('eatc-retired-text')).toContainText("Your changes can't be saved on this version. Open the latest version to continue.");
+    await expect(page.getByTestId('eatc-submit')).toBeDisabled();
+    await expect(page.getByTestId('eatc-review-readonly')).toContainText('This version can no longer be changed.');
+    await page.getByTestId('eatc-open-latest').click();
+    await expect(page).toHaveURL(new RegExp(`/editATC/${v.id}/alpha`), { timeout: 30_000 });
+    assertNoRealDb(g);
+
+    // deleted while open
+    await openEdit(page, TPL.rDel, false);
+    await expect(page.getByTestId('eatc-retired-banner')).toHaveCount(0);
+    await atcDb().doc(`atc_alpha/${TPL.rDel}`).update({ isdelete: true });   // stands in for a delete made elsewhere
+    await expect(page.getByTestId('eatc-retired-text')).toHaveText("This ATC was deleted. Your changes can't be saved.", { timeout: 30_000 });
+    await expect(page.getByTestId('eatc-submit')).toBeDisabled();
+    await expect(page.getByTestId('eatc-open-latest')).toHaveCount(0);
   });
 });

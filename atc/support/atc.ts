@@ -48,6 +48,8 @@ export const LIVE_STAGE: string = S.LIVE_STAGE;
 // phase 4 (2026-10-23) — what the Edit / View template ATCs hold
 export const TPL_ASKS = S.TPL_ASKS;
 export const TPL_OUTCOMES = S.TPL_OUTCOMES;
+// phase 5 (2026-10-24) — the seeded Review log notes
+export const REVIEW = S.REVIEW;
 /** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
 export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
   const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);
