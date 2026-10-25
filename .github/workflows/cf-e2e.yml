@@ -92,6 +92,11 @@ jobs:
         run: npm ci --legacy-peer-deps
 
       - name: Install Cloud Functions deps
+        # onnxruntime-node's postinstall downloads its CUDA (GPU) binaries from api.nuget.org — the e2e never uses a GPU,
+        # and that external download timed out on a runner (2026-10-25, atc job: ETIMEDOUT). "skip" makes its install
+        # script exit early; the CPU runtime is bundled in the npm package (onnxruntime js/node/script/install.js).
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: cd starlabs-cloud-function/functions && npm ci
 
       - name: Install e2e deps
