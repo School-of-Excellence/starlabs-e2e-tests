@@ -176,6 +176,22 @@ export async function pickOptions(page: Page, select: Locator, labels: (string |
   await expect(page.locator('.cdk-overlay-pane .mat-mdc-select-panel')).toHaveCount(0);
 }
 
+/**
+ * Type into the shared text editor dialog (UpdateDialogComponent, `dbu-textarea`) and make sure it holds EXACTLY that
+ * text. The dialog pre-fills the current value through ngModel, which writes it a moment AFTER the textarea appears;
+ * a fill that lands in that gap ends up with the old text in front of the new one (CI run 40215649769, PATC-09:
+ * "Alpha directive atc" + "PATC-09 directive atc"). Fill, let it settle, check — and refill if the pre-fill won.
+ */
+export async function fillEditorDialog(page: Page, text: string) {
+  const box = page.getByTestId('dbu-textarea');
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    await box.fill(text);
+    await page.waitForTimeout(300);
+    await expect(box).toHaveValue(text, { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
 /** Selected-value text a mat-select currently shows. */
 export async function selectText(select: Locator): Promise<string> {
   return ((await select.locator('.mat-mdc-select-value').innerText()) || '').trim();

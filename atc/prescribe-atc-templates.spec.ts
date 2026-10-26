@@ -18,7 +18,7 @@
 import { test, expect, Page, Browser, Locator } from '@playwright/test';
 import {
   PF, NAME, ACT, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE,
-  installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDocs, waitFor, pickOptions, selectText, tid, AtcGuard,
+  installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDocs, waitFor, pickOptions, selectText, tid, AtcGuard, fillEditorDialog,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -157,7 +157,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
 
     // clicking the directive TEXT opens the same editor as Edit Directive
     await page.getByTestId('patc-directive-open').click();
-    await page.getByTestId('dbu-textarea').fill(`PTPL-01 directive ${RUN}`);
+    await fillEditorDialog(page, `PTPL-01 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('patc-directive-text')).toHaveText(`PTPL-01 directive ${RUN}`);
 

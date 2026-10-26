@@ -6,7 +6,7 @@
 import { test, expect, Page, Browser } from '@playwright/test';
 import {
   ATC, PF, NAME, ACT, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, RECOMMEND_NAME, installAtcGuards, assertNoRealDb, loginAsAtc,
-  atcDb, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, storageBucket, AtcGuard,
+  atcDb, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, storageBucket, AtcGuard, fillEditorDialog,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -330,7 +330,7 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
 
     // Edit Directive → UpdateDialog
     await page.getByTestId('patc-directive-btn').click();
-    await page.getByTestId('dbu-textarea').fill(`PATC-09 directive ${RUN}`);
+    await fillEditorDialog(page, `PATC-09 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('patc-directive-text')).toHaveText(`PATC-09 directive ${RUN}`);
 

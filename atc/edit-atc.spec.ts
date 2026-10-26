@@ -7,7 +7,7 @@
 import { test, expect, Page } from '@playwright/test';
 import {
   ATC, PF, NAME, ACT, PROC, PROC_NAME, MODEL, RUN, installAtcGuards, assertNoRealDb, loginAsAtc,
-  atcDb, atcDoc, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, AtcGuard,
+  atcDb, atcDoc, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, AtcGuard, fillEditorDialog,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -213,13 +213,13 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
 
     // Update Directive → UpdateDialog
     await page.getByTestId('eatc-directive-btn').click();
-    await page.getByTestId('dbu-textarea').fill(`EATC-09 directive ${RUN}`);
+    await fillEditorDialog(page, `EATC-09 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('eatc-directive-text')).toHaveText(`EATC-09 directive ${RUN}`);
 
     // adjustment 01: edit its text (pencil → UpdateDialog) and delete its SECOND procedure (toggle)
     await exadj(page, 0).getByTestId('eatc-exadj-edit').click();
-    await page.getByTestId('dbu-textarea').fill(`E7 adjustment one EDITED ${RUN}`);
+    await fillEditorDialog(page, `E7 adjustment one EDITED ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(exadj(page, 0)).toContainText(`E7 adjustment one EDITED ${RUN}`);
     await exadj(page, 0).locator(tid('eatc-exproc-1')).getByTestId('eatc-exproc-toggle').click();

@@ -14,7 +14,7 @@ import { test, expect, Page, Locator } from '@playwright/test';
 import {
   PF, NAME, ACT, PROC_NAME, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_ASKS, TPL_OUTCOMES,
   installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDoc, waitFor, pickOptions, selectText, tid, AtcGuard,
-  EMAIL,
+  EMAIL, fillEditorDialog,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -162,7 +162,7 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     // then the directive
     await expectBlocked(page, 'Provide ATC directive');
     await page.getByTestId('eatc-directive-placeholder').click();                            // the empty state opens the editor
-    await page.getByTestId('dbu-textarea').fill(`EATT-02 directive ${RUN}`);
+    await fillEditorDialog(page, `EATT-02 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('eatc-directive-text')).toHaveText(`EATT-02 directive ${RUN}`);
     // then the ask

@@ -5,7 +5,7 @@
 import { test, expect, Page } from '@playwright/test';
 import {
   ATC2, PA, PF, NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, TRIPLE_QUEUE_NAME, installAtcGuards, assertNoRealDb,
-  loginAsAtc, atcDb, atcDoc, atcDocs, defaultDb, waitFor, pickOptions, popupFrom, AtcGuard,
+  loginAsAtc, atcDb, atcDoc, atcDocs, defaultDb, waitFor, pickOptions, popupFrom, AtcGuard, fillEditorDialog,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -148,7 +148,7 @@ test.describe('ATC — Triple ATC (real UI, emulator only)', () => {
     await page.goto(`/edittripleATC/${ATC2.TE1}`);
     await expect(treAdj(page, 0, 0)).toBeVisible({ timeout: 45_000 });
     await treAdj(page, 0, 0).getByTestId('tre-adj-edit').click();
-    await page.getByTestId('dbu-textarea').fill(`TRE-01 edited ${RUN}`);
+    await fillEditorDialog(page, `TRE-01 edited ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(treAdj(page, 0, 0).getByTestId('tre-adj-text')).toHaveText(`TRE-01 edited ${RUN}`);
     await treAdj(page, 1, 0).getByTestId('tre-adj-delete').click();
@@ -173,7 +173,7 @@ test.describe('ATC — Triple ATC (real UI, emulator only)', () => {
     await page.goto(`/edittripleATC/${ATC2.TE2}`);
     await expect(page.getByTestId('tre-directive')).toBeVisible({ timeout: 45_000 });
     await page.getByTestId('tre-directive-btn').click();
-    await page.getByTestId('dbu-textarea').fill(`TRE-02 directive ${RUN}`);
+    await fillEditorDialog(page, `TRE-02 directive ${RUN}`);
     await page.getByTestId('dbu-submit').click();
     await expect(page.getByTestId('tre-directive')).toHaveText(`TRE-02 directive ${RUN}`);
     await page.getByTestId('tre-submit').click();
