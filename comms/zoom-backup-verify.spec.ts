@@ -34,6 +34,11 @@
 // Size sorts Failed (4096) → Completed (1024) → Verified (512). Verify all keeps "No longer in Zoom" failures
 // out of the actionable list. Sizes and statuses are seeded; the ✓/⚠ verdict and the order are the app's.
 //
+// ZRD-15 (bulk move to Zoom trash, 2026-10-27): only a row that can be trashed (completed, ✓ verified, still in
+// Zoom) gets an enabled checkbox — Verified here; Completed (never verified) and Failed are the negative
+// controls. Select all takes exactly the trashable rows; dismissing the confirm sends nothing; accepting
+// sends one trash call per selected record (the per-record endpoint, which re-verifies first).
+//
 // NOT COVERED: the server itself (claims, heartbeats, re-upload) — that lives in zoom-dropbox-migration/; the
 // "Queued…" migrate state (needs the Zoom panel's live recordings list).
 import { test, expect, Page, Route } from '@playwright/test';
@@ -254,5 +259,38 @@ test.describe('Comms — Zoom backup verify / verify all / move to Zoom trash (s
     await expect(gone, 'ZRD-14: the gone list names how many').toContainText("1 recording(s) can't be completed");
     await gone.locator('summary').click();
     await expect(gone, 'ZRD-14: …and the meeting, without repeating "No longer in Zoom"').toContainText(`${TOPIC.fail} — audio: missing in Dropbox`);
+  });
+  test('ZRD-15 only trashable rows can be ticked; Select all takes exactly those; bulk trash asks first, then sends one call per record', async ({ page }) => {
+    const pick = (topic: string) => rowOf(page, topic).getByTestId('zrd-select-row');
+    await expect(pick(TOPIC.ok), 'ZRD-15: the verified row (still in Zoom) can be ticked').toBeEnabled({ timeout: 30_000 });
+    await expect(pick(TOPIC.done), 'ZRD-15: never verified → not selectable').toBeDisabled();
+    await expect(pick(TOPIC.fail), 'ZRD-15: failed → not selectable').toBeDisabled();
+    await expect(page.getByTestId('zrd-bulk-trash'), 'ZRD-15: no bulk bar before a selection').toHaveCount(0);
+
+    await pick(TOPIC.ok).check();
+    await expect(page.getByTestId('zrd-bulk-trash')).toContainText('Move 1 to Zoom trash');
+    await page.getByTestId('zrd-bulk-clear').click();
+    await expect(pick(TOPIC.ok)).not.toBeChecked();
+    await expect(page.getByTestId('zrd-bulk-trash')).toHaveCount(0);
+
+    const all = page.getByTestId('zrd-select-all');
+    await all.check();
+    await expect(pick(TOPIC.ok), 'ZRD-15: Select all ticks the trashable row').toBeChecked();
+    await expect(pick(TOPIC.done), '…and leaves the others').not.toBeChecked();
+    await expect(page.getByTestId('zrd-bulk-trash'), 'ZRD-15: one selectable row in the run').toContainText('Move 1 to Zoom trash');
+
+    let prompted = '';
+    page.once('dialog', async (d) => { prompted = d.message(); await d.dismiss(); });
+    await page.getByTestId('zrd-bulk-trash').click();
+    await expect.poll(() => prompted, { message: 'ZRD-15: the confirm says how many' }).toContain('Move 1 recording(s)');
+    expect(calls.some((c) => c.path === '/api/zoom/trash'), 'ZRD-15: dismissing sends nothing').toBe(false);
+
+    page.once('dialog', (d) => d.accept());
+    await page.getByTestId('zrd-bulk-trash').click();
+    await expect(page.getByText('🗑 1 moved to Zoom trash'), 'ZRD-15: the progress reports the move').toBeVisible({ timeout: 30_000 });
+    expect(calls.filter((c) => c.path === '/api/zoom/trash').map((c) => c.body), 'ZRD-15: one call, for the verified record only')
+      .toEqual([{ docId: commsIds.ZOOM_VERIFIED }]);
+    await page.getByTestId('zrd-bulk-dismiss').click();
+    await expect(page.getByText('🗑 1 moved to Zoom trash')).toHaveCount(0);
   });
 });
