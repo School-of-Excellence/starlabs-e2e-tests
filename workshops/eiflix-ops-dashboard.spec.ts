@@ -1130,6 +1130,13 @@ test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slac
     const nuRow = rows.filter({ hasText: nuName });
     await expect(nuRow, 'WS-71: the new user is listed').toHaveCount(1);
     await expect(nuRow).toContainText(`${wsAddIds.NU_A}@example.com`);
+    // Country code with the phone (new_user_data stores countryCode, participant metadata countrycode),
+    // and the user type — the panel's own rule.
+    await expect(nuRow.getByTestId('psd-cell-phone'), 'WS-71: new user phone with code').toHaveText('+91 9999900001');
+    await expect(nuRow.getByTestId('psd-cell-usertype'), 'WS-71: new user type').toHaveText('New user');
+    await expect(p0Row.getByTestId('psd-cell-phone'), 'WS-71: participant phone with code').toHaveText(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+    await expect(p0Row.getByTestId('psd-cell-usertype'), 'WS-71: participant type').toHaveText('Existing');
+    await expect(dialog.getByTestId('psd-sort-usertype')).toBeVisible();
 
     // Send needs a selection.
     const send = dialog.getByTestId('psd-send');
@@ -1146,10 +1153,12 @@ test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slac
     const csvFile = test.info().outputPath('send-to-slack.csv');
     await csvDownload.saveAs(csvFile);
     const csv = readCsvRows(readFileSync(csvFile, 'utf8').replace(/^\uFEFF/, ''));
-    expect(csv[0], 'WS-71: CSV header').toEqual(['Name', 'Email', 'Phone', 'Journey']);
+    expect(csv[0], 'WS-71: CSV header').toEqual(['Name', 'Email', 'Phone', 'User Type', 'Journey']);
     expect(csv.length, 'WS-71: exactly the one selected person').toBe(2);
     expect(csv[1][0]).toBe(nuName);
     expect(csv[1][1]).toBe(`${wsAddIds.NU_A}@example.com`);
+    expect(csv[1][2], 'WS-71: phone carries the country code').toBe('+91 9999900001');
+    expect(csv[1][3], 'WS-71: user type exported').toBe('New user');
     await dialog.getByTestId('psd-select-all').locator('input').check();
     await expect(dialog.getByTestId('psd-count'), 'WS-71: the header box picks everyone shown').toContainText('2 selected');
     await dialog.getByTestId('psd-select-all').locator('input').uncheck();
