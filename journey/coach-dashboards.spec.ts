@@ -12,7 +12,7 @@
 // Anti-circularity: JP-20 is a true ORACLE — the screen tallies opportunities across every
 // participantjourneyproduct document, and the test derives the same number independently through the Admin
 // SDK. Two readers of the same data, and the test writes neither the tally nor the view.
-import { test, expect } from '@playwright/test';
+import { test, expect, Locator } from '@playwright/test';
 import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin, journeyNames, jcdAssuredLeads } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { queryWhere } from '../queue/support/firestore-admin';
@@ -132,16 +132,18 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
   // The board is derived in loadCoachHealthAnalytics(): every `participant metadata` doc is the roster,
   // then healthtracker_healthstate / healthtracker_touchpoint / appointments / clientissue are read
   // scoped to those ids. The 2026-09-23 fixes changed three things these cases pin down: tickets are
-  // now an OPEN-only server-side count, the Health board link opens in a NEW TAB, and the Outreach rows
-  // carry priority.engine's reason string instead of a hand-rolled status line.
+  // OPEN-only, the Health board link opens in a NEW TAB, and the Outreach rows carry priority.engine's
+  // reason string instead of a hand-rolled status line. Since 2026-10-21 (sashong) the tile counts PEOPLE
+  // with an open ticket, not tickets.
   //
   // ANTI-CIRCULARITY: the seed writes raw clientissue / metadata docs; every number and string asserted
   // is the app's own derivation, re-derived here from the same docs.
-  test('JCD-01 the Participant Health tickets tile counts OPEN tickets only', async ({ page }) => {
+  test('JCD-01 the Participant Health tickets tile counts PEOPLE with an open ticket — not tickets, and never closed ones', async ({ page }) => {
     const issues = (await queryWhere('clientissue', [['testrunid', '==', RUN]])) as any[];
     const open = issues.filter((i) => (i.status?.status ?? '').toLowerCase() === 'open');
-    expect([open.length, issues.length],
-      'oracle sanity: one OPEN ticket seeded, plus a CLOSED one that must be excluded').toEqual([1, 2]);
+    const holders = new Set(open.map((i) => (typeof i.clientid === 'string' ? i.clientid : i.clientid?.id)));
+    expect([holders.size, open.length, issues.length],
+      'oracle sanity: one person holds TWO open tickets, plus a CLOSED one that must be excluded').toEqual([1, 2, 3]);
 
     await loginAsJourneyAdmin(page);
     await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
@@ -149,8 +151,8 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
 
     await expect(
       page.getByTestId('jcd-ph-tickets').locator('.v'),
-      `JCD-01: the Tickets tile counts OPEN clientissue docs (${open.length}) — the closed one must not count`,
-    ).toHaveText(String(open.length), { timeout: 60_000 });
+      `JCD-01: the Tickets tile counts people with an OPEN ticket (${holders.size}) — not the ${open.length} tickets, and not the closed one`,
+    ).toHaveText(String(holders.size), { timeout: 60_000 });
   });
 
   test('JCD-02 the Health board link opens the JC-Health screen in a NEW TAB', async ({ page, context }) => {
@@ -293,5 +295,40 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
     await remark.getByTestId('jorm-inp-035').setInputFiles({ name: 'broken.pdf', mimeType: 'application/pdf', buffer: Buffer.from('%PDF-1.4 x') });
     await expect.poll(() => alerts.at(-1), { message: 'JCD-05: a failed upload is reported' }).toBe('Failed to upload "broken.pdf". Please try again.');
     await expect(remark.locator('.gmail-attach-item').filter({ hasText: 'broken.pdf' }), 'JCD-05: …and nothing is attached').toHaveCount(0);
+  });
+
+  // JCD-07 — onboarding by product: each bucket cell opens ITS OWN list (sashong 6f7f512e, 2026-10-22). Before,
+  // the whole row opened "To onboard". SEEDED: PJP_SLQ (product P2, assured, not onboarded, bought a minute
+  // ago) is in P2's ≤7d bucket, so it must be in To onboard and ≤7d and NOT in 7+ d (the negative control).
+  // ANTI-CIRCULARITY: each cell's number comes from recomputeOnboardingProducts(); the list it opens is a
+  // separate filter over the bucket's source data, so the row count checks one code path against the other.
+  test('JCD-07 each onboarding-by-product cell opens its own bucket for that product, and its rows match the number', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-journeycoach-dashboard')).toBeAttached({ timeout: 30_000 });
+
+    const product = `Test Product Two ${RUN}`;
+    const row = page.getByTestId('jcd-div-onb-product').filter({ has: page.locator('.pn', { hasText: new RegExp(`^\\s*${product}\\s*$`) }) });
+    await expect(row, 'JCD-07: the seeded product has an onboarding row').toHaveCount(1, { timeout: 60_000 });
+    const title = page.locator('h2.jcd-table-title');
+    const rows = page.locator('tr.jcd-tr');
+    const person = rows.filter({ hasText: jcdAssuredLeads.onboardPerson });
+    // the helper takes a Locator, so every hook id stays a literal getByTestId the gate can see
+    const open = async (cell: Locator, label: string) => {
+      const n = Number((await cell.innerText()).trim());
+      await cell.click();
+      await expect(title, `JCD-07: ${label} opens its own list`).toHaveText(`${label} — ${product}`);
+      await expect(rows, `JCD-07: ${label} lists as many rows as the cell says (page of 10)`).toHaveCount(Math.min(n, 10));
+      return n;
+    };
+    const toOnboard = await open(row.getByTestId('jcd-onb-cell-toonboard'), 'To Be Onboarded');
+    await expect(person, 'JCD-07: the seeded sale is to be onboarded').toHaveCount(1);
+    const within = await open(row.getByTestId('jcd-onb-cell-within7'), 'To Be Onboarded (7 Days)');
+    await expect(person, 'JCD-07: bought a minute ago → the ≤7d bucket').toHaveCount(1);
+    const plus = await open(row.getByTestId('jcd-onb-cell-plus7'), 'To Be Onboarded (7+ Days)');
+    await expect(person, 'JCD-07: …and NOT the 7+ d bucket').toHaveCount(0);
+    expect(toOnboard, 'JCD-07: To onboard = ≤7d + 7+ d').toBe(within + plus);
+    await open(row.getByTestId('jcd-onb-cell-notassured'), 'Not Assured');
+    await expect(person, 'JCD-07: an assured sale is never Not assured').toHaveCount(0);
   });
 });
