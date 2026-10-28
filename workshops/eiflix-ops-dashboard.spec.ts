@@ -36,7 +36,7 @@ import {
   seedHotLeads, clearHotLeads, wsAddIds, readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { countWhere, getDoc } from '../queue/support/firestore-admin';
+import { countWhere, getDoc, queryWhere, pollUntil, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -1184,6 +1184,58 @@ test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slac
     await expect(dialog.getByTestId('psd-sort-email')).toBeVisible();
     await expect(dialog.getByTestId('psd-sort-phone')).toBeVisible();
     await expect(dialog.getByTestId('psd-sort-journey')).toBeVisible();
+
+    // Send (2026-10-28): the app writes ONE eiflixtouchpoints doc and waits for the cloud function's
+    // verdict on it. The emulator runs the hub's copy of the functions, which may not have
+    // eiflixtouchpointslack yet, so the test writes the verdict itself and checks the dialog shows it.
+    const before = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+    const created: string[] = [];
+    try {
+      await dialog.getByTestId('psd-select-all').locator('input').check();
+      await send.click();
+      await expect(send, 'WS-71: Send shows it is working').toContainText('Sending');
+      const fresh = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: the app wrote one eiflixtouchpoints doc', timeoutMs: 30_000 },
+      );
+      created.push(fresh[0].id);
+      const tp: any = fresh[0];
+      expect(tp.webhookdoc, 'WS-71: names the Slack webhook doc').toBe('eiflixhotleads');
+      expect(tp.status, 'WS-71: waiting for the cloud function').toBe('pending');
+      expect(tp.count).toBe(2);
+      expect(tp.docid, 'WS-71: carries its own id').toBe(fresh[0].id);
+      // The Slack heading is the panel header the dialog was opened from — nothing fixed.
+      expect(tp.heading, 'WS-71: heading = the side panel title').toBe('Hot Leads Today');
+      expect(tp.subheading, 'WS-71: subheading = the side panel caption').toContain('Watched over 3h of EiFlix');
+      const byName = (n: string) => tp.people.find((x: any) => x.name === n);
+      expect(byName(nuName), 'WS-71: new user').toEqual({
+        name: nuName, email: `${wsAddIds.NU_A}@example.com`, phone: '+91 9999900001', journey: 'New user',
+      });
+      expect(byName(p0Name).journey, 'WS-71: existing user: their journey, else "No journey"').toBe(journey?.journey || 'No journey');
+      expect(byName(p0Name).phone).toBe(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+
+      await db().collection('eiflixtouchpoints').doc(fresh[0].id).update({ status: 'sent', channel: '#eiflix-hot-leads' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: the result is shown')
+        .toContainText('Sent 2 people to #eiflix-hot-leads', { timeout: 30_000 });
+      await expect(dialog.getByTestId('psd-count'), 'WS-71: picks cleared after a send').toContainText('0 selected');
+
+      // A refusal is shown as such.
+      const before2 = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+      await nuRow.getByTestId('psd-select-row').locator('input').check();
+      await send.click();
+      const second = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before2.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: second send wrote a doc', timeoutMs: 30_000 },
+      );
+      created.push(second[0].id);
+      await db().collection('eiflixtouchpoints').doc(second[0].id).update({ status: 'failed', error: 'invalid_token' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: a failure is shown with the reason')
+        .toContainText('invalid_token', { timeout: 30_000 });
+    } finally {
+      await Promise.all(created.map((id) => db().collection('eiflixtouchpoints').doc(id).delete()));
+    }
 
     await dialog.getByTestId('psd-close').click();
     await expect(dialog, 'WS-71: Close shuts the dialog').toHaveCount(0);
