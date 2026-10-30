@@ -92,6 +92,7 @@ test.describe('Product Designer — ATC model forms config (real UI, emulator)',
     const b = page.getByTestId('ca-form-row').filter({ hasText: NAME.b });
     await expect(page.getByTestId('ca-form-row').nth(1), 'name order: A, B, then the unnamed ones').toContainText(NAME.b);
     await expect(b.getByTestId('ca-form-filledby-required')).toBeVisible();
+    await expect(b.getByTestId('ca-form-filledby'), 'the Specialist / Participant toggle').toBeVisible();
     await expect(page.getByTestId('ca-on-submit-2')).toBeDisabled();
     await b.getByTestId('ca-form-participant').click();
     await expect(b.getByTestId('ca-form-filledby-required')).toHaveCount(0);

@@ -67,12 +67,14 @@ function changedFiles() {
  */
 function baseDeclares(ids) {
   const tmp = path.join(require('os').tmpdir(), `readiness-ids-${process.pid}.txt`);
-  fs.writeFileSync(tmp, ids.join('\n') + '\n');
+  // Match WHOLE ids: each id inside its quotes ("id" / 'id'). A bare -F pattern also matches inside a longer id —
+  // `eif-logs-range-to` inside `eif-logs-range-today` — and wrongly reported a not-landed hook as dropped (drift).
+  fs.writeFileSync(tmp, ids.flatMap((id) => [`"${id}"`, `'${id}'`]).join('\n') + '\n');
   try {
     const out = execFileSync('git', ['grep', '-h', '-o', '-F', '-f', tmp, BASE, '--', 'src'], {
       cwd: APP_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const found = new Set(out.split('\n').filter(Boolean));
+    const found = new Set(out.split('\n').filter(Boolean).map((m) => m.slice(1, -1)));
     return (id) => found.has(id);
   } catch (err) {
     if (err && err.status === 1) return () => false; // git grep: ran fine, no matches
