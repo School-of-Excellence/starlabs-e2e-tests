@@ -33,9 +33,10 @@ import {
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
   wsAddNames, seedUserTypeLoginLogs, clearUserTypeLoginLogs,
+  seedHotLeads, clearHotLeads, wsAddIds, readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { countWhere } from '../queue/support/firestore-admin';
+import { countWhere, getDoc, queryWhere, pollUntil, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -103,6 +104,45 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix App Logs', () =
     await installWshopStubs(page);
   });
   test.afterEach(() => clearLoginLogs());
+
+  // WS-72 — From–To date range on the App Logs (2026-10-23). Seeded logins: today (p0, p1), 3 days
+  // ago (p0, version 2.2.9), 20 days ago (p2), 40 days ago (p0, 2.0.0).
+  test('WS-72 the App Logs From–To range shows only logins inside it, hints until both are picked, and Clear goes back to Today', async ({ page }) => {
+    const day = (ago: number) => { const d = new Date(); d.setDate(d.getDate() - ago); return d; };
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-logs-section');
+    const rows = section.getByTestId('eif-logs-row');
+    const from = section.getByTestId('eif-logs-range-from');
+    const to = section.getByTestId('eif-logs-range-to');
+    await expect(rows.filter({ hasText: wsMetaNames.p0 }), 'WS-72: Today loads first').toHaveCount(1, { timeout: 60_000 });
+
+    // One date alone does nothing yet, and says so.
+    await from.fill(iso(day(25)));
+    await expect(page.getByText('Pick both dates to apply the range'), 'WS-72: half a range shows the hint').toBeVisible();
+    await expect(section.getByTestId('eif-logs-range-today')).toHaveAttribute('aria-pressed', 'true');
+
+    // 25 → 10 days ago: only p2's 20-day-old login.
+    await to.fill(iso(day(10)));
+    await expect(rows, 'WS-72: one login between 25 and 10 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText(wsMetaNames.p2);
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: no preset is active').toHaveAttribute('aria-pressed', 'false');
+    await expect(section.getByTestId('eif-logs-count'), 'WS-72: the count names the range').toContainText('for ');
+
+    // 5 → 1 days ago: only the 3-day-old login (version 2.2.9); today's and older ones stay out.
+    await from.fill(iso(day(5)));
+    await to.fill(iso(day(1)));
+    await expect(rows, 'WS-72: one login between 5 and 1 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText('2.2.9');
+
+    // Clear: back to Today, pickers emptied.
+    await section.getByTestId('eif-logs-range-clear').click();
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: Clear returns to Today').toHaveAttribute('aria-pressed', 'true');
+    await expect(from).toHaveValue('');
+    await expect(to).toHaveValue('');
+    await expect(rows.filter({ hasText: wsMetaNames.p1 }), 'WS-72: today\'s logins are back').toHaveCount(1, { timeout: 60_000 });
+  });
 
   test('WS-31 the logs table honours the range, drops other apps, maps names, filters, sorts and pages', async ({ page }) => {
     await loginAsWshopAdmin(page);
@@ -1043,3 +1083,162 @@ test.describe('Workshops — eiflix operations dashboard: paid total amount (no 
   });
 });
 
+// =============================================================================================
+// WS-71 — Hot Leads Today: "Send to Slack" opens the shared People Send dialog (2026-10-21).
+// Hook prefix for the dialog: psd (New-Workshop/people-send-dialog). The dialog only SHOWS what the
+// panel passes (name, email, phone, journey); Send enables on a selection and has no action yet.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slack', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+    await seedHotLeads();
+  });
+  test.afterEach(async () => {
+    await clearHotLeads();
+    assertNoFatal(guard, 'eiflix ops dashboard (send to slack): no fatal console errors / pageerrors');
+  });
+
+  test('WS-71 Send to Slack lists the hot leads with search, sort, select, and Send enabling on a pick', async ({ page }) => {
+    // Oracles from Firestore: p0's stored name and journey name; NU_A is the seeded new user.
+    const p0: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const journey: any = p0?.activejourney ? await getDoc('journey', p0.activejourney) : null;
+    const p0Name = String(p0?.name || '');
+    const nuName = wsAddNames.nuAlpha;
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const hotCard = page.getByTestId('eif-hot-error-15');
+    await expect(hotCard.locator('.eod-hot-count'), 'WS-71: Hot Leads Today counts the two seeded hot leads')
+      .toHaveText('2', { timeout: 60_000 });
+    await hotCard.click();
+
+    const slack = page.getByTestId('eif-send-to-slack');
+    await expect(slack, 'WS-71: the hot leads panel has Send to Slack').toBeEnabled({ timeout: 30_000 });
+    await slack.click();
+
+    const dialog = page.locator('mat-dialog-container');
+    const rows = dialog.getByTestId('psd-row');
+    await expect(rows, 'WS-71: the dialog lists the two hot leads (1h viewer left out)').toHaveCount(2, { timeout: 30_000 });
+    await expect(dialog.getByTestId('psd-paginator'), 'WS-71: pagination is there').toBeVisible();
+
+    // What the panel passed: name, journey (p0's from Firestore; the new user has none).
+    const p0Row = rows.filter({ hasText: p0Name });
+    await expect(p0Row, 'WS-71: p0 is listed by name').toHaveCount(1);
+    if (journey?.journey) await expect(p0Row, 'WS-71: with their journey').toContainText(journey.journey);
+    const nuRow = rows.filter({ hasText: nuName });
+    await expect(nuRow, 'WS-71: the new user is listed').toHaveCount(1);
+    await expect(nuRow).toContainText(`${wsAddIds.NU_A}@example.com`);
+    // Country code with the phone (new_user_data stores countryCode, participant metadata countrycode),
+    // and the user type — the panel's own rule.
+    await expect(nuRow.getByTestId('psd-cell-phone'), 'WS-71: new user phone with code').toHaveText('+91 9999900001');
+    await expect(nuRow.getByTestId('psd-cell-usertype'), 'WS-71: new user type').toHaveText('New user');
+    await expect(p0Row.getByTestId('psd-cell-phone'), 'WS-71: participant phone with code').toHaveText(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+    await expect(p0Row.getByTestId('psd-cell-usertype'), 'WS-71: participant type').toHaveText('Existing');
+    await expect(dialog.getByTestId('psd-sort-usertype')).toBeVisible();
+
+    // Send needs a selection.
+    const send = dialog.getByTestId('psd-send');
+    await expect(send, 'WS-71: Send is off with nobody picked').toBeDisabled();
+    const exportBtn = dialog.getByTestId('psd-export');
+    await expect(exportBtn, 'WS-71: Export CSV is off with nobody picked').toBeDisabled();
+    await nuRow.getByTestId('psd-select-row').locator('input').check();
+    await expect(send, 'WS-71: one pick enables Send').toBeEnabled();
+    await expect(dialog.getByTestId('psd-count')).toContainText('1 selected');
+    // Export CSV (2026-10-22): only the selected people, from what the panel passed.
+    await expect(exportBtn, 'WS-71: one pick enables Export CSV').toBeEnabled();
+    const [csvDownload] = await Promise.all([page.waitForEvent('download'), exportBtn.click()]);
+    expect(csvDownload.suggestedFilename(), 'WS-71: named after the dialog title').toMatch(/^send-to-slack-\d{4}-\d{2}-\d{2}\.csv$/);
+    const csvFile = test.info().outputPath('send-to-slack.csv');
+    await csvDownload.saveAs(csvFile);
+    const csv = readCsvRows(readFileSync(csvFile, 'utf8').replace(/^\uFEFF/, ''));
+    expect(csv[0], 'WS-71: CSV header').toEqual(['Name', 'Email', 'Phone', 'User Type', 'Journey']);
+    expect(csv.length, 'WS-71: exactly the one selected person').toBe(2);
+    expect(csv[1][0]).toBe(nuName);
+    expect(csv[1][1]).toBe(`${wsAddIds.NU_A}@example.com`);
+    expect(csv[1][2], 'WS-71: phone carries the country code').toBe('+91 9999900001');
+    expect(csv[1][3], 'WS-71: user type exported').toBe('New user');
+    await dialog.getByTestId('psd-select-all').locator('input').check();
+    await expect(dialog.getByTestId('psd-count'), 'WS-71: the header box picks everyone shown').toContainText('2 selected');
+    await dialog.getByTestId('psd-select-all').locator('input').uncheck();
+    await expect(send, 'WS-71: clearing the picks turns Send off again').toBeDisabled();
+
+    // Search narrows; a miss shows the empty line.
+    const search = dialog.getByTestId('psd-search');
+    await search.fill(nuName);
+    await expect(rows).toHaveCount(1);
+    await search.fill('zz-no-such-person');
+    await expect(dialog.getByTestId('psd-empty'), 'WS-71: a miss says so').toBeVisible();
+    await search.fill('');
+    await expect(rows).toHaveCount(2);
+
+    // Sort by name, both ways.
+    const names = async () => (await dialog.getByTestId('psd-cell-name').allInnerTexts()).map((t) => t.trim());
+    const asc = [p0Name, nuName].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: Name sorts A→Z' }).toEqual(asc);
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: and Z→A' }).toEqual([...asc].reverse());
+    // The other sortable headers are there.
+    await expect(dialog.getByTestId('psd-sort-email')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-phone')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-journey')).toBeVisible();
+
+    // Send (2026-10-28): the app writes ONE eiflixtouchpoints doc and waits for the cloud function's
+    // verdict on it. The emulator runs the hub's copy of the functions, which may not have
+    // eiflixtouchpointslack yet, so the test writes the verdict itself and checks the dialog shows it.
+    const before = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+    const created: string[] = [];
+    try {
+      await dialog.getByTestId('psd-select-all').locator('input').check();
+      await send.click();
+      await expect(send, 'WS-71: Send shows it is working').toContainText('Sending');
+      const fresh = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: the app wrote one eiflixtouchpoints doc', timeoutMs: 30_000 },
+      );
+      created.push(fresh[0].id);
+      const tp: any = fresh[0];
+      expect(tp.webhookdoc, 'WS-71: names the Slack webhook doc').toBe('eiflixhotleads');
+      expect(tp.status, 'WS-71: waiting for the cloud function').toBe('pending');
+      expect(tp.count).toBe(2);
+      expect(tp.docid, 'WS-71: carries its own id').toBe(fresh[0].id);
+      // The Slack heading is the panel header the dialog was opened from — nothing fixed.
+      expect(tp.heading, 'WS-71: heading = the side panel title').toBe('Hot Leads Today');
+      expect(tp.subheading, 'WS-71: subheading = the side panel caption').toContain('Watched over 3h of EiFlix');
+      const byName = (n: string) => tp.people.find((x: any) => x.name === n);
+      expect(byName(nuName), 'WS-71: new user').toEqual({
+        name: nuName, email: `${wsAddIds.NU_A}@example.com`, phone: '+91 9999900001', journey: 'New user',
+      });
+      expect(byName(p0Name).journey, 'WS-71: existing user: their journey, else "No journey"').toBe(journey?.journey || 'No journey');
+      expect(byName(p0Name).phone).toBe(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+
+      await db().collection('eiflixtouchpoints').doc(fresh[0].id).update({ status: 'sent', channel: '#eiflix-hot-leads' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: the result is shown')
+        .toContainText('Sent 2 people to #eiflix-hot-leads', { timeout: 30_000 });
+      await expect(dialog.getByTestId('psd-count'), 'WS-71: picks cleared after a send').toContainText('0 selected');
+
+      // A refusal is shown as such.
+      const before2 = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+      await nuRow.getByTestId('psd-select-row').locator('input').check();
+      await send.click();
+      const second = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before2.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: second send wrote a doc', timeoutMs: 30_000 },
+      );
+      created.push(second[0].id);
+      await db().collection('eiflixtouchpoints').doc(second[0].id).update({ status: 'failed', error: 'invalid_token' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: a failure is shown with the reason')
+        .toContainText('invalid_token', { timeout: 30_000 });
+    } finally {
+      await Promise.all(created.map((id) => db().collection('eiflixtouchpoints').doc(id).delete()));
+    }
+
+    await dialog.getByTestId('psd-close').click();
+    await expect(dialog, 'WS-71: Close shuts the dialog').toHaveCount(0);
+    await expect(slack, 'WS-71: the hot leads panel is still open underneath').toBeVisible();
+  });
+});
