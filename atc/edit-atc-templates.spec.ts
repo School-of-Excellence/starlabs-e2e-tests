@@ -14,7 +14,7 @@ import { test, expect, Page, Locator } from '@playwright/test';
 import {
   PF, NAME, ACT, PROC_NAME, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_ASKS, TPL_OUTCOMES,
   installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDoc, waitFor, pickOptions, selectText, tid, AtcGuard,
-  EMAIL, fillEditorDialog,
+  EMAIL, fillEditorDialog, FATC, wavBuffer,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -70,6 +70,7 @@ async function addReviewInView(browser: any, atcId: string, text: string) {
 }
 const newadj = (page: Page, i: number) => page.locator(tid(`eatc-newadj-${i}`));
 const newproc = (page: Page, i: number, j: number) => newadj(page, i).locator(tid(`eatc-newproc-${j}`));
+const exadj = (page: Page, i: number) => page.locator(tid(`eatc-exadj-${i}`));
 const caOf = (page: Page, i: number, j: number) => newproc(page, i, j).locator(tid(`eatc-proc-assigned-${ACT.ca}`));
 
 test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcomes, version panel (emulator only)', () => {
@@ -280,7 +281,7 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     expect((await atcDb().collection('atc_alpha').get()).docs.some((d) => d.data().editedfrom?.id === TPL.vWish), 'nothing saved').toBe(false);
   });
 
-  test('EATT-06 Edit review log: live from the ATC, delete + add straight to the ATC; change agent may add; others read only', async ({ page, browser }) => {
+  test('EATT-06 Edit review log: live from the ATC, delete + add straight to the ATC; no role check — anyone who opens the ATC may add', async ({ page, browser }) => {
     test.setTimeout(240_000);
     await openEdit(page, TPL.rLive);
     const card = page.getByTestId('eatc-review-card');
@@ -320,7 +321,7 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rLive}`))?.reviewlog || []).some((x: any) => x.note === `EATT-06 from Edit ${RUN}`), 'review from Edit on the ATC');
     expect((await atcDb().collection('atc_alpha').get()).docs.some((d) => d.data().editedfrom?.id === TPL.rLive), 'no new version').toBe(false);
 
-    // eis: the adjustment's implementation agent → may add; not involved anywhere → read only
+    // no role check (operator 2026-10-29): eis may add on an ATC where it is an agent, and on one where it is not involved
     const ctx = await browser.newContext({ baseURL: test.info().project.use.baseURL });
     const p = await ctx.newPage();
     const g = await installAtcGuards(p);
@@ -333,8 +334,11 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     expect(impl).toMatchObject({ createdby: PF.eis, note: `EATT-06 change agent ${RUN}` });
     await p.goto(`/editATC/${TPL.rNot}/alpha`);
     await expect(p.locator(tid('eatc-exadj-0'))).toBeVisible({ timeout: 45_000 });
-    await expect(p.getByTestId('eatc-review-readonly')).toContainText("Only this ATC's authors, change agents, mentors and admins");
-    await expect(p.getByTestId('eatc-review-text')).toHaveCount(0);
+    await expect(p.getByTestId('eatc-review-readonly')).toHaveCount(0);
+    await p.getByTestId('eatc-review-text').fill(`EATT-06 not involved ${RUN}`);
+    await p.getByTestId('eatc-review-add').click();
+    const notInvolved = await waitFor(async () => ((await atcDoc(`atc_alpha/${TPL.rNot}`))?.reviewlog || [])[0] || null, 'review by a user not involved');
+    expect(notInvolved).toMatchObject({ createdby: PF.eis, note: `EATT-06 not involved ${RUN}` });
     assertNoRealDb(g);
     await ctx.close();
   });
@@ -381,5 +385,44 @@ test.describe('ATC — Edit ATC 2026-10-23: Prescribe design, Ask / WiSH outcome
     await expect(page.getByTestId('eatc-retired-text')).toHaveText("This ATC was deleted. Your changes can't be saved.", { timeout: 30_000 });
     await expect(page.getByTestId('eatc-submit')).toBeDisabled();
     await expect(page.getByTestId('eatc-open-latest')).toHaveCount(0);
+  });
+
+  test('EATT-09 WiSH: a procedure picked in Edit is mandatory (same rule as Prescribe) → Changework brief required; a plain model stays optional', async ({ page }) => {
+    await openEdit(page, FATC.WEDIT);
+    // new procedure on the existing adjustment
+    await exadj(page, 0).getByTestId('eatc-exadj-addproc').click();
+    const exNew = exadj(page, 0).locator(tid('eatc-exproc-1'));
+    await expect(exNew.getByTestId('eatc-proc-mandatory').locator('input'), 'unchecked until a procedure is picked').not.toBeChecked();
+    await pickOptions(page, exNew.getByTestId('eatc-proc-name'), [PROC_NAME.two], false);
+    await expect(exNew.getByTestId('eatc-proc-mandatory').locator('input')).toBeChecked();
+    // new adjustment's procedure
+    await page.getByTestId('eatc-newadj-add').click();
+    const a = newadj(page, 0);
+    await a.getByTestId('eatc-newadj-text').fill(`EATT-05 new adjustment ${RUN}`);
+    await a.getByTestId('eatc-newadj-text').blur();
+    await pickOptions(page, a.getByTestId('eatc-newadj-awareness'), [/^\s*Aware\s*$/], false);
+    await a.getByTestId('eatc-newadj-years').fill('4');
+    await pickOptions(page, newproc(page, 0, 0).getByTestId('eatc-proc-name'), [PROC_NAME.one], false);
+    await expect(newproc(page, 0, 0).getByTestId('eatc-proc-mandatory').locator('input')).toBeChecked();
+
+    await expectBlocked(page, 'Changework brief missing');
+    await page.getByTestId('eatc-audio-input').setInputFiles({ name: 'eatt05.wav', mimeType: 'audio/wav', buffer: wavBuffer() });
+    await expect(page.getByTestId('eatc-audio-item')).toHaveCount(1, { timeout: 15_000 });
+    await page.getByTestId('eatc-submit').click();
+    await confirmSave(page, guard);
+    const v = await newVersionOf(FATC.WEDIT);
+    const procs: any[] = [];
+    for (const adj of (await v.ref.collection('corrections').get()).docs) {
+      for (const p of (await adj.ref.collection('procedures').get()).docs) procs.push({ adj: adj.data().name, mandatory: p.data().mandatory });
+    }
+    expect(procs.filter((p) => p.mandatory === true).length, 'the two newly picked procedures are mandatory').toBe(2);
+    expect(procs.filter((p) => p.mandatory !== true).length, 'the original procedure is not').toBe(1);
+
+    // negative control: a plain (alpha) model — a picked procedure stays optional
+    await openEdit(page, FATC.PEDIT, false);
+    await exadj(page, 0).getByTestId('eatc-exadj-addproc').click();
+    const plainNew = exadj(page, 0).locator(tid('eatc-exproc-1'));
+    await pickOptions(page, plainNew.getByTestId('eatc-proc-name'), [PROC_NAME.two], false);
+    await expect(plainNew.getByTestId('eatc-proc-mandatory').locator('input')).not.toBeChecked();
   });
 });

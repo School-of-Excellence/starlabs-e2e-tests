@@ -50,6 +50,21 @@ export const TPL_ASKS = S.TPL_ASKS;
 export const TPL_OUTCOMES = S.TPL_OUTCOMES;
 // phase 5 (2026-10-24) — the seeded Review log notes
 export const REVIEW = S.REVIEW;
+// phase 6 (2026-10-29) — ATC forms
+export const FORMS_MODEL: string = S.FORMS_MODEL;
+export const DF = S.DF;
+export const DF_NAME = S.DF_NAME;
+export const DF_QUESTION: string = S.DF_QUESTION;
+export const FORMS_CONFIG = S.FORMS_CONFIG;
+export const FATC = S.FATC;
+export const FANS = S.FANS;
+export const FANSWER_TEXT: (k: string) => string = S.FANSWER_TEXT;
+export const DF_ALL: string = S.DF_ALL;
+export const DF_ALL_NAME: string = S.DF_ALL_NAME;
+export const ALL_MODEL: string = S.ALL_MODEL;
+export const W = S.W;
+export const MEDIA = S.MEDIA;
+export function formsDb() { return getFirestore(initAdminAuto().app(), S.FORMS_DB_ID); }
 /** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
 export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
   const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);

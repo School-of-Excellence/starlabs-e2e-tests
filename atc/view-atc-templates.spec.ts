@@ -176,7 +176,6 @@ test.describe('ATC — Ask / WiSH outcomes on View Prescribed + Preview (emulato
     const r = await openFull(page, TPL.rEIS);
     const card = r.getByTestId('vatc-review-card');
     await expect(card.getByTestId('vatc-review-empty')).toBeVisible();
-    await expect(card.getByTestId('vatc-review-readonly')).toHaveCount(0);
     await card.getByTestId('vatc-review-text').fill(`VATT-04 author review ${RUN}`);
     await card.getByTestId('vatc-review-add').click();
     await expect(card.getByTestId('vatc-review-note').nth(0)).toHaveText(`VATT-04 author review ${RUN}`, { timeout: 20_000 });

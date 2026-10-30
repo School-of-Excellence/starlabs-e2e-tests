@@ -19,6 +19,7 @@ import { test, expect, Page, Browser, Locator } from '@playwright/test';
 import {
   PF, NAME, ACT, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE,
   installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDocs, waitFor, pickOptions, selectText, tid, AtcGuard, fillEditorDialog,
+  wavBuffer,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -446,6 +447,12 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     const d = await draftWhere(PF.tpw, (x) => (x.outcomes || []).length === 3, 'tpw draft with three outcome rows');
     expect(d.data().outcomes[2], 'the draft keeps every row, the empty one too').toEqual({ outcomearea: '', outcomeexpected: '' });
 
+    // WiSH procedures are mandatory (Prescribe, since 2026-10-26) → the Changework brief is required before submit
+    await expect(readyItem(page, 'Changework brief (a procedure is mandatory)')).not.toHaveClass(/ready-done/);
+    await page.getByTestId('patc-audio-input').setInputFiles({ name: 'ptpl06.wav', mimeType: 'audio/wav', buffer: wavBuffer() });
+    await expect(page.getByTestId('patc-audio-item')).toHaveCount(1, { timeout: 15_000 });
+    await expect(readyItem(page, 'Changework brief (a procedure is mandatory)')).toHaveClass(/ready-done/);
+
     await page.getByTestId('patc-submit').click();
     await page.getByTestId('aael-submit').click();
     await expect(snack(page, 'The ATC has been submitted successfully')).toBeVisible({ timeout: 45_000 });
@@ -456,6 +463,9 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
       { outcomearea: `Wish Super Fitness ${RUN}`, outcomeexpected: 'Run 5K by March' },
     ]);
     expect(atc.data().ask, 'no Ask on a WiSH ATC').toBeUndefined();
+    for (const adj of (await atc.ref.collection('corrections').get()).docs) {
+      for (const proc of (await adj.ref.collection('procedures').get()).docs) expect(proc.data().mandatory, 'WiSH procedure saved mandatory').toBe(true);
+    }
   });
 
   test('PTPL-07 a mentoring prescriber sees "Directives for Micro ATC" for a regular model, but not for EI Solution or WiSH', async ({ page }) => {

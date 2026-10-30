@@ -143,6 +143,10 @@ const ROUTES = [
   { route: '/participantdeliverysequence', label: 'Participant Delivery Sequence' },
   { route: '/productinitiated-dashboard', label: 'Product Initiation Dashboard' },
   { route: '/formtemplate', label: 'Form Template' },
+  // 2026-10-29: ATC model table + Create/Edit dialog (atcmodel-forms.spec.ts — forms config)
+  { route: '/atcmodel', label: 'ATC Model' },
+  // 2026-10-29: delivery forms list + dialog (delivery-form-delete.spec.ts — delete default, Restore)
+  { route: '/deliveryactivities', label: 'Delivery Activities' },
   // DEEP routes
   { route: '/salesleads', label: 'Sales Leads' },             // JP-10 reject
   { route: '/productdelivery', label: 'Product Delivery' },   // product-delivery render + entry to deliverysequence authoring
