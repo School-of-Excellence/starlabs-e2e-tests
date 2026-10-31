@@ -61,6 +61,8 @@ export const modeIds = {
   EPR_REG: `${RUN}_epr_registered`,
   BUF1: `${RUN}_buffermix1`,
   RMP1: `${RUN}_rmp1`,
+  BUF_NODOCID: `${RUN}_buffermix_nodocid`,
+  RMP_NODOCID: `${RUN}_rmp_nodocid`,
   RMP2: `${RUN}_rmp2`,
   AAP_NONEMPTY: `${RUN}_pf_p0`,
   AAP_EMPTY: `${RUN}_pf_p1`,
@@ -71,6 +73,7 @@ export const modeContent = {
   askahFlag: `ASKAH flag subject ${RUN}`,
   askahRender: `ASKAH render subject ${RUN}`,
   bufGroupTitle: `TEST Mode Playlist Group ${RUN}`,
+  bufNoDocidTitle: `TEST Mode Playlist Group NoDocid ${RUN}`,
   formContact: 'formtester@example.com',
   cfContact: 'cftester@example.com',
   // Interim Report Dashboard world
