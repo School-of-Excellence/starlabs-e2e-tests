@@ -8,21 +8,24 @@
 // Hub journal: specs/journals/2026-11-01-big-cohorts-randomize.md.
 //
 // SEEDED WORLD (fixtures/big-seed.ts seedBigRandomizeWorld, on top of seedBigWorld): SRC (educational, six people),
-// T1 (educational, empty), T2 (operational, holds OLD), SPEC (educational: S0, S1 + P0, who is also a participant), an
-// event today with check-ins for P0, P1 and S0. The base world's cohorts are `studio`: the category negative control.
+// T1 (educational, empty), T2 (operational, holds OLD, has a group chat), T3 (educational, empty), SPEC (educational:
+// S0, S1 + P0, who is also a participant), an event today with check-ins for P0, P1 and S0. The base world's cohorts
+// are `studio`: the category negative control. resetBigRandomizeWorld() restores the groups before each case.
 //
-// SAVING IS OFF in the app (the crnd-confirm button is commented out), so the dialog is preview-only. These cases
-// prove the split, the warnings and the filters, and that nothing is written: the oracle reads every run cohort back
-// through the Admin SDK before and after. applyRandomizePlan() is NOT covered until saving is turned on.
+// CRND-01..04 stop at the preview and write nothing. CRND-05 (saving went on 2026-11-01) really saves: the first
+// run of applyRandomizePlan() anywhere, on the emulator only.
 //
 // ANTI-CIRCULARITY: the seed writes member lists and check-ins, never a count. Every number asserted (available,
-// attended of N, people per card, added / stay / removed) is computed by the dialog.
+// attended of N, people per card, added / stay / removed) is computed by the dialog. CRND-05 reads back what the APP
+// wrote, through the Admin SDK: the member lists, the `big cohorts log` rows and the chat members.
+// NEGATIVE CONTROLS in CRND-05: the source, the specialist cohort and the unpicked T3 must not change, no cohort is
+// created, and OLD must leave T2 and its chat while nobody else does.
 import { test, expect, Page } from '@playwright/test';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from './support/console-guard';
 import { installAllExternalStubs } from './stubs';
 import { loginAs, PASSWORD } from './support/actors';
-import { getDoc, queryWhere } from './support/firestore-admin';
-import { seedBigWorld, seedBigRandomizeWorld, BigSeedResult, BigRandomizeWorld } from '../fixtures/big-seed';
+import { getDoc, pollUntil, queryWhere } from './support/firestore-admin';
+import { seedBigWorld, seedBigRandomizeWorld, resetBigRandomizeWorld, BigSeedResult, BigRandomizeWorld } from '../fixtures/big-seed';
 
 let seed: BigSeedResult;
 let w: BigRandomizeWorld;
@@ -33,6 +36,7 @@ test.beforeAll(async () => {
   w = await seedBigRandomizeWorld(seed);
 });
 test.beforeEach(async ({ page }) => {
+  await resetBigRandomizeWorld(seed, w);
   guard = attachConsoleGuard(page);
   installAllExternalStubs(page);
 });
@@ -66,7 +70,7 @@ const cohortLists = async () => Object.fromEntries(
   (await queryWhere('big cohorts', [['testrunid', '==', seed.testrunid]])).map((c: any) => [c.docid, [...(c.participantidlist ?? [])].sort()]),
 );
 
-test.describe('BIG — Cohorts randomize (category gate, split + warnings, attendance, specialists, preview only)', () => {
+test.describe('BIG — Cohorts randomize (category gate, split + warnings, attendance, specialists, save)', () => {
   test('CRND-01 Randomize is offered only when every ticked cohort is educational or operational', async ({ page }) => {
     await openScreen(page);
     const button = page.getByTestId('cman-randomize-cohort-87');
@@ -102,6 +106,7 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     await page.getByTestId('crnd-size-input').fill('4');
     await expect(page.getByTestId('crnd-problem').first(), 'CRND-02: too few people is explained').toBeVisible();
     await expect(page.getByTestId('crnd-preview-empty')).toBeVisible();
+    await expect(page.getByTestId('crnd-confirm'), 'CRND-02: nothing to confirm yet').toBeDisabled();
 
     // 2 groups of 2 from 6 people: the two extras are spread → 3 and 3
     await page.getByTestId('crnd-size-input').fill('2');
@@ -123,9 +128,9 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     await page.getByTestId('crnd-reshuffle').click();
     expect(await placed(), 'CRND-02: Reshuffle still places everyone exactly once').toEqual([...w.people].sort());
 
-    // saving is off: there is no way to write, and closing writes nothing
-    await expect(page.getByTestId('crnd-preview-only')).toBeVisible();
-    await expect(page.getByTestId('crnd-confirm'), 'CRND-02: saving is off').toHaveCount(0);
+    // closing without confirming writes nothing
+    await expect(page.getByTestId('crnd-confirm'), 'CRND-02: Confirm says what it will do').toContainText('add 6, remove 1');
+    await expect(page.getByTestId('crnd-confirm')).toBeEnabled();
     await page.getByTestId('crnd-cancel').click();
     await expect(page.getByTestId('crnd-mode-summary')).toHaveCount(0);
     expect(await cohortLists(), 'CRND-02: no cohort changed').toEqual(before);
@@ -199,13 +204,7 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     await expect(previewCard(page, w.t1Name).locator('.crnd-card-count'), 'CRND-04: 1 specialist on top of 3 participants').toHaveText('4 people');
 
     // a third group needs a third specialist: P0, who then leaves the participant shuffle
-    await page.getByTestId('crnd-add-new-cohort').click();
-    await page.getByTestId('crnd-new-cohort-name').fill(w.t1Name);
-    await page.getByTestId('crnd-new-cohort-save').click();
-    await expect(page.getByTestId('crnd-new-cohort-error'), 'CRND-04: a name already in use is refused').toContainText('already exists');
-    const newName = `${w.search} Brand New`;
-    await page.getByTestId('crnd-new-cohort-name').fill(newName);
-    await page.getByTestId('crnd-new-cohort-save').click();
+    await pickGroup(page, w.t3Name);
     await expect(page.getByTestId('crnd-stat-groups')).toContainText('3');
     await expect(page.getByTestId('crnd-stat-specialists')).toContainText('3');
     await expect(page.getByTestId('crnd-stat-participants'), 'CRND-04: P0 is now a specialist').toContainText('5');
@@ -214,25 +213,62 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     await expect(page.getByTestId('crnd-preview-empty')).toBeVisible();
     await page.getByTestId('crnd-size-input').fill('1');
     await expect(page.getByTestId('crnd-participant-split')).toContainText('1 person is already placed as specialists');
-    await expect(previewCard(page, newName).locator('.crnd-card-tag')).toHaveText('new');
 
     await page.getByTestId('crnd-toggle-selected-groups').click();
-    await expect(page.getByTestId('crnd-target-chip')).toHaveCount(2);
-    await expect(page.getByTestId('crnd-new-cohort-chip')).toContainText(newName);
-    await page.getByTestId('crnd-remove-new-cohort').click();
+    await expect(page.getByTestId('crnd-target-chip')).toHaveCount(3);
+    await page.getByTestId('crnd-target-chip').filter({ hasText: w.t3Name }).getByTestId('crnd-target-chip-remove').click();
     await expect(page.getByTestId('crnd-stat-groups')).toContainText('2');
 
     expect(await getDoc('big cohorts', w.t1Id).then((c: any) => c.participantidlist), 'CRND-04: nothing was saved').toEqual([]);
     await page.getByTestId('crnd-close').click();
     await expect(page.getByTestId('crnd-mode-summary')).toHaveCount(0);
-    expect((await queryWhere('big cohorts', [['name', '==', newName]])).length, 'CRND-04: the new cohort was never created').toBe(0);
   });
 
-  // Hooks no case above drives. crnd-confirm is commented out in the template while saving is off (the gate's scanner
-  // still reads it); the rest are secondary tools and states the four cases do not need.
+  test('CRND-05 Confirm overwrites the picked groups, logs who was added and removed, updates the chat, and changes nothing else', async ({ page }) => {
+    const before = await cohortLists();
+    await openDialog(page);
+    await page.getByTestId('crnd-mode-without').click();
+    await page.getByTestId('crnd-skip-attendance').click();
+    await page.getByTestId('crnd-target-search').fill(w.search);
+    await pickGroup(page, w.t1Name);
+    await pickGroup(page, w.t2Name);
+    await page.getByTestId('crnd-size-input').fill('2');
+    await expect(page.getByTestId('crnd-confirm')).toContainText('add 6, remove 1');
+    await page.getByTestId('crnd-confirm').click();
+    await expect(page.getByTestId('crnd-mode-summary'), 'CRND-05: Confirm closes the dialog').toHaveCount(0);
+
+    // the groups: everyone placed exactly once, 3 and 3, and OLD gone
+    const t2 = await pollUntil(() => getDoc('big cohorts', w.t2Id), (c) => !(c?.participantidlist as string[]).includes(w.oldId),
+      { label: 'CRND-05: T2 is overwritten', timeoutMs: 30_000 });
+    const t1 = await getDoc('big cohorts', w.t1Id);
+    const t1List = t1!.participantidlist as string[]; const t2List = t2!.participantidlist as string[];
+    expect([t1List.length, t2List.length], 'CRND-05: 3 and 3').toEqual([3, 3]);
+    expect([...t1List, ...t2List].sort(), 'CRND-05: everyone placed exactly once').toEqual([...w.peopleIds].sort());
+
+    // the logs the app wrote: an `added` row per placed person, one `removed` row for OLD, none for anyone else
+    const logs = async (cohortid: string, status: string) =>
+      ((await queryWhere('big cohorts log', [['cohortid', '==', cohortid], ['status', '==', status]])) as any[]).map((l) => l.profileid).sort();
+    const removed = await pollUntil(() => logs(w.t2Id, 'removed'), (r) => r.length > 0, { label: 'CRND-05: the removed log', timeoutMs: 30_000 });
+    expect(removed, 'CRND-05: only OLD is logged as removed').toEqual([w.oldId]);
+    expect(await pollUntil(() => logs(w.t2Id, 'added'), (r) => r.length === 3, { label: 'CRND-05: T2 added logs', timeoutMs: 30_000 }), 'CRND-05: T2 added').toEqual([...t2List].sort());
+    expect(await pollUntil(() => logs(w.t1Id, 'added'), (r) => r.length === 3, { label: 'CRND-05: T1 added logs', timeoutMs: 30_000 }), 'CRND-05: T1 added').toEqual([...t1List].sort());
+    expect(await logs(w.t1Id, 'removed'), 'CRND-05: T1 had nobody to remove').toEqual([]);
+
+    // T2's group chat follows the list: the placed people join, OLD leaves
+    const chat = await getDoc('supportchat', w.chatId);
+    expect([...(chat!.members as string[])].sort(), 'CRND-05: the chat matches the group').toEqual(t2List.map((id) => `${id}_uid`).sort());
+
+    // nothing else moved: copy, not move, and no cohort is created
+    const after = await cohortLists();
+    for (const id of [w.srcId, w.specId, w.t3Id, seed.sourceCohortId, seed.targetCohortId]) {
+      expect(after[id], `CRND-05: ${id} is unchanged`).toEqual(before[id]);
+    }
+    expect(Object.keys(after).sort(), 'CRND-05: no cohort was created').toEqual(Object.keys(before).sort());
+  });
+
+  // Hooks no case above drives: secondary tools and states the five cases do not need.
   test.fixme('CRND-ADDR1 remaining dialog controls addressable (deferred behavioral)', async ({ page }) => {
     await page.goto('/bigcohorts', { waitUntil: 'domcontentloaded' });
-    expect(page.getByTestId('crnd-confirm')).toBeTruthy();
     expect(page.getByTestId('crnd-specialist-marathons-label')).toBeTruthy();
     expect(page.getByTestId('crnd-source-marathons-label')).toBeTruthy();
     expect(page.getByTestId('crnd-change-mode')).toBeTruthy();
@@ -242,9 +278,7 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     expect(page.getByTestId('crnd-clear-targets')).toBeTruthy();
     expect(page.getByTestId('crnd-all-marathons')).toBeTruthy();
     expect(page.getByTestId('crnd-selected-targets')).toBeTruthy();
-    expect(page.getByTestId('crnd-target-chip-remove')).toBeTruthy();
     expect(page.getByTestId('crnd-target-empty')).toBeTruthy();
-    expect(page.getByTestId('crnd-new-cohort-cancel')).toBeTruthy();
     expect(page.getByTestId('crnd-all-marathons-specialists')).toBeTruthy();
     expect(page.getByTestId('crnd-specialist-attendance-select')).toBeTruthy();
     expect(page.getByTestId('crnd-specialist-attendance-attended')).toBeTruthy();
