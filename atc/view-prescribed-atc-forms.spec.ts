@@ -201,13 +201,17 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await expect(formRow(r, DF_NAME.old).getByTestId('vatc-form-note')).toHaveText('This form was deleted');
   });
 
-  test('VATCF-03 opened unvalidated ATC has no Forms card', async ({ page }) => {
+  // 2026-11-01 (plan 2026-11-01-atc-delivery-queue-forms): the ATC forms part shows it opens on validation
+  test('VATCF-03 opened unvalidated ATC: the ATC forms part is locked until validation (no rows, no summary)', async ({ page }) => {
     await openFor(page, 'tfa');
     const r = row(page, FATC.UNV);
     await expect(r).toBeVisible({ timeout: 45_000 });
     await r.getByTestId('vatc-toggle-full').click();
     await expect(r.locator(tid('vatc-adj-0'))).toBeVisible({ timeout: 20_000 });
-    await expect(r.getByTestId('vatc-forms-card')).toHaveCount(0);
+    await expect(r.getByTestId('vatc-forms-card')).toBeVisible({ timeout: 20_000 });
+    await expect(r.getByTestId('vatc-forms-locked')).toHaveText(/These open once the ATC is validated\./);
+    await expect(r.getByTestId('vatc-form-row')).toHaveCount(0);
+    await expect(r.getByTestId('vatc-forms-summary')).toHaveCount(0);
   });
 
   test('VATCF-04 rows are not rebuilt while the ATC stays open, and the page stays responsive (no freeze)', async ({ page }) => {

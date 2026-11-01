@@ -193,6 +193,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     await waitDraftSaved(page);
     const d = await draftWhere(PF.tpe, (x) => x.appointmentid != null, 'tpe draft with the appointment id');
     expect(d.data().appointmentid, 'the closest PAST appointment I hosted').toBe(TPL.apPast);
+    expect(d.data().participantproductid, 'the purchase whose delivery step holds apPast (not apOlder\'s)').toBe(TPL.ppPast);
     expect(pathIds(d.data().observer?.[ACT.observer])).toEqual([PF.agent2]);
     expect(pathIds(d.data().bulkapplied?.[ACT.ca]), 'applied → kept in the draft').toEqual([PF.agent2]);
 
@@ -230,6 +231,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     const a = atc.data();
     expect(a.product).toBe(TPL_MODEL.ei);
     expect(a.appointmentid).toBe(TPL.apPast);
+    expect(a.participantproductid, 'saved next to the appointment').toBe(TPL.ppPast);
     expect(a.ask, 'only complete rows, trimmed').toEqual([{ askedby: 'self', askedfor: 'for health' }, { askedby: 'spouse', askedfor: 'calm home' }]);
     expect((a.author || []).map((r: any) => r.id)).toEqual([PF.admin]);
     expect(a.queueid, 'no queue on an appointment ATC').toBeUndefined();
@@ -249,6 +251,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     await waitDraftSaved(page);
     const d = await draftWhere(PF.tpn, (x) => x.product === TPL_MODEL.ei, 'tpn draft');
     expect(d.data().appointmentid, 'no appointment → nothing found, no id').toBeNull();
+    expect(d.data().participantproductid, 'no appointment → no purchase').toBeNull();
     await expectEmptySelect(page.locator(tid(`patc-author-${ACT.author}`)), 'no appointment → author left for the user');
     await expectEmptySelect(page.locator(tid(`patc-observer-${ACT.observer}`)));
 
@@ -344,6 +347,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     const d = await draftWhere(PF.tpq, (x) => x.liveassignmentid != null && x.queuename != null, 'tpq draft with the queue refs');
     expect(d.data()).toMatchObject({ queueid: TPL.liveQueue, stagename: LIVE_STAGE, liveassignmentid: TPL.liveAssignment, queuename: LIVE_QUEUE_NAME, product: MODEL.alpha });
     expect(d.data().appointmentid).toBeNull();
+    expect(d.data().participantproductid, 'a queue draft carries no purchase').toBeNull();
 
     // another device reopens it: queue mode comes back from the draft (no re-check)
     const { ctx, p, g } = await secondDevice(browser);
@@ -377,6 +381,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
     }, 'ATC for tpq', 45_000);
     expect(atc.data()).toMatchObject({ queueid: TPL.liveQueue, stagename: LIVE_STAGE, liveassignmentid: TPL.liveAssignment, product: MODEL.alpha });
     expect((atc.data().author || []).map((r: any) => r.id)).toEqual([PF.agent1]);
+    expect(atc.data().participantproductid, 'a queue ATC carries only its queue').toBeUndefined();
     assertNoRealDb(g);
     await ctx.close();
   });

@@ -65,6 +65,13 @@ export const ALL_MODEL: string = S.ALL_MODEL;
 export const W = S.W;
 export const MEDIA = S.MEDIA;
 export function formsDb() { return getFirestore(initAdminAuto().app(), S.FORMS_DB_ID); }
+// phase 7 (2026-11-01) — delivery / queue forms on View ATC
+export const DQ = S.DQ;
+export const DQ_QUEUE_NAME: string = S.DQ_QUEUE_NAME;
+export const DQ_STAGE: string = S.DQ_STAGE;
+export const DQ_FORM = S.DQ_FORM;
+export const DQ_ANS = S.DQ_ANS;
+export const DQ_TEXT: (id: string) => string = S.DQ_TEXT;
 /** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
 export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
   const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);

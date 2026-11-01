@@ -108,3 +108,27 @@ npx ng serve --configuration emulator --port 4300
 # specs (hub)
 EMU_REUSE=1 EMU_REUSE_APP=1 BASE_URL=http://localhost:4300 FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199 npx playwright test --config=playwright.atc.emulator.config.ts --workers=1
 ```
+
+## Addendum — 2026-10-30
+- **Readiness gate fix** (`scripts/readiness/readiness.cjs` `baseDeclares`): the "did the base ever have this hook?"
+  check used `git grep -F`, so `eif-logs-range-to` matched inside `eif-logs-range-today` and was reported as drift
+  ("dropped by the app") instead of "not landed yet". Now each id is matched inside its quotes. Gate self-tests 85/85.
+- **New `journey/atcmodel-dialog.spec.ts`** covers the 17 `ca-*` dialog hooks the gate flagged (image wrong type /
+  non-square / square preview / replace / remove; duplicate name; evolution type; categories; description; directive;
+  videos; save with no error; Close). `journey/atcmodel-forms.spec.ts` references the new `ca-form-filledby`.
+- **Run each suite on a FRESH emulator** (start → run → stop), as CI does: on one shared emulator, the atc seed's
+  "Live Queue atc" leaked into queue specs. The queue suite needs Cloud Functions — start it with
+  `bash scripts/deploy-cf-emulator.sh` (the file is not executable).
+- **Disk-full incident:** `firebase-debug.log` (17 GB) + `firestore-debug.log` (8.5 GB) in the hub root filled the
+  disk during the Functions run (ENOSPC). Both are gitignored debug output; they were emptied. Watch them on long runs.
+- **Results:** workshops 126 ✓ · journey 99 ✓ · atc 116 ✓ · queue 125 passed / 16 failed locally (studio-core,
+  studio-session, cross-db-lowerbound, variations/* — timeouts and Cloud Function side-effects; none touches forms).
+- **Task 3 prepared, NOT run:**
+  - `atc/scenario-atc-forms.spec.ts` (web phases web1 / web2 / web3, skipped unless `SCENARIO_PHASE` is set);
+  - seed participant `tfm` + ATCs M1 / M2 / M3 / M5→M5B;
+  - the app half is Flutter `integration_test/features/atc_forms_scenario_test.dart`.
+
+  Running it needs the app's gitignored `lib/firebase_options.dart` + `ios/Runner/GoogleService-Info.plist` swapped
+  for dummy-key `starlabs-cicd` copies (the iOS app configures Firebase natively from the plist; the real files point
+  at starlabs-test), restored afterwards. The runner that did this lived in a session scratch folder and is gone —
+  rebuild it from this description.

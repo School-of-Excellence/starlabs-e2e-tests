@@ -55,7 +55,9 @@ const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
   // 2026-10-29 (later): tfe — the all-widgets form through View ATC → Fill form
   'tfe',
   // 2026-10-30: tfm — the mobile scenario participant (web specialist ↔ Flutter app on the simulator)
-  'tfm'];
+  'tfm',
+  // phase 7 (2026-11-01): tfp — delivery / queue forms on View ATC (two purchases of WiSH + a queue ATC)
+  'tfp'];
 const PF = {
   admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
   eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
@@ -180,7 +182,9 @@ const DEFAULT_SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard',
   // phase 3 (prescribe templates)
   'eisroles', 'appointmenttype', 'AppointmentType-To-Roles', 'appointments', 'live assignment', 'queue stage log',
   // phase 6 (ATC forms)
-  'delivery forms'];
+  'delivery forms',
+  // phase 7 (delivery / queue forms)
+  'deliverables', 'static meta data'];
 
 // ---- phase 6: ATC forms (2026-10-29, plan specs/plans/2026-10-29-atc-forms-step1.md in the app repo) ---------
 // One model with a forms config of 8: specialist (clarity, review, oldSub) and participant (life, sleep, diet, old,
@@ -228,6 +232,26 @@ const FATC = {
 const FANS = { clarity: `${RUN}_ans_clarity`, life: `${RUN}_ans_life`, sleep: `${RUN}_ans_sleep`, oldSub: `${RUN}_ans_oldsub`, actSleep: `${RUN}_ans_act_sleep`,
   editClarity: `${RUN}_ans_edit_clarity`, rvSleep: `${RUN}_ans_rv_sleep` };
 const FANSWER_TEXT = (k) => `Seeded answer ${k} ${RUN}`;
+
+// ---- phase 7: delivery / queue forms on View ATC (2026-11-01, plan specs/plans/2026-11-01-atc-delivery-queue-forms.md)
+// tfp did WiSH twice (purchases a / b) and has a queue ATC. Answers in formsByClient carry participantproductid (delivery)
+// or queueref (queue); the negative controls must NOT show: another participant's answer of purchase a, tfp's answer
+// with no purchase id, tfp's answer in another queue, another participant's answer in tfp's queue.
+const DQ = {
+  ppA: `${RUN}_pp_tfp_a`, ppB: `${RUN}_pp_tfp_b`,
+  queue: `${RUN}_dq_queue`, otherQueue: `${RUN}_dq_queue_other`,
+  ATC_A: `${RUN}_F_DQA`, ATC_B: `${RUN}_F_DQB`, ATC_Q: `${RUN}_F_DQQ`,
+  // the app's FILL button (Flutter integration test): tfm's form step of purchase app; the app's "active" purchase differs
+  appStep: `${RUN}_dl_tfm_form`, ppApp: `${RUN}_pp_tfm_app`,
+  form: `${RUN}_df_dq`,
+};
+const DQ_TEXT = (id) => `Activity answer ${id}`;
+const DQ_QUEUE_NAME = `Forms Queue ${RUN}`;
+const DQ_STAGE = `Consultation ${RUN}`;
+const DQ_FORM = { intake: `Intake Form ${RUN}`, life: `Life Check ${RUN}`, reflect: `Reflection ${RUN}`, stage: `Stage Check-in ${RUN}`,
+  otherPp: `Other Participant Form ${RUN}`, noPp: `No Purchase Form ${RUN}`, otherQ: `Other Queue Form ${RUN}`, otherQp: `Other Person Queue Form ${RUN}` };
+const DQ_ANS = { a1: `${RUN}_dqa_intake`, a2: `${RUN}_dqa_life1`, a3: `${RUN}_dqa_life2`, b1: `${RUN}_dqb_reflect`, q1: `${RUN}_dqq_stage`,
+  xPp: `${RUN}_dqx_otherpp`, xNoPp: `${RUN}_dqx_nopp`, xQ: `${RUN}_dqx_otherq`, xQp: `${RUN}_dqx_otherqp` };
 // Every field type the form screen renders (formtemplate.component.html), incl. video/audio — the shape that broke
 // draft + submit (SafeResourceUrl written to Firestore). Media URLs are local assets: a real Storage URL would be
 // aborted by the G2 guard.
@@ -282,6 +306,8 @@ const TPL = {
   apFuture: `${RUN}_ap_ei_future`,     // tomorrow   — shadow: eis (future)
   apNotMine: `${RUN}_ap_ei_notmine`,   // 3 h ago    — admin is NOT a host
   apOtherType: `${RUN}_ap_other_type`, // 1 h ago    — a non-ATC appointment type
+  // 2026-11-01: the delivery steps holding apPast / apOlder → their purchases (Prescribe saves apPast's purchase)
+  dlPast: `${RUN}_dl_ap_past`, dlOlder: `${RUN}_dl_ap_older`, ppPast: `${RUN}_pp_tpe_now`, ppOlder: `${RUN}_pp_tpe_before`,
   liveQueue: `${RUN}_live_queue`, liveAssignment: `${RUN}_live_la`, liveLog: `${RUN}_live_log`,
   tpqBetaDraft: `${RUN}_tpq_beta_draft`, // tpq's older NON-queue draft (beta) — "open another draft" must leave queue mode
   // phase 4 (2026-10-23) — Edit / View with the template sections
@@ -456,6 +482,7 @@ async function seedATC() {
   await seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj });
   await seedPhase5({ daysAgo, writeATC, base });
   await seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj });
 
   console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
 }
@@ -597,6 +624,11 @@ async function seedPhase3({ db, adb, T, tag, daysAgo }) {
   await appt(TPL.apFuture, { start: hoursFromNow(24), hosts: [PF.admin, PF.eis], diag: PF.admin, shadow: PF.eis });
   await appt(TPL.apNotMine, { start: hoursFromNow(-3), hosts: [PF.eis, PF.agent1], diag: PF.eis, shadow: PF.agent1 });
   await appt(TPL.apOtherType, { type: TPL.atOther, start: hoursFromNow(-1), hosts: [PF.admin, PF.agent1], diag: PF.admin, shadow: PF.agent1 });
+  // delivery steps (2026-11-01): each appointment sits in a different purchase's sequence
+  const step = (id, apId, pp) => db.collection('deliverables').doc(id).set({ deliveryref: ref(`appointmenttype/${TPL.atEi}`),
+    fileref: [ref(`appointments/${apId}`)], participantproductid: pp, profileid: PF.tpe, status: 'completed', type: 'appointment', ...tag });
+  await step(TPL.dlPast, TPL.apPast, TPL.ppPast);
+  await step(TPL.dlOlder, TPL.apOlder, TPL.ppOlder);
 
   // live queue session for tpq (non-WiSH/EI model → the existing live-queue flow): ongoing queue, a live
   // assignment pairing admin with tpq (agent1 filled the author activity), and the queue token → product alpha
@@ -721,6 +753,41 @@ async function seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simple
   await request(FATC.M3, 'sleep', PF.tfm);                               // mobile: its ATC gets deleted before submit
 }
 
+async function seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  // one delivery form template (the View answer overlay reads it); each answer has its own form name and text
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  await db.collection('delivery forms').doc(DQ.form).set({ docid: DQ.form, formname: `Activity Form ${RUN}`, formdescription: `Delivery / queue forms ${RUN}`, formarray: [question], ...tag });
+  const answer = (id, name, pid, d, extra) => fdb.collection('formsByClient').doc(id).set({
+    docid: id, formid: DQ.form, formname: name, profileid: pid, date: daysAgo(d), formarray: [{ ...question, value: DQ_TEXT(id) }], ...extra, ...tag });
+  // delivery: purchase a has three answers (Life Check twice), purchase b one
+  await answer(DQ_ANS.a1, DQ_FORM.intake, PF.tfp, 30, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.a2, DQ_FORM.life, PF.tfp, 20, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.a3, DQ_FORM.life, PF.tfp, 10, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.b1, DQ_FORM.reflect, PF.tfp, 3, { participantproductid: DQ.ppB, submittedin: 'breakthroughs' });
+  // queue: one answer in tfp's queue
+  await answer(DQ_ANS.q1, DQ_FORM.stage, PF.tfp, 2, { queueref: fdb.doc(`queue generation/${DQ.queue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+  // negative controls
+  await answer(DQ_ANS.xPp, DQ_FORM.otherPp, PF.tfa, 5, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.xNoPp, DQ_FORM.noPp, PF.tfp, 6, { submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.xQ, DQ_FORM.otherQ, PF.tfp, 4, { queueref: fdb.doc(`queue generation/${DQ.otherQueue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+  await answer(DQ_ANS.xQp, DQ_FORM.otherQp, PF.tfa, 4, { queueref: fdb.doc(`queue generation/${DQ.queue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+
+  const wish = (d, extra) => ({ ...base(PF.tfp, PF.admin, TPL_MODEL.wish, d), directive: TPL_DIRECTIVE.wish, outcomes: TPL_OUTCOMES, status: 'validated', ...extra });
+  await writeATC('atc_alpha', DQ.ATC_A, wish(460, { appointmentid: `${RUN}_dq_ap_a`, participantproductid: DQ.ppA }), simpleAdj(`DQ_A adjustment ${RUN}`));
+  await writeATC('atc_alpha', DQ.ATC_B, wish(461, { appointmentid: `${RUN}_dq_ap_b`, participantproductid: DQ.ppB }), simpleAdj(`DQ_B adjustment ${RUN}`));
+  await writeATC('atc_alpha', DQ.ATC_Q, { ...base(PF.tfp, PF.admin, MODEL.alpha, 462), status: 'validated',
+    queueid: DQ.queue, stagename: DQ_STAGE, queuename: DQ_QUEUE_NAME }, simpleAdj(`DQ_Q adjustment ${RUN}`));
+
+  // the app's FILL button: tfm's form step (purchase ppApp) on the Life Report delivery form
+  await db.collection('deliverables').doc(DQ.appStep).set({ deliveryref: db.doc(`delivery forms/${DF.life}`), fileref: [],
+    participantproductid: DQ.ppApp, profileid: PF.tfm, status: 'ready', type: 'form', ...tag });
+  // tfm signs in to the app: an unverified profile is sent to Profile Verification (home.dart _startDefaultAppFlow)
+  await db.collection('profile_data').doc(PF.tfm).set({ enable: true, profileverified: true }, { merge: true });
+  // the app's home reads this before anything else (homeContent.dart null-checks hpcConfig) — Flutter runs need it
+  await db.collection('static meta data').doc('HPC Config').set({ awards: {}, ...tag }, { merge: true });
+}
+
 async function teardownATC() {
   const admin = initAdminAuto();
   const db = admin.firestore();
@@ -767,7 +834,7 @@ module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_
   ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
   TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW,
   FORMS_DB_ID, FORMS_MODEL, DF, DF_NAME, DF_QUESTION, FORMS_CONFIG, FATC, FANS, FANSWER_TEXT,
-  DF_ALL, DF_ALL_NAME, ALL_MODEL, W, MEDIA, seedATC, teardownATC };
+  DF_ALL, DF_ALL_NAME, ALL_MODEL, W, MEDIA, DQ, DQ_QUEUE_NAME, DQ_STAGE, DQ_FORM, DQ_ANS, DQ_TEXT, seedATC, teardownATC };
 
 if (require.main === module) {
   (async () => {
