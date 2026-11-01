@@ -209,6 +209,10 @@ test.describe('BIG — Cohorts randomize (category gate, split + warnings, atten
     await expect(page.getByTestId('crnd-stat-groups')).toContainText('3');
     await expect(page.getByTestId('crnd-stat-specialists')).toContainText('3');
     await expect(page.getByTestId('crnd-stat-participants'), 'CRND-04: P0 is now a specialist').toContainText('5');
+    // the 5 left can't fill 3 groups of 2: the dialog says so, and offers no preview
+    await expect(page.getByTestId('crnd-participant-split'), 'CRND-04: 3 groups of 2 from 5 is not offered').toHaveCount(0);
+    await expect(page.getByTestId('crnd-preview-empty')).toBeVisible();
+    await page.getByTestId('crnd-size-input').fill('1');
     await expect(page.getByTestId('crnd-participant-split')).toContainText('1 person is already placed as specialists');
     await expect(previewCard(page, newName).locator('.crnd-card-tag')).toHaveText('new');
 
