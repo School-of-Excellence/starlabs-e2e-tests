@@ -424,7 +424,68 @@ export const BIG_SEED_COLLECTIONS = [
   'big marathon', 'big cohorts', 'big cohorts log', 'big assignment',
   'big participants assignments', 'big aggregate event level',
   'biglevel', 'atcmodel level config',
-  'event collection', 'bigactivity',
+  'event collection', 'bigactivity', 'arena e-ticket log',
 ];
+
+// ---- /bigcohorts "Randomize participants" (big-cohorts-randomize.spec.ts, CRND-*) ----------------------
+// Added on top of seedBigWorld, for that spec only. Run-named docs under the same marathon:
+//   SRC   educational  six participants (P0..P5)                → the shuffle's source
+//   T1    educational  empty                                     → a group
+//   T2    operational  holds OLD, who is not in SRC              → a group; the shuffle must warn that OLD goes
+//   SPEC  educational  S0, S1 and P0 (who is also a participant) → specialists; S0 / S1 are picked first, and
+//                                                                   P0 leaves the shuffle once a third is needed
+//   EVENT today only; e-ticket check-ins for P0, P1 and S0       → attended = 2 of the six, not marked = 4
+// The base cohorts are `studio`, so they are the negative control for the category rule. Nothing here stores a
+// count: every number the spec asserts is computed by the dialog from these lists.
+export interface BigRandomizeWorld {
+  srcId: string; srcName: string; t1Id: string; t1Name: string; t2Id: string; t2Name: string;
+  specId: string; specName: string; eventName: string;
+  people: string[]; specialists: string[]; oldName: string; search: string;
+}
+
+export async function seedBigRandomizeWorld(r: BigSeedResult): Promise<BigRandomizeWorld> {
+  const d = db();
+  const tag = TAG(r.testrunid);
+  const search = `RND ${r.testrunid}`;
+  const person = async (key: string, name: string) => {
+    const profileid = `${r.testrunid}_pf_rnd_${key}`;
+    await d.collection('profile_data').doc(profileid).set({
+      docid: profileid, profileid, name, email: `rnd-${key}+${r.testrunid}@example.com`, number: '9999900000', countrycode: '+91', ...tag,
+    });
+    return profileid;
+  };
+  const people: string[] = []; const ids: string[] = [];
+  for (let i = 0; i < 6; i++) { const name = `${search} Person ${i}`; people.push(name); ids.push(await person(`p${i}`, name)); }
+  const specialists = [`${search} Specialist 0`, `${search} Specialist 1`];
+  const s0 = await person('s0', specialists[0]);
+  const s1 = await person('s1', specialists[1]);
+  const oldName = `${search} Old Member`;
+  const old = await person('old', oldName);
+
+  const marathonref = d.collection('big marathon').doc(r.marathonId);
+  const cohort = async (key: string, name: string, cohortCategory: string, participantidlist: string[]) => {
+    const docid = `${r.testrunid}_bigc_rnd_${key}`;
+    await d.collection('big cohorts').doc(docid).set({
+      docid, name, participantidlist, marathonref, eventref: null, status: 'active',
+      cohortCategory, cohortType: 'general', level: 'level1', contentview: 'participants', ...tag,
+    });
+    return docid;
+  };
+  const srcName = `${search} Source`; const t1Name = `${search} Group One`; const t2Name = `${search} Group Two`; const specName = `${search} Specialists`;
+  const srcId = await cohort('src', srcName, 'educational', ids);
+  const t1Id = await cohort('t1', t1Name, 'educational', []);
+  const t2Id = await cohort('t2', t2Name, 'operational', [old]);
+  const specId = await cohort('spec', specName, 'educational', [s0, s1, ids[0]]);
+
+  const Ts = T();
+  const noon = new Date(); noon.setHours(12, 0, 0, 0);
+  const eventName = `${search} Event`;
+  const eventRef = d.collection('event collection').doc(`${r.testrunid}_rnd_event`);
+  await eventRef.set({ docid: eventRef.id, id: eventRef.id, name: eventName, start_date: Ts.fromDate(noon), end_date: Ts.fromDate(noon), ...tag });
+  for (const [i, profileid] of [ids[0], ids[1], s0].entries()) {
+    await d.collection('arena e-ticket log').doc(`${r.testrunid}_rnd_log_${i}`).set({ profileid, eventref: eventRef, logdate: Ts.fromDate(noon), ...tag });
+  }
+  return { srcId, srcName, t1Id, t1Name, t2Id, t2Name, specId, specName, eventName, people, specialists, oldName, search };
+}
 
 export default seedBigWorld;

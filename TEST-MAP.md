@@ -150,7 +150,7 @@ with `EVIDENCE=1` (per-stage screenshots) / `TRACE=full`.
 
 | Group | Config | pass | fixme | skip | Covers |
 |---|---|---:|---:|---:|---|
-| **queue** | `playwright.queue.config.ts` | ~191 | 3 | meta | Queue Manager: staging, stage-log, assignment, dashboards; B!G leaderboard (BLD-01..03) |
+| **queue** | `playwright.queue.config.ts` | ~191 | 3 | meta | Queue Manager: staging, stage-log, assignment, dashboards; B!G leaderboard (BLD-01..03); B!G cohorts randomize (CRND-01..04 + CRND-ADDR1, 2026-11-01 — runs via queue-e2e `only`, not the branch-suites queue leg) |
 | **appointments** | `playwright.appointments.config.ts` | 27 | 6 | 0 | Booking join-chain, slots, roster, team-hours, studio; Specialist Appointment Studio `/specialistappointmentstudio` (SAS-01..09: A&H vs CW views, Home hours maths with cancelled/pending/other-host/other-week excluded, Pending/Completed/Cancelled past filter, disableCancel in the detail dialog, add-availability gate, delete-only-unbooked, view-only delivery types; SAS-ADDR1..5 fixme register the remaining hooks) |
 | **events** | `playwright.events.config.ts` | 21 | 0 | 0 | RSVP→request→approve, e-tickets, arena zones, event-editor eligibility (UED-ELIG-01), Configure CTA (ECTA-01..03), eligibility buckets (EPC-ELIG-01/02) |
 | **modes** | `playwright.modes.config.ts` | 72 +8 engine | 3 | 2 | Mode rollup/arc engine, wishlist, app-engagement; the interim-report dashboard carries IRD-01..18 (counts, per-ATC-model crossover, filters, tagging/resolve, export, multi-select → composers, kept filters, in-dialog send bar, cancelled excluded) |
