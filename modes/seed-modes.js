@@ -80,6 +80,9 @@ const ID = {
   BUF1: `${TESTRUNID}_buffermix1`,             // buffermix archive group (delete:false)
   RMP1: `${TESTRUNID}_rmp1`,                   // linked recommended mix playlist doc 1 (delete:false)
   RMP2: `${TESTRUNID}_rmp2`,                   // linked recommended mix playlist doc 2 (delete:false)
+  // recommended playlist → PM-16B (group doc with NO stored docid field; the toggle must still work)
+  BUF_NODOCID: `${TESTRUNID}_buffermix_nodocid`,
+  RMP_NODOCID: `${TESTRUNID}_rmp_nodocid`,     // linked to BUF_NODOCID
   // app action pending → PM-17 (non-empty-action filter); docids MUST equal profileids
   AAP_NONEMPTY: `${TESTRUNID}_pf_p0`,          // appactionpending/<p0 profileid> with formspending[] → renders
   AAP_EMPTY: `${TESTRUNID}_pf_p1`,             // appactionpending/<p1 profileid> all-empty → filtered out
@@ -416,12 +419,22 @@ async function seedModes() {
   // 13) RECOMMENDED PLAYLIST (PM-16 disable cascade). buffermix archive group (date within the screen's
   //     default 3-month window) with delete:false, plus 2 recommended mix playlist docs whose
   //     bufferdocref → this group. The Group-tab slide toggle calls onToggleGroupDelete → updateDoc the
-  //     buffermix doc delete:true AND batch-updates the linked playlist docs delete:true. NB: the group
-  //     row's `docid` is read from the doc DATA (groupSnap.docs.map(d=>d.data())), so docid MUST be set.
+  //     buffermix doc delete:true AND batch-updates the linked playlist docs delete:true.
   const bufRef = db.collection('buffermix archive').doc(ID.BUF1);
   await bufRef.set({
     docid: ID.BUF1, title: `TEST Mode Playlist Group ${TESTRUNID}`, type: 'eiflix', personalised: false,
     delete: false, date: T.now(), eiflix: [], generalcontent: [], solarvoice: [], profileid: [PF.p0, PF.p1], ...tag,
+  });
+  //     PM-16B: a group doc with NO `docid` field. Older data has this shape, and the toggle used to crash on
+  //     it (doc(..., undefined)); the row now takes its id from the snapshot.
+  const bufNoIdRef = db.collection('buffermix archive').doc(ID.BUF_NODOCID);
+  await bufNoIdRef.set({
+    title: `TEST Mode Playlist Group NoDocid ${TESTRUNID}`, type: 'eiflix', personalised: false,
+    delete: false, date: T.now(), eiflix: [], generalcontent: [], solarvoice: [], profileid: [PF.p0], ...tag,
+  });
+  await db.collection('recommended mix playlist').doc(ID.RMP_NODOCID).set({
+    docid: ID.RMP_NODOCID, profileid: PF.p0, type: 'eiflix', bufferdocref: bufNoIdRef, delete: false,
+    date: T.now(), completedplaylist: [], completedcontent: [], ...tag,
   });
   await db.collection('recommended mix playlist').doc(ID.RMP1).set({
     docid: ID.RMP1, profileid: PF.p0, type: 'eiflix', bufferdocref: bufRef, delete: false,

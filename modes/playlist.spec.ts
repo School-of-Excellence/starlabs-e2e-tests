@@ -13,6 +13,10 @@
 // delete:true to the group AND to BOTH linked playlist docs (the cascade the product computed across
 // the bufferdocref query). The seeded false is the precondition, never the asserted value. The linked
 // docs are asserted by their seeded ids (their delete flips are the app's batch output).
+//
+// PM-16B (2026-10-31, starlabs-angular specs/journals/2026-10-30-recommended-playlist-docid.md): a group doc that
+// stores no `docid` field used to crash the toggle (doc(firestore, 'buffermix archive', undefined)). The negative
+// control is the other group, BUF1: the toggle must not change it or its linked docs.
 import { test, expect } from '@playwright/test';
 import { installModeStubs, loginAsModeAdmin, modeIds, modeContent, resetPlaylistGroupEnabled } from './support/modes';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -73,5 +77,26 @@ test.describe('Modes — Recommended Playlist (disable-group cascade → bufferm
       );
       expect(after!.delete, `PM-16: linked playlist ${id} disabled by the cascade`).toBe(true);
     }
+  });
+  test('PM-16B a group doc with no stored docid can still be disabled: the toggle writes that doc and its linked playlist doc only', async ({ page }) => {
+    await resetPlaylistGroupEnabled(modeIds.BUF_NODOCID, [modeIds.RMP_NODOCID]);
+    expect((await getDoc('buffermix archive', modeIds.BUF_NODOCID))!.docid, 'PM-16B: the seeded group stores no docid').toBeUndefined();
+    const other = await getDoc('buffermix archive', modeIds.BUF1);
+    const otherLinked = await getDoc('recommended mix playlist', modeIds.RMP1);
+
+    await loginAsModeAdmin(page);
+    await page.goto('/recommendedplaylist', { waitUntil: 'domcontentloaded' });
+    const groupRow = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: modeContent.bufNoDocidTitle });
+    await expect(groupRow, 'PM-16B: the group row must render').toBeVisible({ timeout: 30_000 });
+
+    page.once('dialog', (d) => d.accept()); // onToggleGroupDelete confirm()
+    await groupRow.locator('mat-slide-toggle button, mat-slide-toggle').first().click();
+
+    await pollUntil(() => getDoc('buffermix archive', modeIds.BUF_NODOCID), (d) => !!d && d.delete === true,
+      { label: 'PM-16B: the group → delete:true', timeoutMs: 30_000 });
+    await pollUntil(() => getDoc('recommended mix playlist', modeIds.RMP_NODOCID), (d) => !!d && d.delete === true,
+      { label: 'PM-16B: its linked playlist → delete:true', timeoutMs: 30_000 });
+    expect((await getDoc('buffermix archive', modeIds.BUF1))!.delete, 'PM-16B: the other group is untouched').toBe(other!.delete);
+    expect((await getDoc('recommended mix playlist', modeIds.RMP1))!.delete, 'PM-16B: …and its linked doc').toBe(otherLinked!.delete);
   });
 });
