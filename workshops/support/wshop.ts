@@ -1892,3 +1892,116 @@ export async function clearHotLeads(): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all(wsHotLeadLogIds.map(id => db.collection('content analytics').doc(id).delete()));
 }
+
+// =================================================================================================
+// 2026-11-02 — Engagement dashboard v2 (/engagementdashboardv2): content engagement, month by month.
+// =================================================================================================
+
+/**
+ * A small world under two run-scoped journeys, so every journey row the spec asserts is its own:
+ *   activeEngaged    active,     activejourney ALPHA,                             viewed THIS month (5400 s)
+ *   nonActiveLast    non active, no activejourney, lastcompletedjourney ALPHA,     viewed THIS month (600 s)
+ *   activeLastMonth  active,     activejourney ALPHA,                             viewed LAST month only
+ *   expired          'expired',  activejourney ALPHA,                             viewed THIS month — NOT in the dashboard
+ *   activeBeta       active,     activejourney BETA,                              never viewed
+ * plus a view THIS month by a profile with no metadata at all (must be ignored).
+ * Expected ALPHA this month: 3 people, 2 engaged, 1 not engaged, 67%. Last month: 1 engaged (Chitra).
+ */
+export const wsEd2 = {
+  JOURNEY_ALPHA: `${RUN}_J_ed2_alpha`,
+  JOURNEY_BETA: `${RUN}_J_ed2_beta`,
+  ALPHA_NAME: `ED2 Alpha ${RUN}`,
+  BETA_NAME: `ED2 Beta ${RUN}`,
+  people: {
+    activeEngaged: { id: `${RUN}_ed2_asha`, name: `ED2 Asha ${RUN}`, email: `ed2.asha.${RUN}@example.test` },
+    nonActiveLast: { id: `${RUN}_ed2_bala`, name: `ED2 Bala ${RUN}`, email: `ed2.bala.${RUN}@example.test` },
+    activeLastMonth: { id: `${RUN}_ed2_chitra`, name: `ED2 Chitra ${RUN}`, email: `ed2.chitra.${RUN}@example.test` },
+    expired: { id: `${RUN}_ed2_dev`, name: `ED2 Dev ${RUN}`, email: `ed2.dev.${RUN}@example.test` },
+    activeBeta: { id: `${RUN}_ed2_esha`, name: `ED2 Esha ${RUN}`, email: `ed2.esha.${RUN}@example.test` },
+  },
+  STRAY: `${RUN}_ed2_stray`,
+  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`],
+  ASHA_SECONDS: 5400,
+};
+
+/** PRECONDITION writes only: two journeys, five metadata docs, five content views. */
+export async function seedEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = new Date();
+  const thisMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth(), 1, 10, 0, 0));
+  const lastMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth() - 1, 15, 10, 0, 0));
+  const P = wsEd2.people;
+  const meta = (p: { id: string; name: string; email: string }, customerstatus: string, activejourney: string | null, lastcompletedjourney: string | null) =>
+    db.collection('participant metadata').doc(p.id).set({
+      profileid: p.id, name: p.name, email: p.email, countrycode: '+91', phonenumber: '9000000000',
+      customerstatus, activejourney, lastcompletedjourney, ...tag,
+    });
+  const view = (id: string, profileid: string, logdate: any, totaltimespend: number) =>
+    db.collection('content analytics').doc(id).set({
+      docid: id, profileid, logdate, totaltimespend, type: 'eiflixcontent', platform_name: 'eiflixapp',
+      videoid: `${RUN}_vid_ed2`, videoname: `TEST_VID_ED2_${RUN}`, ...tag,
+    });
+  const [lAsha, lBala, lChitra, lDev, lStray] = wsEd2.LOGS;
+  await Promise.all([
+    db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
+    db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
+    meta(P.activeEngaged, 'active', wsEd2.JOURNEY_ALPHA, null),
+    meta(P.nonActiveLast, 'non active', null, wsEd2.JOURNEY_ALPHA),
+    meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null),
+    meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null),
+    meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null),
+    view(lAsha, P.activeEngaged.id, thisMonth, wsEd2.ASHA_SECONDS),
+    view(lBala, P.nonActiveLast.id, thisMonth, 600),
+    view(lChitra, P.activeLastMonth.id, lastMonth, 1200),
+    view(lDev, P.expired.id, thisMonth, 900),
+    view(lStray, wsEd2.STRAY, thisMonth, 300),
+  ]);
+}
+
+/** Undo seedEd2World, by id. */
+export async function clearEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all([
+    ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
+    ...Object.values(wsEd2.people).map(p => db.collection('participant metadata').doc(p.id).delete().catch(() => undefined)),
+    ...wsEd2.LOGS.map(id => db.collection('content analytics').doc(id).delete().catch(() => undefined)),
+  ]);
+}
+
+/**
+ * INDEPENDENT oracle for the headline cards, straight from Firestore: everyone in `participant metadata`
+ * with customerstatus 'active' / 'non active' (optionally one of them), once per profile, and how many of
+ * them have a `content analytics` view dated inside the LOCAL calendar month of `when`. Its own code path —
+ * the spec never reads the app's numbers back into its expectation.
+ */
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active'): Promise<{ total: number; engaged: number; active: number; nonActive: number }> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const start = new Date(when.getFullYear(), when.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(when.getFullYear(), when.getMonth() + 1, 0, 23, 59, 59, 999);
+  const [metas, views] = await Promise.all([
+    db.collection('participant metadata').where('customerstatus', 'in', ['active', 'non active']).get(),
+    // Up to the last nanosecond of the month's final second — logdate is stored to the microsecond.
+    db.collection('content analytics').where('logdate', '>=', T.fromDate(start))
+      .where('logdate', '<=', new T(Math.floor(end.getTime() / 1000), 999_999_999)).get(),
+  ]);
+  const viewed = new Set(views.docs.map(d => String(d.get('profileid') ?? '')));
+  const byProfile = new Map<string, string>();
+  metas.docs.forEach(d => {
+    const pid = String(d.get('profileid') ?? d.id);
+    if (!byProfile.has(pid)) byProfile.set(pid, String(d.get('customerstatus')));
+  });
+  let total = 0, engaged = 0, active = 0, nonActive = 0;
+  byProfile.forEach((s, pid) => {
+    if (s === 'active') active++; else nonActive++;
+    if (status !== 'all' && s !== status) return;
+    total++;
+    if (viewed.has(pid)) engaged++;
+  });
+  return { total, engaged, active, nonActive };
+}

@@ -1,0 +1,268 @@
+// engagement-dashboard-v2.spec.ts — /engagementdashboardv2 (New-Workshop/engagementdashboardv2), 2026-11-02.
+// Hook prefix: ed2.
+//
+// The screen: `participant metadata` where customerstatus is 'active' / 'non active' is the whole
+// population. A person is ENGAGED in the chosen month when their profileid has a `content analytics` view
+// with a logdate inside that month. Grouped by journey: activejourney, else lastcompletedjourney.
+//
+// Anti-circularity:
+//   • Journey rows: the run-scoped ALPHA / BETA journeys hold ONLY the people seedEd2World writes, so their
+//     numbers are known from the seed design (see wsEd2 in support/wshop.ts) — never read from the app.
+//   • Headline cards: the emulator also holds other seeds' metadata, so the cards are checked against
+//     ed2Oracle — an independent Admin-SDK count over the same collections.
+// Negative controls: an 'expired' person who DID view this month (never counted), a view by a profile with
+// no metadata (ignored), and a person whose only view is LAST month (not engaged now, engaged then).
+// The route carries no authGuard yet (development); it is still granted in seed ROUTES.
+import { test, expect, Page, Locator } from '@playwright/test';
+import { readFileSync } from 'fs';
+import { installWshopStubs, loginAsWshopAdmin, wsEd2, seedEd2World, clearEd2World, ed2Oracle, readCsvRows } from './support/wshop';
+import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+
+const P = wsEd2.people;
+const num = (s: string) => parseInt(s.replace(/[^0-9]/g, ''), 10);
+const monthName = (d: Date) => `${d.toLocaleString('en-US', { month: 'long' })} ${d.getFullYear()}`;
+
+async function openEd2(page: Page): Promise<void> {
+  await loginAsWshopAdmin(page);
+  await page.goto('/engagementdashboardv2', { waitUntil: 'domcontentloaded' });
+  await expect(page.getByTestId('ed2-month-label'), 'the dashboard header renders').toBeVisible({ timeout: 45_000 });
+  await expect(page.getByTestId('ed2-kpi-total'), 'the first load finishes').toBeVisible({ timeout: 90_000 });
+  await expect(page.getByTestId('ed2-loading')).toHaveCount(0);
+  await expect(page.getByTestId('ed2-error'), 'no load error').toHaveCount(0);
+  await expect(page.getByTestId('ed2-retry')).toHaveCount(0);
+}
+
+const row = (page: Page, journeyName: string) =>
+  page.getByTestId('ed2-row').filter({ has: page.getByTestId('ed2-row-name').getByText(journeyName, { exact: true }) });
+
+async function expectRow(page: Page, journeyName: string, total: number, engaged: number, notEngaged: number, rate: number, ctx: string) {
+  const r = row(page, journeyName);
+  await expect(r, `${ctx}: one row for ${journeyName}`).toHaveCount(1, { timeout: 30_000 });
+  await expect(r.getByTestId('ed2-row-total'), `${ctx}: participants`).toHaveText(String(total));
+  await expect(r.getByTestId('ed2-row-engaged'), `${ctx}: engaged`).toHaveText(String(engaged));
+  await expect(r.getByTestId('ed2-row-notengaged'), `${ctx}: not engaged`).toHaveText(String(notEngaged));
+  await expect(r.getByTestId('ed2-row-rate'), `${ctx}: engagement rate`).toHaveText(`${rate}%`);
+}
+
+async function expectCards(page: Page, o: { total: number; engaged: number }, ctx: string) {
+  await expect.poll(async () => num(await page.getByTestId('ed2-kpi-total').innerText()), { message: `${ctx}: Participants card = oracle`, timeout: 30_000 }).toBe(o.total);
+  expect(num(await page.getByTestId('ed2-kpi-engaged').innerText()), `${ctx}: Engaged card = oracle`).toBe(o.engaged);
+  expect(num(await page.getByTestId('ed2-kpi-notengaged').innerText()), `${ctx}: Not engaged card = oracle`).toBe(o.total - o.engaged);
+  const rate = o.total ? Math.round((o.engaged / o.total) * 100) : 0;
+  await expect(page.getByTestId('ed2-kpi-rate'), `${ctx}: rate card`).toHaveText(String(rate));
+}
+
+test.describe('Engagement dashboard v2 — content engagement by month', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(240_000);
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+    await seedEd2World();
+  });
+  test.afterEach(async () => {
+    await clearEd2World();
+    assertNoFatal(guard, 'engagement dashboard v2: no fatal console errors / pageerrors');
+  });
+
+  test('ED2-01 this month: journeys by active-else-last journey, engaged = viewed content this month, only active / non active counted', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    await expect(page.getByTestId('ed2-month-label'), 'ED2-01: opens on the current month').toContainText(monthName(now));
+    await expect(page.getByTestId('ed2-month-next'), 'ED2-01: no month after the current one').toBeDisabled();
+
+    // ALPHA: Asha (active, viewed) + Bala (non active, journey from last completed, viewed) + Chitra
+    // (active, viewed LAST month only). Dev is 'expired' and viewed this month — must not be counted.
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-01 ALPHA');
+    await expectRow(page, wsEd2.BETA_NAME, 1, 0, 1, 0, 'ED2-01 BETA');
+    await expect(row(page, wsEd2.BETA_NAME).getByTestId('ed2-row-engaged'), 'ED2-01: nobody to list -> disabled').toBeDisabled();
+    await expect(page.getByTestId('ed2-empty'), 'ED2-01: rows, so no empty state').toHaveCount(0);
+    expect(num(await page.getByTestId('ed2-journey-count').innerText()), 'ED2-01: journey count = rows').toBe(await page.getByTestId('ed2-row').count());
+
+    const o = await ed2Oracle(now, 'all');
+    await expectCards(page, o, 'ED2-01');
+    expect(num(await page.getByTestId('ed2-kpi-active').innerText()), 'ED2-01: active split = oracle').toBe(o.active);
+    expect(num(await page.getByTestId('ed2-kpi-nonactive').innerText()), 'ED2-01: non active split = oracle').toBe(o.nonActive);
+  });
+
+  test('ED2-02 the status filter narrows the cards and the journeys', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    await expect(page.getByTestId('ed2-status-all'), 'ED2-02: All is the default').toHaveAttribute('aria-pressed', 'true');
+
+    await page.getByTestId('ed2-status-active').click();
+    await expect(page.getByTestId('ed2-status-active')).toHaveAttribute('aria-pressed', 'true');
+    await expectRow(page, wsEd2.ALPHA_NAME, 2, 1, 1, 50, 'ED2-02 Active ALPHA');   // Asha + Chitra
+    await expectCards(page, await ed2Oracle(now, 'active'), 'ED2-02 Active');
+
+    await page.getByTestId('ed2-status-nonactive').click();
+    await expect(page.getByTestId('ed2-status-nonactive')).toHaveAttribute('aria-pressed', 'true');
+    await expectRow(page, wsEd2.ALPHA_NAME, 1, 1, 0, 100, 'ED2-02 Non active ALPHA');   // Bala
+    await expect(row(page, wsEd2.BETA_NAME), 'ED2-02: BETA has no non active people').toHaveCount(0);
+    await expectCards(page, await ed2Oracle(now, 'non active'), 'ED2-02 Non active');
+
+    await page.getByTestId('ed2-status-all').click();
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-02 back to All');
+  });
+
+  test('ED2-03 months: previous / next, the month picker, and last month counted on its own', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+    // Previous month: only Chitra viewed ALPHA content then.
+    await page.getByTestId('ed2-month-prev').click();
+    await expect(page.getByTestId('ed2-month-label'), 'ED2-03: previous month').toContainText(monthName(prev));
+    await expect(page.getByTestId('ed2-refreshing'), 'ED2-03: the month finishes loading').toHaveCount(0, { timeout: 60_000 });
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 1, 2, 33, 'ED2-03 last month ALPHA');
+    await expectCards(page, await ed2Oracle(prev, 'all'), 'ED2-03 last month');
+    await expect(page.getByTestId('ed2-month-next'), 'ED2-03: can step forward again').toBeEnabled();
+    await page.getByTestId('ed2-month-next').click();
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(now));
+    await expect(page.getByTestId('ed2-refreshing')).toHaveCount(0, { timeout: 60_000 });
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-03 back to this month');
+
+    // Picker: this year, no later year, future months disabled.
+    await page.getByTestId('ed2-month-label').click();
+    const picker = page.getByTestId('ed2-month-picker');
+    await expect(picker, 'ED2-03: the picker opens').toBeVisible();
+    await expect(picker.getByTestId('ed2-year-label')).toHaveText(String(now.getFullYear()));
+    await expect(picker.getByTestId('ed2-year-next'), 'ED2-03: no later year').toBeDisabled();
+    const options = picker.getByTestId('ed2-month-option');
+    await expect(options).toHaveCount(12);
+    for (let m = 0; m < 12; m++) {
+      if (m > now.getMonth()) await expect(options.nth(m), `ED2-03: month ${m + 1} is in the future`).toBeDisabled();
+      else await expect(options.nth(m), `ED2-03: month ${m + 1} can be picked`).toBeEnabled();
+    }
+    // Clicking outside closes it without changing the month.
+    // Bottom-centre of the viewport: inside the content area, clear of the app's side menu.
+    const vp = page.viewportSize()!;
+    await page.getByTestId('ed2-picker-scrim').click({ position: { x: Math.round(vp.width / 2), y: vp.height - 40 } });
+    await expect(picker, 'ED2-03: outside click closes the picker').toHaveCount(0);
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(now));
+
+    // Previous year: every month can be picked; pick the previous month via its own year.
+    await page.getByTestId('ed2-month-label').click();
+    await picker.getByTestId('ed2-year-prev').click();
+    await expect(picker.getByTestId('ed2-year-label')).toHaveText(String(now.getFullYear() - 1));
+    await expect(picker.getByTestId('ed2-year-next'), 'ED2-03: can come back to this year').toBeEnabled();
+    for (let m = 0; m < 12; m++) await expect(options.nth(m)).toBeEnabled();
+    if (prev.getFullYear() === now.getFullYear()) await picker.getByTestId('ed2-year-next').click();
+    await options.nth(prev.getMonth()).click();
+    await expect(picker, 'ED2-03: picking closes the picker').toHaveCount(0);
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(prev));
+    await expect(page.getByTestId('ed2-refreshing')).toHaveCount(0, { timeout: 60_000 });
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 1, 2, 33, 'ED2-03 picked last month');
+  });
+
+  test('ED2-04 the people panel: engaged / not engaged / all, search, export, close', async ({ page }) => {
+    await openEd2(page);
+    const panel = page.getByTestId('ed2-panel');
+    const people = panel.getByTestId('ed2-person');
+    const personNames = panel.getByTestId('ed2-person-name');
+    const names = () => personNames.allInnerTexts();
+
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    await expect(panel.getByTestId('ed2-panel-title'), 'ED2-04: the panel is for the journey').toHaveText(wsEd2.ALPHA_NAME);
+    await expect(panel.getByTestId('ed2-panel-tab-engaged'), 'ED2-04: opened on Engaged').toHaveAttribute('aria-pressed', 'true');
+    await expect(people).toHaveCount(2);
+    // Most watched first: Asha (5400 s) then Bala (600 s).
+    await expect(personNames, 'ED2-04: engaged, most watched first').toHaveText([P.activeEngaged.name, P.nonActiveLast.name]);
+    const asha = people.filter({ hasText: P.activeEngaged.name });
+    await expect(asha.getByTestId('ed2-person-activity'), 'ED2-04: watch time from totaltimespend').toContainText('1h 30m');
+    await expect(asha.getByTestId('ed2-person-status')).toHaveText('Active');
+    await expect(people.filter({ hasText: P.nonActiveLast.name }).getByTestId('ed2-person-status')).toHaveText('Non active');
+    await expect(panel.getByTestId('ed2-panel-count')).toHaveText('2 people');
+
+    await panel.getByTestId('ed2-panel-tab-notengaged').click();
+    await expect(personNames, 'ED2-04: not engaged this month = Chitra').toHaveText([P.activeLastMonth.name]);
+    await expect(people.getByTestId('ed2-person-activity'), 'ED2-04: no activity line without views').toHaveCount(0);
+    await expect(panel.getByTestId('ed2-panel-count')).toHaveText('1 person');
+
+    await panel.getByTestId('ed2-panel-tab-all').click();
+    await expect(people).toHaveCount(3);
+    expect((await names()).sort(), 'ED2-04: the expired person is never listed').toEqual([P.activeEngaged.name, P.nonActiveLast.name, P.activeLastMonth.name].sort());
+
+    // Search — the negative control first: a miss removes everyone.
+    const search = panel.getByTestId('ed2-panel-search');
+    await search.fill('zz-nobody-zz');
+    await expect(people).toHaveCount(0);
+    await expect(panel.getByTestId('ed2-panel-empty'), 'ED2-04: a miss says so').toBeVisible();
+    await expect(panel.getByTestId('ed2-panel-export'), 'ED2-04: nothing to export').toBeDisabled();
+    await search.fill(P.nonActiveLast.email.toUpperCase());
+    await expect(personNames, 'ED2-04: email search, any case').toHaveText([P.nonActiveLast.name]);
+    await search.fill('');
+    await expect(people).toHaveCount(3);
+
+    // Export the list shown.
+    const [download] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('ed2-panel-export').click()]);
+    const file = test.info().outputPath('ed2.csv');
+    await download.saveAs(file);
+    const csv = readCsvRows(readFileSync(file, 'utf8').replace(/^﻿/, ''));
+    expect(csv[0], 'ED2-04: CSV header').toEqual(['Name', 'Email', 'Phone', 'Status', 'Journey', 'Engaged', 'Sessions', 'Watch time', 'Last watched']);
+    const ashaRow = csv.find(r => r[0] === P.activeEngaged.name);
+    expect(ashaRow, 'ED2-04: Asha exported').toBeTruthy();
+    expect(ashaRow!.slice(1, 8), 'ED2-04: Asha row').toEqual([P.activeEngaged.email, '+91 9000000000', 'Active', wsEd2.ALPHA_NAME, 'Yes', '1', '1h 30m']);
+    expect(csv.find(r => r[0] === P.activeLastMonth.name)?.[5], 'ED2-04: Chitra not engaged').toBe('No');
+    expect(csv.length - 1, 'ED2-04: one row per person listed').toBe(3);
+
+    await panel.getByTestId('ed2-panel-close').click();
+    await expect(panel.getByTestId('ed2-panel-title'), 'ED2-04: closed').toHaveCount(0);
+
+    // The cards open the panel across every journey; the backdrop closes it.
+    await page.getByTestId('ed2-kpi-engaged-card').click();
+    await expect(panel.getByTestId('ed2-panel-title')).toHaveText('All journeys');
+    await expect(panel.getByTestId('ed2-panel-tab-engaged')).toHaveAttribute('aria-pressed', 'true');
+    await expect(people.filter({ hasText: P.expired.name }), 'ED2-04: expired never listed, even across journeys').toHaveCount(0);
+    // Just left of the 460px panel, mid-height: the backdrop, clear of the app's side menu.
+    const vp = page.viewportSize()!;
+    await page.getByTestId('ed2-panel-backdrop').click({ position: { x: vp.width - 520, y: Math.round(vp.height / 2) } });
+    await expect(panel.getByTestId('ed2-panel-title')).toHaveCount(0);
+    await page.getByTestId('ed2-kpi-notengaged-card').click();
+    await expect(panel.getByTestId('ed2-panel-tab-notengaged')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('ed2-panel-close').click();
+    await page.getByTestId('ed2-kpi-total-card').click();
+    await expect(panel.getByTestId('ed2-panel-tab-all')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('ed2-panel-close').click();
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-total').click();
+    await expect(people, 'ED2-04: the participants number lists everyone in the journey').toHaveCount(3);
+    await page.getByTestId('ed2-panel-close').click();
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-notengaged').click();
+    await expect(personNames, 'ED2-04: the not-engaged pill opens on that list').toHaveText([P.activeLastMonth.name]);
+  });
+
+  test('ED2-05 the journey table sorts by every column', async ({ page }) => {
+    await openEd2(page);
+    // The header cell around a sort button (aria-sort lives on the th).
+    const th = (btn: Locator) => page.locator('th').filter({ has: btn });
+    const byName = page.getByTestId('ed2-sort-name');
+    const byTotal = page.getByTestId('ed2-sort-total');
+    const byEngaged = page.getByTestId('ed2-sort-engaged');
+    const byNotEngaged = page.getByTestId('ed2-sort-notengaged');
+    const byRate = page.getByTestId('ed2-sort-rate');
+    await expect(th(byTotal), 'ED2-05: Participants, biggest first, by default').toHaveAttribute('aria-sort', 'descending');
+
+    const rowNames = async () => (await page.getByTestId('ed2-row-name').allInnerTexts()).filter(n => n.startsWith('ED2 '));
+    await byName.click();
+    await expect(th(byName), 'ED2-05: Journey sorts A–Z first').toHaveAttribute('aria-sort', 'ascending');
+    await expect.poll(rowNames, { message: 'ED2-05: A–Z' }).toEqual([wsEd2.ALPHA_NAME, wsEd2.BETA_NAME]);
+    await byName.click();
+    await expect(th(byName)).toHaveAttribute('aria-sort', 'descending');
+    await expect.poll(rowNames, { message: 'ED2-05: Z–A' }).toEqual([wsEd2.BETA_NAME, wsEd2.ALPHA_NAME]);
+    await expect(th(byTotal), 'ED2-05: only one column sorts at a time').toHaveAttribute('aria-sort', 'none');
+
+    await byEngaged.click();
+    await expect(th(byEngaged), 'ED2-05: Engaged sorts highest first').toHaveAttribute('aria-sort', 'descending');
+    await byNotEngaged.click();
+    await expect(th(byNotEngaged), 'ED2-05: Not engaged sorts highest first').toHaveAttribute('aria-sort', 'descending');
+    await byTotal.click();
+    await expect(th(byTotal), 'ED2-05: Participants sorts highest first').toHaveAttribute('aria-sort', 'descending');
+    await byRate.click();
+    await expect(th(byRate), 'ED2-05: Engagement sorts highest first').toHaveAttribute('aria-sort', 'descending');
+    await expect.poll(rowNames, { message: 'ED2-05: highest engagement first' }).toEqual([wsEd2.ALPHA_NAME, wsEd2.BETA_NAME]);
+    await byRate.click();
+    await expect(th(byRate), 'ED2-05: a second click reverses').toHaveAttribute('aria-sort', 'ascending');
+    // Lowest rate first: BETA (0%) comes before ALPHA (67%).
+    await expect.poll(rowNames, { message: 'ED2-05: lowest engagement first' }).toEqual([wsEd2.BETA_NAME, wsEd2.ALPHA_NAME]);
+  });
+});

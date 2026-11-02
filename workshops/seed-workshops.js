@@ -143,6 +143,7 @@ const ROUTES = [
   { route: '/workshopconfigold', label: 'Workshop Configuration (legacy)' },
   { route: '/workshop_dashboard', label: 'Workshop Dashboard' },
   { route: '/engagementdashboard', label: 'Engagement Dashboard' },
+  { route: '/engagementdashboardv2', label: 'Engagement Dashboard v2' },        // unguarded for now
   { route: '/bigengagementdashboard', label: 'Capacity / BIG Engagement Dashboard' },
   { route: '/productpageworkshop', label: 'Workshop Products' },
   { route: '/formtemplateworkshop', label: 'Form Template Workshop' },
