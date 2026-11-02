@@ -12,7 +12,7 @@
 // `?profileid=` on-behalf lever being overridden for systems that still rely on it.
 import { test, expect, Page } from '@playwright/test';
 import {
-  PF, RUN, DQ, PA, DF_QUESTION,
+  PF, RUN, DQ, PA, DF_QUESTION, WLATC,
   installAtcGuards, assertNoRealDb, loginAsAtc, formsDb, waitFor, AtcGuard,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -87,5 +87,42 @@ test.describe('Form screen — queue and B!G regression after the ATC web link (
     expect(draft.profileid).not.toBe(PF.admin);
     expect(draft.atcid, 'not an ATC form').toBeNull();
     expect(draft.delete).toBe(false);
+  });
+  test('FSR-03 an ATC draft is never offered to a session that has no atcid', async ({ page }) => {
+    await clearDrafts(DQ.form, PF.tfp);
+    // a draft of the SAME form and person, but belonging to an ATC
+    await formsDb().collection('temporary_forms').doc(`${RUN}_fsr_atc_draft`).set({
+      docid: `${RUN}_fsr_atc_draft`, formid: DQ.form, profileid: PF.tfp, atcid: WLATC.NEW, queueid: null,
+      delete: false, date: new Date(), formarray: [{ type: 'Text', fieldname: DF_QUESTION, value: `ATC draft ${RUN}` }],
+    });
+
+    await loginAsAtc(page, 'tfp');
+    await page.goto(`/formtemplate?id=${DQ.form}&type=form&queueid=${DQ.queue}`);
+    await expect(page.locator('.form-content input').first()).toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId('for-select-draft-1'), 'an ATC draft must not be offered here').toHaveCount(0);
+  });
+
+  test('FSR-04 restoring a draft moves the submission to the queue the draft was written under', async ({ page }) => {
+    await clearDrafts(DQ.form, PF.tfp);
+    // a draft written under ANOTHER queue than the one the link will open
+    const id = `${RUN}_fsr_otherq_draft`;
+    await formsDb().collection('temporary_forms').doc(id).set({
+      docid: id, formid: DQ.form, formname: 'FSR draft', profileid: PF.tfp, queueid: DQ.otherQueue, atcid: null,
+      delete: false, date: new Date(), formarray: [{ type: 'Text', fieldname: DF_QUESTION, required: false, value: `Other queue draft ${RUN}` }],
+    });
+
+    await loginAsAtc(page, 'tfp');
+    await page.goto(`/formtemplate?id=${DQ.form}&type=form&queueid=${DQ.queue}`);
+    await page.getByTestId('for-select-draft-1').click({ timeout: 45_000 });
+    await expect(page.locator('.form-content input').first()).toHaveValue(`Other queue draft ${RUN}`, { timeout: 45_000 });
+
+    await page.getByTestId('for-on-submit-15').click();
+    await page.getByTestId('ftp-on-confirm-2').click();
+
+    const answer = await waitFor(async () => {
+      const d = (await formsDb().collection('formsByClient').doc(id).get()).data();
+      return d?.queueref ? d : null;
+    }, 'answer written at the draft id', 60_000);
+    expect(answer.queueref.id, 'the queue the draft belongs to, not the link that was opened').toBe(DQ.otherQueue);
   });
 });
