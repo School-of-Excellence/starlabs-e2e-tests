@@ -1906,7 +1906,14 @@ export async function clearHotLeads(): Promise<void> {
  *   activeLastMonth  active,     activejourney ALPHA,                             viewed LAST month only
  *   expired          'expired',  activejourney ALPHA,                             viewed THIS month — NOT in the dashboard
  *   activeBeta       active,     activejourney BETA,                              never viewed
+ *   farahFlip        non active, lastcompletedjourney GAMMA, completed journey ran 9 months ago .. the 15th of
+ *                    LAST month -> Non active now, but ACTIVE last month (past months use the dates)
+ *   gitaUndated      active,     activejourney GAMMA, no subscription dates -> counted now, left out of
+ *                    last month
  * plus a view THIS month by a profile with no metadata at all (must be ignored).
+ * Subscription dates (2026-11-03): Asha 2 months ago .. +10 months; Bala's completed journey ended on the 10th
+ * two months ago (Non active last month); Chitra 3 months ago .. +9; Esha started on the 1st of THIS month
+ * (not a customer last month -> BETA has no row last month).
  * Expected ALPHA this month: 3 people, 2 engaged, 1 not engaged, 67%. Last month: 1 engaged (Chitra).
  * From = eiflixcontent only: ALPHA 3 / 1 engaged (Asha) / 2 not engaged / 33%.
  * Platforms: Asha's workshop view is on 'EiflixApp', her content view on 'eiflixweb'; everyone else is on
@@ -1916,14 +1923,18 @@ export async function clearHotLeads(): Promise<void> {
 export const wsEd2 = {
   JOURNEY_ALPHA: `${RUN}_J_ed2_alpha`,
   JOURNEY_BETA: `${RUN}_J_ed2_beta`,
+  JOURNEY_GAMMA: `${RUN}_J_ed2_gamma`,
   ALPHA_NAME: `ED2 Alpha ${RUN}`,
   BETA_NAME: `ED2 Beta ${RUN}`,
+  GAMMA_NAME: `ED2 Gamma ${RUN}`,
   people: {
     activeEngaged: { id: `${RUN}_ed2_asha`, name: `ED2 Asha ${RUN}`, email: `ed2.asha.${RUN}@example.test` },
     nonActiveLast: { id: `${RUN}_ed2_bala`, name: `ED2 Bala ${RUN}`, email: `ed2.bala.${RUN}@example.test` },
     activeLastMonth: { id: `${RUN}_ed2_chitra`, name: `ED2 Chitra ${RUN}`, email: `ed2.chitra.${RUN}@example.test` },
     expired: { id: `${RUN}_ed2_dev`, name: `ED2 Dev ${RUN}`, email: `ed2.dev.${RUN}@example.test` },
     activeBeta: { id: `${RUN}_ed2_esha`, name: `ED2 Esha ${RUN}`, email: `ed2.esha.${RUN}@example.test` },
+    farahFlip: { id: `${RUN}_ed2_farah`, name: `ED2 Farah ${RUN}`, email: `ed2.farah.${RUN}@example.test` },
+    gitaUndated: { id: `${RUN}_ed2_gita`, name: `ED2 Gita ${RUN}`, email: `ed2.gita.${RUN}@example.test` },
   },
   STRAY: `${RUN}_ed2_stray`,
   LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`],
@@ -1940,10 +1951,13 @@ export async function seedEd2World(): Promise<void> {
   const thisMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth(), 1, 10, 0, 0));
   const lastMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth() - 1, 15, 10, 0, 0));
   const P = wsEd2.people;
-  const meta = (p: { id: string; name: string; email: string }, customerstatus: string, activejourney: string | null, lastcompletedjourney: string | null) =>
+  // A local date `months` from this month, on `day`, 10:00.
+  const at = (months: number, day: number) => T.fromDate(new Date(now.getFullYear(), now.getMonth() + months, day, 10, 0, 0));
+  const meta = (p: { id: string; name: string; email: string }, customerstatus: string, activejourney: string | null,
+    lastcompletedjourney: string | null, dates: Record<string, any> = {}) =>
     db.collection('participant metadata').doc(p.id).set({
       profileid: p.id, name: p.name, email: p.email, countrycode: '+91', phonenumber: '9000000000',
-      customerstatus, activejourney, lastcompletedjourney, ...tag,
+      customerstatus, activejourney, lastcompletedjourney, ...dates, ...tag,
     });
   const view = (id: string, profileid: string, logdate: any, totaltimespend: number, from: string, platform_name: string) =>
     db.collection('content analytics').doc(id).set({
@@ -1954,11 +1968,14 @@ export async function seedEd2World(): Promise<void> {
   await Promise.all([
     db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
     db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
-    meta(P.activeEngaged, 'active', wsEd2.JOURNEY_ALPHA, null),
-    meta(P.nonActiveLast, 'non active', null, wsEd2.JOURNEY_ALPHA),
-    meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null),
-    meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null),
-    meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null),
+    db.collection('journey').doc(wsEd2.JOURNEY_GAMMA).set({ id: wsEd2.JOURNEY_GAMMA, journey: wsEd2.GAMMA_NAME, ...tag }),
+    meta(P.activeEngaged, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-2, 1), subscriptionend: at(10, 1) }),
+    meta(P.nonActiveLast, 'non active', null, wsEd2.JOURNEY_ALPHA, { lastsubscriptionstart: at(-8, 1), lastsubscriptionend: at(-2, 10) }),
+    meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null, { subscriptionstart: at(0, 1), subscriptionend: at(12, 1) }),
+    meta(P.farahFlip, 'non active', null, wsEd2.JOURNEY_GAMMA, { lastsubscriptionstart: at(-9, 1), lastsubscriptionend: at(-1, 15) }),
+    meta(P.gitaUndated, 'active', wsEd2.JOURNEY_GAMMA, null),
     view(lAsha, P.activeEngaged.id, thisMonth, 5400, 'EiflixWorkshop', 'EiflixApp'),
     view(lAsha2, P.activeEngaged.id, thisMonth, 1800, 'eiflixcontent', 'eiflixweb'),
     view(lBala, P.nonActiveLast.id, thisMonth, 600, 'eiflixworkshop', 'eiflixapp'),
@@ -1973,7 +1990,7 @@ export async function clearEd2World(): Promise<void> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   await Promise.all([
-    ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
+    ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA, wsEd2.JOURNEY_GAMMA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
     ...Object.values(wsEd2.people).map(p => db.collection('participant metadata').doc(p.id).delete().catch(() => undefined)),
     ...wsEd2.LOGS.map(id => db.collection('content analytics').doc(id).delete().catch(() => undefined)),
   ]);
@@ -1984,9 +2001,13 @@ export async function clearEd2World(): Promise<void> {
  * with customerstatus 'active' / 'non active' (optionally one of them), once per profile, and how many of
  * them have a `content analytics` view dated inside the LOCAL calendar month of `when` — optionally only
  * views whose `from` (and `platform_name`), trimmed and lower-cased, is one of `froms` (and `platforms`).
+ * For a PAST month the status comes from each person's one subscription period (subscriptionstart/end,
+ * else lastsubscriptionstart/end): ran on a day of the month = active, ended before it = non active, began
+ * after it = not yet (left out), no dates = undated (left out). The current month uses customerstatus.
  * Its own code path — the spec never reads the app's numbers back into its expectation.
  */
-export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active', froms: string[] = [], platforms: string[] = []): Promise<{ total: number; engaged: number; active: number; nonActive: number }> {
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active', froms: string[] = [], platforms: string[] = []):
+  Promise<{ total: number; engaged: number; active: number; nonActive: number; notYet: number; undated: number }> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   const T = admin.firestore.Timestamp;
@@ -2001,17 +2022,31 @@ export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non acti
   const fromOk = (d: any) => !froms.length || froms.includes(String(d.get('from') ?? '').trim().toLowerCase());
   const platformOk = (d: any) => !platforms.length || platforms.includes(String(d.get('platform_name') ?? '').trim().toLowerCase());
   const viewed = new Set(views.docs.filter(d => fromOk(d) && platformOk(d)).map(d => String(d.get('profileid') ?? '')));
+  const today = new Date();
+  const past = when.getFullYear() * 12 + when.getMonth() < today.getFullYear() * 12 + today.getMonth();
+  const asDate = (v: any): Date | null => (v && typeof v.toDate === 'function' ? v.toDate() : null);
+  const placed = (d: any): string => {
+    if (!past) return String(d.get('customerstatus'));
+    const s = asDate(d.get('subscriptionstart')), e = asDate(d.get('subscriptionend'));
+    const from = s || e ? s : asDate(d.get('lastsubscriptionstart'));
+    const to = s || e ? e : asDate(d.get('lastsubscriptionend'));
+    if (to && to.getTime() < start.getTime()) return 'non active';
+    if (from && from.getTime() > end.getTime()) return 'notyet';
+    return from && to ? 'active' : 'undated';
+  };
   const byProfile = new Map<string, string>();
   metas.docs.forEach(d => {
     const pid = String(d.get('profileid') ?? d.id);
-    if (!byProfile.has(pid)) byProfile.set(pid, String(d.get('customerstatus')));
+    if (!byProfile.has(pid)) byProfile.set(pid, placed(d));
   });
-  let total = 0, engaged = 0, active = 0, nonActive = 0;
+  let total = 0, engaged = 0, active = 0, nonActive = 0, notYet = 0, undated = 0;
   byProfile.forEach((s, pid) => {
+    if (s === 'notyet') { notYet++; return; }
+    if (s === 'undated') { undated++; return; }
     if (s === 'active') active++; else nonActive++;
     if (status !== 'all' && s !== status) return;
     total++;
     if (viewed.has(pid)) engaged++;
   });
-  return { total, engaged, active, nonActive };
+  return { total, engaged, active, nonActive, notYet, undated };
 }

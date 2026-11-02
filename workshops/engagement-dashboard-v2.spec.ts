@@ -244,7 +244,7 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     const byRate = page.getByTestId('ed2-sort-rate');
     await expect(th(byTotal), 'ED2-05: Participants, biggest first, by default').toHaveAttribute('aria-sort', 'descending');
 
-    const rowNames = async () => (await page.getByTestId('ed2-row-name').allInnerTexts()).filter(n => n.startsWith('ED2 '));
+    const rowNames = async () => (await page.getByTestId('ed2-row-name').allInnerTexts()).filter(n => n === wsEd2.ALPHA_NAME || n === wsEd2.BETA_NAME);
     await byName.click();
     await expect(th(byName), 'ED2-05: Journey sorts A–Z first').toHaveAttribute('aria-sort', 'ascending');
     await expect.poll(rowNames, { message: 'ED2-05: A–Z' }).toEqual([wsEd2.ALPHA_NAME, wsEd2.BETA_NAME]);
@@ -439,5 +439,53 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     await expect(plats.nth(0).getByTestId('ed2-person-platform-time')).toHaveText('1h 30m');
     await expect(plats.nth(1).getByTestId('ed2-person-platform-name')).toHaveText(/^eiflixweb$/i);
     await expect(plats.nth(1).getByTestId('ed2-person-platform-time')).toHaveText('30m');
+  });
+  test('ED2-09 a past month takes Active / Non active from the subscription dates, the current month from today', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const note = page.getByTestId('ed2-status-note');
+    const panel = page.getByTestId('ed2-panel');
+    const statusOf = (name: string) => panel.getByTestId('ed2-person').filter({ hasText: name }).getByTestId('ed2-person-status');
+
+    // This month: live status. Farah is Non active today; Gita (no dates) is counted as Active.
+    await expect(note, 'ED2-09: this month says it uses today').toContainText('status as of today');
+    await expect(page.getByTestId('ed2-leftout-notyet'), 'ED2-09: nobody left out this month').toHaveCount(0);
+    await expectRow(page, wsEd2.GAMMA_NAME, 2, 0, 2, 0, 'ED2-09 GAMMA now');
+    await expect(row(page, wsEd2.GAMMA_NAME).locator('.ed2-jmeta')).toHaveText('1 active · 1 non active');
+    await row(page, wsEd2.GAMMA_NAME).getByTestId('ed2-row-total').click();
+    await expect(statusOf(P.farahFlip.name), 'ED2-09: Farah is Non active today').toHaveText('Non active');
+    await expect(statusOf(P.gitaUndated.name)).toHaveText('Active');
+    await page.getByTestId('ed2-panel-close').click();
+
+    // Last month: from the dates.
+    await page.getByTestId('ed2-month-prev').click();
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(prev));
+    await expect(page.getByTestId('ed2-refreshing')).toHaveCount(0, { timeout: 60_000 });
+    await expect(note, 'ED2-09: last month says it uses the dates').toContainText('from each person\'s subscription dates');
+    const o = await ed2Oracle(prev, 'all');
+    expect(o.notYet, 'ED2-09 precondition: Esha started this month').toBeGreaterThanOrEqual(1);
+    expect(o.undated, 'ED2-09 precondition: Gita has no dates').toBeGreaterThanOrEqual(1);
+    await expect(page.getByTestId('ed2-leftout-notyet'), 'ED2-09: not-yet count = oracle').toHaveText(String(o.notYet));
+    await expect(page.getByTestId('ed2-leftout-undated'), 'ED2-09: no-dates count = oracle').toHaveText(String(o.undated));
+    await expectCards(page, o, 'ED2-09 last month');
+    // ALPHA: Asha + Chitra ran last month (Active), Bala ended two months ago (Non active).
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 1, 2, 33, 'ED2-09 ALPHA last month');
+    await expect(row(page, wsEd2.ALPHA_NAME).locator('.ed2-jmeta')).toHaveText('2 active · 1 non active');
+    // BETA: Esha only started this month -> not a customer then -> no row.
+    await expect(row(page, wsEd2.BETA_NAME), 'ED2-09: BETA had nobody last month').toHaveCount(0);
+    // GAMMA: Farah's journey ran until the 15th of last month -> Active then; Gita (no dates) left out.
+    await expectRow(page, wsEd2.GAMMA_NAME, 1, 0, 1, 0, 'ED2-09 GAMMA last month');
+    await expect(row(page, wsEd2.GAMMA_NAME).locator('.ed2-jmeta')).toHaveText('1 active · 0 non active');
+    await row(page, wsEd2.GAMMA_NAME).getByTestId('ed2-row-total').click();
+    await expect(statusOf(P.farahFlip.name), 'ED2-09: Farah was Active last month').toHaveText('Active');
+    await expect(panel.getByTestId('ed2-person').filter({ hasText: P.gitaUndated.name }), 'ED2-09: Gita left out').toHaveCount(0);
+    await page.getByTestId('ed2-panel-close').click();
+
+    // The Active filter follows the month's status.
+    await page.getByTestId('ed2-status-active').click();
+    await expectRow(page, wsEd2.ALPHA_NAME, 2, 1, 1, 50, 'ED2-09 Active last month');
+    await expectRow(page, wsEd2.GAMMA_NAME, 1, 0, 1, 0, 'ED2-09 Active GAMMA last month');
+    await expectCards(page, await ed2Oracle(prev, 'active'), 'ED2-09 Active last month');
   });
 });
