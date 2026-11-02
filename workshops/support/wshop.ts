@@ -1899,13 +1899,19 @@ export async function clearHotLeads(): Promise<void> {
 
 /**
  * A small world under two run-scoped journeys, so every journey row the spec asserts is its own:
- *   activeEngaged    active,     activejourney ALPHA,                             viewed THIS month (5400 s)
- *   nonActiveLast    non active, no activejourney, lastcompletedjourney ALPHA,     viewed THIS month (600 s)
+ *   activeEngaged    active,     activejourney ALPHA,                             viewed THIS month from
+ *                    'EiflixWorkshop' (5400 s) AND 'eiflixcontent' (1800 s) — 2h over two sources
+ *   nonActiveLast    non active, no activejourney, lastcompletedjourney ALPHA,     viewed THIS month from
+ *                    'eiflixworkshop' (600 s) — the same source as Asha's, spelt in lower case
  *   activeLastMonth  active,     activejourney ALPHA,                             viewed LAST month only
  *   expired          'expired',  activejourney ALPHA,                             viewed THIS month — NOT in the dashboard
  *   activeBeta       active,     activejourney BETA,                              never viewed
  * plus a view THIS month by a profile with no metadata at all (must be ignored).
  * Expected ALPHA this month: 3 people, 2 engaged, 1 not engaged, 67%. Last month: 1 engaged (Chitra).
+ * From = eiflixcontent only: ALPHA 3 / 1 engaged (Asha) / 2 not engaged / 33%.
+ * Platforms: Asha's workshop view is on 'EiflixApp', her content view on 'eiflixweb'; everyone else is on
+ * 'eiflixapp'. Platform = eiflixweb only: ALPHA 3 / 1 (Asha) / 2 / 33%. From eiflixworkshop AND platform
+ * eiflixweb: no single view matches both -> ALPHA 3 / 0 / 3 / 0%.
  */
 export const wsEd2 = {
   JOURNEY_ALPHA: `${RUN}_J_ed2_alpha`,
@@ -1920,8 +1926,8 @@ export const wsEd2 = {
     activeBeta: { id: `${RUN}_ed2_esha`, name: `ED2 Esha ${RUN}`, email: `ed2.esha.${RUN}@example.test` },
   },
   STRAY: `${RUN}_ed2_stray`,
-  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`],
-  ASHA_SECONDS: 5400,
+  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`],
+  ASHA_SECONDS: 7200,
 };
 
 /** PRECONDITION writes only: two journeys, five metadata docs, five content views. */
@@ -1939,12 +1945,12 @@ export async function seedEd2World(): Promise<void> {
       profileid: p.id, name: p.name, email: p.email, countrycode: '+91', phonenumber: '9000000000',
       customerstatus, activejourney, lastcompletedjourney, ...tag,
     });
-  const view = (id: string, profileid: string, logdate: any, totaltimespend: number) =>
+  const view = (id: string, profileid: string, logdate: any, totaltimespend: number, from: string, platform_name: string) =>
     db.collection('content analytics').doc(id).set({
-      docid: id, profileid, logdate, totaltimespend, type: 'eiflixcontent', platform_name: 'eiflixapp',
+      docid: id, profileid, logdate, totaltimespend, from, platform_name, type: 'eiflixcontent',
       videoid: `${RUN}_vid_ed2`, videoname: `TEST_VID_ED2_${RUN}`, ...tag,
     });
-  const [lAsha, lBala, lChitra, lDev, lStray] = wsEd2.LOGS;
+  const [lAsha, lBala, lChitra, lDev, lStray, lAsha2] = wsEd2.LOGS;
   await Promise.all([
     db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
     db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
@@ -1953,11 +1959,12 @@ export async function seedEd2World(): Promise<void> {
     meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null),
     meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null),
     meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null),
-    view(lAsha, P.activeEngaged.id, thisMonth, wsEd2.ASHA_SECONDS),
-    view(lBala, P.nonActiveLast.id, thisMonth, 600),
-    view(lChitra, P.activeLastMonth.id, lastMonth, 1200),
-    view(lDev, P.expired.id, thisMonth, 900),
-    view(lStray, wsEd2.STRAY, thisMonth, 300),
+    view(lAsha, P.activeEngaged.id, thisMonth, 5400, 'EiflixWorkshop', 'EiflixApp'),
+    view(lAsha2, P.activeEngaged.id, thisMonth, 1800, 'eiflixcontent', 'eiflixweb'),
+    view(lBala, P.nonActiveLast.id, thisMonth, 600, 'eiflixworkshop', 'eiflixapp'),
+    view(lChitra, P.activeLastMonth.id, lastMonth, 1200, 'eiflixcontent', 'eiflixapp'),
+    view(lDev, P.expired.id, thisMonth, 900, 'EiflixWorkshop', 'eiflixapp'),
+    view(lStray, wsEd2.STRAY, thisMonth, 300, 'eiflixcontent', 'eiflixweb'),
   ]);
 }
 
@@ -1975,10 +1982,11 @@ export async function clearEd2World(): Promise<void> {
 /**
  * INDEPENDENT oracle for the headline cards, straight from Firestore: everyone in `participant metadata`
  * with customerstatus 'active' / 'non active' (optionally one of them), once per profile, and how many of
- * them have a `content analytics` view dated inside the LOCAL calendar month of `when`. Its own code path —
- * the spec never reads the app's numbers back into its expectation.
+ * them have a `content analytics` view dated inside the LOCAL calendar month of `when` — optionally only
+ * views whose `from` (and `platform_name`), trimmed and lower-cased, is one of `froms` (and `platforms`).
+ * Its own code path — the spec never reads the app's numbers back into its expectation.
  */
-export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active'): Promise<{ total: number; engaged: number; active: number; nonActive: number }> {
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active', froms: string[] = [], platforms: string[] = []): Promise<{ total: number; engaged: number; active: number; nonActive: number }> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   const T = admin.firestore.Timestamp;
@@ -1990,7 +1998,9 @@ export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non acti
     db.collection('content analytics').where('logdate', '>=', T.fromDate(start))
       .where('logdate', '<=', new T(Math.floor(end.getTime() / 1000), 999_999_999)).get(),
   ]);
-  const viewed = new Set(views.docs.map(d => String(d.get('profileid') ?? '')));
+  const fromOk = (d: any) => !froms.length || froms.includes(String(d.get('from') ?? '').trim().toLowerCase());
+  const platformOk = (d: any) => !platforms.length || platforms.includes(String(d.get('platform_name') ?? '').trim().toLowerCase());
+  const viewed = new Set(views.docs.filter(d => fromOk(d) && platformOk(d)).map(d => String(d.get('profileid') ?? '')));
   const byProfile = new Map<string, string>();
   metas.docs.forEach(d => {
     const pid = String(d.get('profileid') ?? d.id);

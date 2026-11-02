@@ -169,7 +169,7 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     // Most watched first: Asha (5400 s) then Bala (600 s).
     await expect(personNames, 'ED2-04: engaged, most watched first').toHaveText([P.activeEngaged.name, P.nonActiveLast.name]);
     const asha = people.filter({ hasText: P.activeEngaged.name });
-    await expect(asha.getByTestId('ed2-person-activity'), 'ED2-04: watch time from totaltimespend').toContainText('1h 30m');
+    await expect(asha.getByTestId('ed2-person-activity'), 'ED2-04: watch time from totaltimespend, both sources').toContainText('2h');
     await expect(asha.getByTestId('ed2-person-status')).toHaveText('Active');
     await expect(people.filter({ hasText: P.nonActiveLast.name }).getByTestId('ed2-person-status')).toHaveText('Non active');
     await expect(panel.getByTestId('ed2-panel-count')).toHaveText('2 people');
@@ -199,10 +199,12 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     const file = test.info().outputPath('ed2.csv');
     await download.saveAs(file);
     const csv = readCsvRows(readFileSync(file, 'utf8').replace(/^﻿/, ''));
-    expect(csv[0], 'ED2-04: CSV header').toEqual(['Name', 'Email', 'Phone', 'Status', 'Journey', 'Engaged', 'Sessions', 'Watch time', 'Last watched']);
+    expect(csv[0], 'ED2-04: CSV header').toEqual(['Name', 'Email', 'Phone', 'Status', 'Journey', 'Engaged', 'Sessions', 'Watch time', 'Last watched', 'Watched from', 'Watched on']);
     const ashaRow = csv.find(r => r[0] === P.activeEngaged.name);
     expect(ashaRow, 'ED2-04: Asha exported').toBeTruthy();
-    expect(ashaRow!.slice(1, 8), 'ED2-04: Asha row').toEqual([P.activeEngaged.email, '+91 9000000000', 'Active', wsEd2.ALPHA_NAME, 'Yes', '1', '1h 30m']);
+    expect(ashaRow!.slice(1, 8), 'ED2-04: Asha row').toEqual([P.activeEngaged.email, '+91 9000000000', 'Active', wsEd2.ALPHA_NAME, 'Yes', '2', '2h']);
+    expect(ashaRow![9], 'ED2-04: watch time by source, most watched first').toMatch(/^eiflixworkshop 1h 30m; eiflixcontent 30m$/i);
+    expect(ashaRow![10], 'ED2-04: watch time by platform, most watched first').toMatch(/^eiflixapp 1h 30m; eiflixweb 30m$/i);
     expect(csv.find(r => r[0] === P.activeLastMonth.name)?.[5], 'ED2-04: Chitra not engaged').toBe('No');
     expect(csv.length - 1, 'ED2-04: one row per person listed').toBe(3);
 
@@ -264,5 +266,178 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     await expect(th(byRate), 'ED2-05: a second click reverses').toHaveAttribute('aria-sort', 'ascending');
     // Lowest rate first: BETA (0%) comes before ALPHA (67%).
     await expect.poll(rowNames, { message: 'ED2-05: lowest engagement first' }).toEqual([wsEd2.BETA_NAME, wsEd2.ALPHA_NAME]);
+  });
+  test('ED2-06 the From filter counts only views from the picked sources', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    const btn = page.getByTestId('ed2-from-btn');
+    const summary = page.getByTestId('ed2-from-summary');
+    const menu = page.getByTestId('ed2-from-menu');
+    const all = page.getByTestId('ed2-from-all');
+    // Match on the label only — the option also holds the tick icon, whose ligature text is "check".
+    const opt = (key: string) => page.getByTestId('ed2-from-option')
+      .filter({ has: page.getByTestId('ed2-from-option-label').getByText(new RegExp(`^${key}$`, 'i')) });
+    await expect(summary, 'ED2-06: every source by default').toHaveText('All sources');
+
+    await btn.click();
+    await expect(menu, 'ED2-06: the menu opens').toBeVisible();
+    await expect(all).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('ed2-from-empty'), 'ED2-06: this month has sources').toHaveCount(0);
+    // 'EiflixWorkshop' and 'eiflixworkshop' are ONE source.
+    await expect(opt('eiflixworkshop'), 'ED2-06: spellings grouped into one option').toHaveCount(1);
+    await expect(opt('eiflixcontent')).toHaveCount(1);
+
+    // eiflixcontent only: Asha counts (she also watched there), Bala does not (workshop only).
+    await opt('eiflixcontent').click();
+    await expect(opt('eiflixcontent')).toHaveAttribute('aria-checked', 'true');
+    await expect(all, 'ED2-06: All is no longer ticked').toHaveAttribute('aria-checked', 'false');
+    await expect(summary).toHaveText(/^eiflixcontent$/i);
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 1, 2, 33, 'ED2-06 eiflixcontent');
+    await expectCards(page, await ed2Oracle(now, 'all', ['eiflixcontent']), 'ED2-06 eiflixcontent');
+
+    // Both sources: back to everyone who watched anything.
+    await opt('eiflixworkshop').click();
+    await expect(summary).toHaveText('2 sources');
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-06 both');
+
+    // Clicking outside closes it and keeps the choice; All sources clears it.
+    const vp = page.viewportSize()!;
+    await page.getByTestId('ed2-menu-scrim').click({ position: { x: Math.round(vp.width / 2), y: vp.height - 40 } });
+    await expect(menu).toHaveCount(0);
+    await expect(summary).toHaveText('2 sources');
+    await btn.click();
+    await all.click();
+    await expect(summary).toHaveText('All sources');
+    await expect(opt('eiflixcontent')).toHaveAttribute('aria-checked', 'false');
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-06 cleared');
+    await expectCards(page, await ed2Oracle(now, 'all'), 'ED2-06 cleared');
+  });
+
+  test('ED2-07 a person expands to show watch time for each source', async ({ page }) => {
+    await openEd2(page);
+    const panel = page.getByTestId('ed2-panel');
+    const person = (name: string) => panel.getByTestId('ed2-person').filter({ hasText: name });
+
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    const asha = person(P.activeEngaged.name);
+    const toggle = asha.getByTestId('ed2-person-toggle');
+    await expect(toggle, 'ED2-07: collapsed by default').toHaveAttribute('aria-expanded', 'false');
+    await expect(asha.getByTestId('ed2-person-froms')).toHaveCount(0);
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    const froms = asha.getByTestId('ed2-person-from');
+    await expect(froms, 'ED2-07: one line per source').toHaveCount(2);
+    // Most watched first: the workshop source (5400 s), then eiflixcontent (1800 s).
+    await expect(froms.nth(0).getByTestId('ed2-person-from-name')).toHaveText(/^eiflixworkshop$/i);
+    await expect(froms.nth(0).getByTestId('ed2-person-from-time')).toHaveText('1h 30m');
+    await expect(froms.nth(1).getByTestId('ed2-person-from-name')).toHaveText(/^eiflixcontent$/i);
+    await expect(froms.nth(1).getByTestId('ed2-person-from-time')).toHaveText('30m');
+    // Bala stays collapsed while Asha is open; open him too.
+    const bala = person(P.nonActiveLast.name);
+    await expect(bala.getByTestId('ed2-person-froms')).toHaveCount(0);
+    await bala.getByTestId('ed2-person-toggle').click();
+    await expect(bala.getByTestId('ed2-person-from-time'), 'ED2-07: one source, 10m').toHaveText(['10m']);
+    await toggle.click();
+    await expect(asha.getByTestId('ed2-person-froms'), 'ED2-07: collapses again').toHaveCount(0);
+
+    // Nobody to expand without views.
+    await panel.getByTestId('ed2-panel-tab-notengaged').click();
+    await expect(person(P.activeLastMonth.name).getByTestId('ed2-person-toggle'), 'ED2-07: no views, no breakdown').toHaveCount(0);
+    await panel.getByTestId('ed2-panel-close').click();
+
+    // With a source picked, the breakdown and the total show that source only.
+    await page.getByTestId('ed2-from-btn').click();
+    await page.getByTestId('ed2-from-option')
+      .filter({ has: page.getByTestId('ed2-from-option-label').getByText(/^eiflixcontent$/i) }).click();
+    await page.getByTestId('ed2-menu-scrim').click({ position: { x: Math.round(page.viewportSize()!.width / 2), y: page.viewportSize()!.height - 40 } });
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    await expect(panel.getByTestId('ed2-person-name'), 'ED2-07: only Asha watched eiflixcontent').toHaveText([P.activeEngaged.name]);
+    await expect(asha.getByTestId('ed2-person-activity')).toContainText('30m');
+    await asha.getByTestId('ed2-person-toggle').click();
+    await expect(asha.getByTestId('ed2-person-from-name'), 'ED2-07: only the picked source').toHaveText([/^eiflixcontent$/i]);
+  });
+  test('ED2-08 the Platform filter, both filters together, and Clear filters', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    const clear = page.getByTestId('ed2-clear-filters');
+    const fromBtn = page.getByTestId('ed2-from-btn');
+    const platBtn = page.getByTestId('ed2-platform-btn');
+    const platSummary = page.getByTestId('ed2-platform-summary');
+    const platMenu = page.getByTestId('ed2-platform-menu');
+    const platAll = page.getByTestId('ed2-platform-all');
+    // Match on the label only — the option also holds the tick icon, whose ligature text is "check".
+    const platOpt = (key: string) => page.getByTestId('ed2-platform-option')
+      .filter({ has: page.getByTestId('ed2-platform-option-label').getByText(new RegExp(`^${key}$`, 'i')) });
+    const fromOpt = (key: string) => page.getByTestId('ed2-from-option')
+      .filter({ has: page.getByTestId('ed2-from-option-label').getByText(new RegExp(`^${key}$`, 'i')) });
+    const vp = page.viewportSize()!;
+    const outside = { position: { x: Math.round(vp.width / 2), y: vp.height - 40 } };
+
+    await expect(clear, 'ED2-08: nothing to clear by default').toBeHidden();
+    // Picking filters must not reflow the page (operator 2026-11-03): remember where things sit.
+    // Position inside the dashboard (not the viewport — clicks scroll the page).
+    const boxOf = (id: string) => page.getByTestId(id).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const home = el.closest('.ed2-page')!.getBoundingClientRect();
+      return { x: Math.round(r.left - home.left), y: Math.round(r.top - home.top), width: Math.round(r.width) };
+    });
+    const before = { from: await boxOf('ed2-from-btn'), plat: await boxOf('ed2-platform-btn'), status: await boxOf('ed2-status-all'), kpi: await boxOf('ed2-kpi-total') };
+    await expect(platSummary).toHaveText('All platforms');
+    await platBtn.click();
+    await expect(platMenu).toBeVisible();
+    await expect(platAll).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('ed2-platform-empty'), 'ED2-08: this month has platforms').toHaveCount(0);
+    await expect(platOpt('eiflixapp'), "ED2-08: 'EiflixApp' and 'eiflixapp' are one platform").toHaveCount(1);
+
+    // Web only: Asha's content view was on the web; Bala watched on the app.
+    await platOpt('eiflixweb').click();
+    await expect(platOpt('eiflixweb')).toHaveAttribute('aria-checked', 'true');
+    await expect(platSummary).toHaveText(/^eiflixweb$/i);
+    await expect(clear, 'ED2-08: a filter is set -> Clear shows').toBeVisible();
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 1, 2, 33, 'ED2-08 web');
+    await expectCards(page, await ed2Oracle(now, 'all', [], ['eiflixweb']), 'ED2-08 web');
+
+    // AND across filters: workshop views were never on the web.
+    await page.getByTestId('ed2-menu-scrim').click(outside);
+    await expect(platMenu).toHaveCount(0);
+    await fromBtn.click();
+    await fromOpt('eiflixworkshop').click();
+    await page.getByTestId('ed2-menu-scrim').click(outside);
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 0, 3, 0, 'ED2-08 workshop AND web');
+    const after = { from: await boxOf('ed2-from-btn'), plat: await boxOf('ed2-platform-btn'), status: await boxOf('ed2-status-all'), kpi: await boxOf('ed2-kpi-total') };
+    for (const k of ['from', 'plat', 'status', 'kpi'] as const) {
+      expect([after[k].x, after[k].y, after[k].width], `ED2-08: ${k} stays put when filters are picked`).toEqual([before[k].x, before[k].y, before[k].width]);
+    }
+    await expectCards(page, await ed2Oracle(now, 'all', ['eiflixworkshop'], ['eiflixweb']), 'ED2-08 workshop AND web');
+
+    // Clear filters resets status too — but not the month.
+    await page.getByTestId('ed2-status-nonactive').click();
+    await clear.click();
+    await expect(clear, 'ED2-08: cleared -> the button hides').toBeHidden();
+    await expect(page.getByTestId('ed2-from-summary')).toHaveText('All sources');
+    await expect(platSummary).toHaveText('All platforms');
+    await expect(page.getByTestId('ed2-status-all'), 'ED2-08: status back to All').toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(now));
+    await expectRow(page, wsEd2.ALPHA_NAME, 3, 2, 1, 67, 'ED2-08 cleared');
+    // The status filter alone also shows Clear.
+    await page.getByTestId('ed2-status-active').click();
+    await expect(clear).toBeVisible();
+    await platBtn.click();
+    await platAll.click();
+    await expect(platSummary).toHaveText('All platforms');
+    await page.getByTestId('ed2-menu-scrim').click(outside);
+    await clear.click();
+
+    // The expanded person shows platforms as well as sources.
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    const asha = page.getByTestId('ed2-panel').getByTestId('ed2-person').filter({ hasText: P.activeEngaged.name });
+    await asha.getByTestId('ed2-person-toggle').click();
+    const plats = asha.getByTestId('ed2-person-platform');
+    await expect(plats, 'ED2-08: one line per platform').toHaveCount(2);
+    await expect(plats.nth(0).getByTestId('ed2-person-platform-name')).toHaveText(/^eiflixapp$/i);
+    await expect(plats.nth(0).getByTestId('ed2-person-platform-time')).toHaveText('1h 30m');
+    await expect(plats.nth(1).getByTestId('ed2-person-platform-name')).toHaveText(/^eiflixweb$/i);
+    await expect(plats.nth(1).getByTestId('ed2-person-platform-time')).toHaveText('30m');
   });
 });
