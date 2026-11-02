@@ -1911,6 +1911,11 @@ export async function clearHotLeads(): Promise<void> {
  *   gitaUndated      active,     activejourney GAMMA, no subscription dates -> counted now, left out of
  *                    last month
  * plus a view THIS month by a profile with no metadata at all (must be ignored).
+ * FREE USERS (`new_user_data`, doc id = profileid, 2026-11-03):
+ *   hari   signed up 2 months ago, viewed THIS month (900 s, eiflixcontent on eiflixapp) -> engaged free user
+ *   ivy    signed up on the 1st of THIS month, never viewed -> free now, not yet a user last month
+ *   jai    movedtoexist: true, viewed THIS month -> never a free user (negative control)
+ *   Asha   ALSO has a new_user_data doc (not moved) -> still counted once, as paid (negative control)
  * Subscription dates (2026-11-03): Asha 2 months ago .. +10 months; Bala's completed journey ended on the 10th
  * two months ago (Non active last month); Chitra 3 months ago .. +9; Esha started on the 1st of THIS month
  * (not a customer last month -> BETA has no row last month).
@@ -1937,7 +1942,13 @@ export const wsEd2 = {
     gitaUndated: { id: `${RUN}_ed2_gita`, name: `ED2 Gita ${RUN}`, email: `ed2.gita.${RUN}@example.test` },
   },
   STRAY: `${RUN}_ed2_stray`,
-  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`],
+  free: {
+    hari: { id: `${RUN}_ed2_hari`, name: `ED2 Hari ${RUN}`, email: `ed2.hari.${RUN}@example.test` },
+    ivy: { id: `${RUN}_ed2_ivy`, name: `ED2 Ivy ${RUN}`, email: `ed2.ivy.${RUN}@example.test` },
+    jai: { id: `${RUN}_ed2_jai`, name: `ED2 Jai ${RUN}`, email: `ed2.jai.${RUN}@example.test` },
+  },
+  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`,
+    `${RUN}_ed2_log_hari`, `${RUN}_ed2_log_jai`],
   ASHA_SECONDS: 7200,
 };
 
@@ -1964,7 +1975,12 @@ export async function seedEd2World(): Promise<void> {
       docid: id, profileid, logdate, totaltimespend, from, platform_name, type: 'eiflixcontent',
       videoid: `${RUN}_vid_ed2`, videoname: `TEST_VID_ED2_${RUN}`, ...tag,
     });
-  const [lAsha, lBala, lChitra, lDev, lStray, lAsha2] = wsEd2.LOGS;
+  const [lAsha, lBala, lChitra, lDev, lStray, lAsha2, lHari, lJai] = wsEd2.LOGS;
+  const F = wsEd2.free;
+  const nud = (p: { id: string; name: string; email: string }, created: any, extra: Record<string, any> = {}) =>
+    db.collection('new_user_data').doc(p.id).set({
+      name: p.name, email: p.email, countryCode: '+91', phonenumber: '9000000001', created, ...extra, ...tag,
+    });
   await Promise.all([
     db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
     db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
@@ -1982,6 +1998,12 @@ export async function seedEd2World(): Promise<void> {
     view(lChitra, P.activeLastMonth.id, lastMonth, 1200, 'eiflixcontent', 'eiflixapp'),
     view(lDev, P.expired.id, thisMonth, 900, 'EiflixWorkshop', 'eiflixapp'),
     view(lStray, wsEd2.STRAY, thisMonth, 300, 'eiflixcontent', 'eiflixweb'),
+    nud(F.hari, at(-2, 1)),
+    nud(F.ivy, at(0, 1)),
+    nud(F.jai, at(-2, 1), { movedtoexist: true }),
+    nud(P.activeEngaged, at(-2, 1)),
+    view(lHari, F.hari.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
+    view(lJai, F.jai.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
   ]);
 }
 
@@ -1992,6 +2014,7 @@ export async function clearEd2World(): Promise<void> {
   await Promise.all([
     ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA, wsEd2.JOURNEY_GAMMA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
     ...Object.values(wsEd2.people).map(p => db.collection('participant metadata').doc(p.id).delete().catch(() => undefined)),
+    ...[...Object.values(wsEd2.free), wsEd2.people.activeEngaged].map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)),
     ...wsEd2.LOGS.map(id => db.collection('content analytics').doc(id).delete().catch(() => undefined)),
   ]);
 }
@@ -2004,20 +2027,23 @@ export async function clearEd2World(): Promise<void> {
  * For a PAST month the status comes from each person's one subscription period (subscriptionstart/end,
  * else lastsubscriptionstart/end): ran on a day of the month = active, ended before it = non active, began
  * after it = not yet (left out), no dates = undated (left out). The current month uses customerstatus.
+ * Free users: `new_user_data` docs with movedtoexist not true whose id is not in the paid population; in a
+ * past month one whose `created` is after the month is not yet a user (left out, counted in notYet).
  * Its own code path — the spec never reads the app's numbers back into its expectation.
  */
-export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active', froms: string[] = [], platforms: string[] = []):
-  Promise<{ total: number; engaged: number; active: number; nonActive: number; notYet: number; undated: number }> {
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active' | 'free', froms: string[] = [], platforms: string[] = []):
+  Promise<{ total: number; engaged: number; active: number; nonActive: number; free: number; notYet: number; undated: number }> {
   const admin = seed.initAdmin();
   const db = admin.firestore();
   const T = admin.firestore.Timestamp;
   const start = new Date(when.getFullYear(), when.getMonth(), 1, 0, 0, 0, 0);
   const end = new Date(when.getFullYear(), when.getMonth() + 1, 0, 23, 59, 59, 999);
-  const [metas, views] = await Promise.all([
+  const [metas, views, nuds] = await Promise.all([
     db.collection('participant metadata').where('customerstatus', 'in', ['active', 'non active']).get(),
     // Up to the last nanosecond of the month's final second — logdate is stored to the microsecond.
     db.collection('content analytics').where('logdate', '>=', T.fromDate(start))
       .where('logdate', '<=', new T(Math.floor(end.getTime() / 1000), 999_999_999)).get(),
+    db.collection('new_user_data').get(),
   ]);
   const fromOk = (d: any) => !froms.length || froms.includes(String(d.get('from') ?? '').trim().toLowerCase());
   const platformOk = (d: any) => !platforms.length || platforms.includes(String(d.get('platform_name') ?? '').trim().toLowerCase());
@@ -2039,14 +2065,19 @@ export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non acti
     const pid = String(d.get('profileid') ?? d.id);
     if (!byProfile.has(pid)) byProfile.set(pid, placed(d));
   });
-  let total = 0, engaged = 0, active = 0, nonActive = 0, notYet = 0, undated = 0;
+  nuds.docs.forEach(d => {
+    if (d.get('movedtoexist') === true || byProfile.has(d.id)) return;
+    const created = asDate(d.get('created'));
+    byProfile.set(d.id, past && created && created.getTime() > end.getTime() ? 'notyet' : 'free');
+  });
+  let total = 0, engaged = 0, active = 0, nonActive = 0, free = 0, notYet = 0, undated = 0;
   byProfile.forEach((s, pid) => {
     if (s === 'notyet') { notYet++; return; }
     if (s === 'undated') { undated++; return; }
-    if (s === 'active') active++; else nonActive++;
+    if (s === 'active') active++; else if (s === 'free') free++; else nonActive++;
     if (status !== 'all' && s !== status) return;
     total++;
     if (viewed.has(pid)) engaged++;
   });
-  return { total, engaged, active, nonActive, notYet, undated };
+  return { total, engaged, active, nonActive, free, notYet, undated };
 }

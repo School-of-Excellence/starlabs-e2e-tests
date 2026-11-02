@@ -488,4 +488,57 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     await expectRow(page, wsEd2.GAMMA_NAME, 1, 0, 1, 0, 'ED2-09 Active GAMMA last month');
     await expectCards(page, await ed2Oracle(prev, 'active'), 'ED2-09 Active last month');
   });
+  test('ED2-10 free users: their own status, and a "Free users" row that always comes last', async ({ page }) => {
+    await openEd2(page);
+    const now = new Date();
+    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const F = wsEd2.free;
+    const FREE = 'Free users';
+    const lastRowName = async () => (await page.getByTestId('ed2-row-name').allInnerTexts()).slice(-1)[0];
+
+    // All: the Free users row is last, labelled, and matches the oracle's free population.
+    const o = await ed2Oracle(now, 'all');
+    expect(o.free, 'ED2-10 precondition: Hari and Ivy are free users').toBeGreaterThanOrEqual(2);
+    await expect.poll(lastRowName, { message: 'ED2-10: Free users is the last row' }).toBe(FREE);
+    await expect(row(page, FREE).locator('.ed2-jmeta')).toHaveText('Signed up, no journey yet');
+    const oFree = await ed2Oracle(now, 'free');
+    await expect(row(page, FREE).getByTestId('ed2-row-total'), 'ED2-10: free row = oracle').toHaveText(String(oFree.total));
+    await expect(row(page, FREE).getByTestId('ed2-row-engaged')).toHaveText(String(oFree.engaged));
+    expect(num(await page.getByTestId('ed2-kpi-free').innerText()), 'ED2-10: free split on the card').toBe(o.free);
+    await expectCards(page, o, 'ED2-10 all');
+    // Sorting never moves it.
+    await page.getByTestId('ed2-sort-name').click();
+    await expect.poll(lastRowName, { message: 'ED2-10: still last, A–Z' }).toBe(FREE);
+    await page.getByTestId('ed2-sort-name').click();
+    await expect.poll(lastRowName, { message: 'ED2-10: still last, Z–A' }).toBe(FREE);
+
+    // The Free users filter: only that row, and the cards follow.
+    await page.getByTestId('ed2-status-free').click();
+    await expect(page.getByTestId('ed2-status-free')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('ed2-row'), 'ED2-10: only the free row').toHaveCount(1);
+    await expect(page.getByTestId('ed2-row-name')).toHaveText(FREE);
+    await expectCards(page, oFree, 'ED2-10 free');
+
+    // The panel: Hari (viewed) is an engaged free user; Jai (moved) and Asha (paid) are not free users.
+    await row(page, FREE).getByTestId('ed2-row-total').click();
+    const panel = page.getByTestId('ed2-panel');
+    const person = (name: string) => panel.getByTestId('ed2-person').filter({ hasText: name });
+    await expect(panel.getByTestId('ed2-panel-title')).toHaveText(FREE);
+    await expect(person(F.hari.name).getByTestId('ed2-person-status')).toHaveText('Free user');
+    await expect(person(F.hari.name).getByTestId('ed2-person-activity'), 'ED2-10: Hari watched 15m').toContainText('15m');
+    await expect(person(F.ivy.name).getByTestId('ed2-person-status')).toHaveText('Free user');
+    await expect(person(F.jai.name), 'ED2-10: moved to existing -> not a free user').toHaveCount(0);
+    await expect(person(P.activeEngaged.name), 'ED2-10: paid wins over new_user_data').toHaveCount(0);
+    await page.getByTestId('ed2-panel-close').click();
+
+    // Last month: only people who had signed up by then — Ivy joined this month.
+    await page.getByTestId('ed2-month-prev').click();
+    await expect(page.getByTestId('ed2-month-label')).toContainText(monthName(prev));
+    await expect(page.getByTestId('ed2-refreshing')).toHaveCount(0, { timeout: 60_000 });
+    const oPrev = await ed2Oracle(prev, 'free');
+    await expect(row(page, FREE).getByTestId('ed2-row-total'), 'ED2-10: last month free row = oracle').toHaveText(String(oPrev.total));
+    await row(page, FREE).getByTestId('ed2-row-total').click();
+    await expect(person(F.hari.name), 'ED2-10: Hari had signed up').toHaveCount(1);
+    await expect(person(F.ivy.name), 'ED2-10: Ivy had not').toHaveCount(0);
+  });
 });
