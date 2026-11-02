@@ -15,7 +15,10 @@
 // The route carries no authGuard yet (development); it is still granted in seed ROUTES.
 import { test, expect, Page, Locator } from '@playwright/test';
 import { readFileSync } from 'fs';
-import { installWshopStubs, loginAsWshopAdmin, wsEd2, seedEd2World, clearEd2World, ed2Oracle, readCsvRows } from './support/wshop';
+import {
+  installWshopStubs, loginAsWshopAdmin, wsEd2, seedEd2World, clearEd2World, ed2Oracle, readCsvRows,
+  seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
+} from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
 const P = wsEd2.people;
@@ -540,5 +543,96 @@ test.describe('Engagement dashboard v2 — content engagement by month', () => {
     await row(page, FREE).getByTestId('ed2-row-total').click();
     await expect(person(F.hari.name), 'ED2-10: Hari had signed up').toHaveCount(1);
     await expect(person(F.ivy.name), 'ED2-10: Ivy had not').toHaveCount(0);
+  });
+});
+
+// =============================================================================================
+// ED2-11 / ED2-12 — Send from the side panel (2026-11-03): Email / WhatsApp / Notification open the SAME
+// composers as the workshop dashboard's Communication dialog (one shared CommunicationSendersService).
+// No console guard, as in WDC-07/14: the composers log benign config errors when they open. Nothing is
+// ever sent for real — ED2-11 dismisses every composer; ED2-12's WATI endpoint and bulk POST exist only in
+// the test browser (captureWorkshopProgressSend).
+// =============================================================================================
+test.describe('Engagement dashboard v2 — send from the side panel', () => {
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(240_000);
+    await installWshopStubs(page);
+    await seedEd2World();
+    await seedWatiConfig();
+  });
+  test.afterEach(async () => {
+    await clearEd2World();
+    await clearWatiConfig();
+  });
+
+  test('ED2-11 Email / WhatsApp / Notification count the people listed and open the Communication dialog\'s composers', async ({ page }) => {
+    await openEd2(page);
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    const panel = page.getByTestId('ed2-panel');
+    const email = panel.getByTestId('ed2-send-email');
+    const whatsapp = panel.getByTestId('ed2-send-whatsapp');
+    const notify = panel.getByTestId('ed2-send-notification');
+    // Asha + Bala are listed; both have an address and a phone.
+    await expect(panel.getByTestId('ed2-send-email-n'), 'ED2-11: email count = people listed with an address').toHaveText('2');
+    await expect(panel.getByTestId('ed2-send-whatsapp-n'), 'ED2-11: WhatsApp count = people listed with a phone').toHaveText('2');
+    await expect(panel.getByTestId('ed2-send-notification-n'), 'ED2-11: notification count = people listed').toHaveText('2');
+
+    // [NEGATIVE CONTROL] nobody listed -> nothing to send.
+    const search = panel.getByTestId('ed2-panel-search');
+    await search.fill('zz-nobody-zz');
+    await expect(email).toBeDisabled();
+    await expect(whatsapp).toBeDisabled();
+    await expect(notify).toBeDisabled();
+    // The counts follow the list: one person.
+    await search.fill(P.activeEngaged.email);
+    await expect(panel.getByTestId('ed2-send-notification-n')).toHaveText('1');
+    await expect(panel.getByTestId('ed2-send-email-n')).toHaveText('1');
+    await expect(panel.getByTestId('ed2-send-whatsapp-n')).toHaveText('1');
+
+    const dialogs = page.getByRole('dialog').filter({ hasNot: page.getByTestId('ed2-panel-title') });
+    await expect(dialogs).toHaveCount(0);
+    // WhatsApp -> SendmessagesComponent; its header x closes it.
+    await whatsapp.click();
+    await expect(dialogs, 'ED2-11: the WhatsApp composer opens').toHaveCount(1, { timeout: 20_000 });
+    await expect(dialogs.last().getByRole('heading', { name: 'Send Message' })).toBeVisible({ timeout: 20_000 });
+    await dialogs.last().locator('button.close-btn').first().click();
+    await expect(dialogs, 'ED2-11: dismissed without sending').toHaveCount(0, { timeout: 15_000 });
+    // Notification -> AhNotificationComponent (disableClose) — its mat-dialog-close x.
+    await notify.click();
+    await expect(dialogs, 'ED2-11: the notification composer opens').toHaveCount(1, { timeout: 20_000 });
+    await dialogs.last().locator('button.close-button[mat-dialog-close]').click();
+    await expect(dialogs).toHaveCount(0, { timeout: 15_000 });
+    // Email -> the Email Campaign Composer (disableClose) — its header cancel.
+    await email.click();
+    await expect(dialogs, 'ED2-11: the email composer opens').toHaveCount(1, { timeout: 20_000 });
+    await expect(dialogs.last().getByRole('heading', { name: 'Email Campaign Composer' })).toBeVisible({ timeout: 20_000 });
+    // Escape belongs to the open composer: it must not close the side panel underneath.
+    await page.keyboard.press('Escape');
+    await expect(dialogs, 'ED2-11: Escape leaves the composer open (disableClose)').toHaveCount(1);
+    await expect(panel.getByTestId('ed2-panel-title'), 'ED2-11: and the panel under it stays open').toBeVisible();
+    await dialogs.last().locator('button.hdr-btn.danger').click();
+    await expect(dialogs).toHaveCount(0, { timeout: 15_000 });
+  });
+
+  test('ED2-12 a WhatsApp send from the side panel carries the listed person\'s profileid and full number', async ({ page }) => {
+    const sent = await captureWorkshopProgressSend(page);   // after the stubs, so these routes win
+    await openEd2(page);
+    await row(page, wsEd2.ALPHA_NAME).getByTestId('ed2-row-engaged').click();
+    const panel = page.getByTestId('ed2-panel');
+    await panel.getByTestId('ed2-panel-search').fill(P.activeEngaged.email);
+    await expect(panel.getByTestId('ed2-person'), 'ED2-12: only Asha is listed').toHaveCount(1);
+
+    await panel.getByTestId('ed2-send-whatsapp').click();
+    const composer = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Send Message' }) });
+    await expect(composer).toBeVisible({ timeout: 20_000 });
+    await pickWatiTemplate(page, composer);
+    await composer.getByTestId('sen-send-whats-app-14').click();
+
+    await expect.poll(sent, { message: 'ED2-12: the screen posts the bulk WhatsApp send', timeout: 30_000 }).not.toBeNull();
+    const body = sent();
+    expect(body.type, 'ED2-12: a WhatsApp send').toBe('whatsapp');
+    expect(body.participants, 'ED2-12: only the listed person is sent').toHaveLength(1);
+    expect(body.participants[0].profileid, 'ED2-12: their profileid').toBe(P.activeEngaged.id);
+    expect(body.participants[0].phonenumber, 'ED2-12: dial code + number, as the workshop dashboard sends it').toBe('+919000000000');
   });
 });
