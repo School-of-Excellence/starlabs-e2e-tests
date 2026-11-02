@@ -57,7 +57,9 @@ const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
   // 2026-10-30: tfm — the mobile scenario participant (web specialist ↔ Flutter app on the simulator)
   'tfm',
   // phase 7 (2026-11-01): tfp — delivery / queue forms on View ATC (two purchases of WiSH + a queue ATC)
-  'tfp'];
+  'tfp',
+  // phase 8 (2026-11-02): sponsor forms — tsp the participant, tss the sponsor (an existing user)
+  'tsp', 'tss'];
 const PF = {
   admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
   eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
@@ -228,6 +230,12 @@ const FATC = {
   M3: `${RUN}_F_M3`,       // tfm: pending sleep; the ATC is deleted before the app submits → nothing saved
   M5: `${RUN}_F_M5`,       // tfm: web sends diet, then the ATC is edited (M5 → M5B) → the answer lands on M5B
   M5B: `${RUN}_F_M5B`,
+  // sponsor forms (phase 8, atc/view-prescribed-atc-sponsor.spec.ts)
+  SPN: `${RUN}_F_SPN`,     // tsp: no sponsor yet → Send asks for one, then it locks
+  SP0: `${RUN}_F_SP0`,     // tsp: SP1's previous version — holds the sponsor's answer and request
+  SP1: `${RUN}_F_SP1`,     // tsp: sponsor tss locked; participant / sponsor answers; a delivery answer of its purchase
+  SPX: `${RUN}_F_SPX`,     // tss's OWN ATC (tss as participant) — tss's answer here must NOT show on SP1
+  COR: `${RUN}_F_COR`,     // tsp: Fill form opened, then the version chain loops → "corrupted", nothing saved
 };
 const FANS = { clarity: `${RUN}_ans_clarity`, life: `${RUN}_ans_life`, sleep: `${RUN}_ans_sleep`, oldSub: `${RUN}_ans_oldsub`, actSleep: `${RUN}_ans_act_sleep`,
   editClarity: `${RUN}_ans_edit_clarity`, rvSleep: `${RUN}_ans_rv_sleep` };
@@ -252,6 +260,19 @@ const DQ_FORM = { intake: `Intake Form ${RUN}`, life: `Life Check ${RUN}`, refle
   otherPp: `Other Participant Form ${RUN}`, noPp: `No Purchase Form ${RUN}`, otherQ: `Other Queue Form ${RUN}`, otherQp: `Other Person Queue Form ${RUN}` };
 const DQ_ANS = { a1: `${RUN}_dqa_intake`, a2: `${RUN}_dqa_life1`, a3: `${RUN}_dqa_life2`, b1: `${RUN}_dqb_reflect`, q1: `${RUN}_dqq_stage`,
   xPp: `${RUN}_dqx_otherpp`, xNoPp: `${RUN}_dqx_nopp`, xQ: `${RUN}_dqx_otherq`, xQp: `${RUN}_dqx_otherqp` };
+
+// ---- phase 8: sponsor forms (2026-11-02, plan specs/plans/2026-11-02-atc-sponsor-forms.md)
+// The sponsor model has one participant form (life) and two sponsor forms. One forms query per ATC: atcid in versions
+// OR participantproductid OR queueref; who filled = the answer's profileid. Negative controls: tss's own answer on
+// SPX (tss as participant) and another participant's answer of a sponsor form on another ATC.
+const SP_MODEL = `ATC Model Sponsor ${RUN}`;
+const SPF = { support: `${RUN}_df_sp_support`, feedback: `${RUN}_df_sp_feedback` };
+const SPF_NAME = { support: `Family Support ${RUN}`, feedback: `Sponsor Feedback ${RUN}` };
+const SP_PP = `${RUN}_pp_tsp`;
+const SP_ANS = { support: `${RUN}_spa_support`, life: `${RUN}_spa_life`, delivery: `${RUN}_spa_delivery`,
+  xSponsor: `${RUN}_spx_sponsor`, xOther: `${RUN}_spx_other` };
+const SP_DELIVERY_NAME = `Sponsor World Delivery ${RUN}`;
+const SP_TEXT = (id) => `Sponsor world answer ${id}`;
 // Every field type the form screen renders (formtemplate.component.html), incl. video/audio — the shape that broke
 // draft + submit (SafeResourceUrl written to Firestore). Media URLs are local assets: a real Storage URL would be
 // aborted by the G2 guard.
@@ -483,6 +504,7 @@ async function seedATC() {
   await seedPhase5({ daysAgo, writeATC, base });
   await seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
   await seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
 
   console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
 }
@@ -708,12 +730,13 @@ async function seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simple
     docid: id, formid: DF[formKey], formname: DF_NAME[formKey], profileid: pid, atcid, date: daysAgo(1),
     formarray: [formarray[0], { ...formarray[1], value: FANSWER_TEXT(formKey) }], ...tag,
   });
-  await answer(FANS.clarity, 'clarity', PF.tfa, FATC.V1);
+  // specialist forms (clarity / oldSub) are answered by the specialist: their profile id (plan 2026-11-02)
+  await answer(FANS.clarity, 'clarity', PF.admin, FATC.V1);
   await answer(FANS.life, 'life', PF.tfa, FATC.V0);
   await answer(FANS.sleep, 'sleep', PF.tfa, FATC.V1);
-  await answer(FANS.oldSub, 'oldSub', PF.tfa, FATC.V1);
+  await answer(FANS.oldSub, 'oldSub', PF.admin, FATC.V1);
   await answer(FANS.actSleep, 'sleep', PF.tfb, FATC.ACT);
-  await answer(FANS.editClarity, 'clarity', PF.tfe, FATC.EDIT);
+  await answer(FANS.editClarity, 'clarity', PF.admin, FATC.EDIT);
   await answer(FANS.rvSleep, 'sleep', PF.tfb, FATC.RV0);
 
   const forms = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, FORMS_MODEL, d), status: 'validated', ...extra });
@@ -788,6 +811,44 @@ async function seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj }
   await db.collection('static meta data').doc('HPC Config').set({ awards: {}, ...tag }, { merge: true });
 }
 
+// Phase 8 (2026-11-02): sponsor forms.
+async function seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  for (const k of Object.keys(SPF)) {
+    await db.collection('delivery forms').doc(SPF[k]).set({ docid: SPF[k], formname: SPF_NAME[k], formdescription: `Sponsor forms ${RUN}`, formarray: [question], ...tag });
+  }
+  const config = [{ formid: DF.life, filledby: 'participant' }, { formid: SPF.support, filledby: 'sponsor' }, { formid: SPF.feedback, filledby: 'sponsor' }];
+  await db.collection('atc model').doc(`${RUN}_model_sponsor`).set({ atcmodel: SP_MODEL, directive: `Sponsor directive ${RUN}`, forms: config, ...tag });
+  await db.collection('products').doc(`${RUN}_product_sponsor`).set({ atcmodel: SP_MODEL, directive: `Sponsor directive ${RUN}`, ...tag });
+
+  const answer = (id, formid, formname, pid, d, extra) => fdb.collection('formsByClient').doc(id).set({
+    docid: id, formid, formname, profileid: pid, date: daysAgo(d), formarray: [{ ...question, value: SP_TEXT(id) }], ...extra, ...tag });
+  await answer(SP_ANS.support, SPF.support, SPF_NAME.support, PF.tss, 3, { atcid: FATC.SP0, filledby: 'sponsor', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.life, DF.life, DF_NAME.life, PF.tsp, 2, { atcid: FATC.SP1, filledby: 'participant', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.delivery, DQ.form, SP_DELIVERY_NAME, PF.tsp, 9, { participantproductid: SP_PP, submittedin: 'breakthroughs' });
+  // negative controls
+  await answer(SP_ANS.xSponsor, SPF.support, SPF_NAME.support, PF.tss, 1, { atcid: FATC.SPX, filledby: 'participant', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.xOther, SPF.feedback, SPF_NAME.feedback, PF.tfb, 1, { atcid: FATC.OTHER, filledby: 'sponsor', submittedin: 'breakthroughs' });
+
+  const sp = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, SP_MODEL, d), status: 'validated', ...extra });
+  await writeATC('atc_alpha', FATC.SPN, sp(PF.tsp, 470), simpleAdj(`F_SPN adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SP0, sp(PF.tsp, 472, { status: 'upgraded', isdelete: true, upgradedto: adb.doc(`atc_alpha/${FATC.SP1}`),
+    sponsorid: PF.tss, participantproductid: SP_PP }), simpleAdj(`F_SP0 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SP1, sp(PF.tsp, 471, { editedfrom: adb.doc(`atc_alpha/${FATC.SP0}`), sponsorid: PF.tss, participantproductid: SP_PP,
+    formsubmitted: { [SPF.support]: SP_ANS.support, [DF.life]: SP_ANS.life } }), simpleAdj(`F_SP1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SPX, sp(PF.tss, 473), simpleAdj(`F_SPX adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.COR, { ...base(PF.tsp, PF.admin, FORMS_MODEL, 474), status: 'validated' }, simpleAdj(`F_COR adjustment ${RUN}`));
+
+  // requests: the sponsor's, made on SP0 (submitted) and on SP1 (waiting) — they load by atcid, not by the participant
+  const request = (atcid, formid, extra) => adb.collection('atc_form_requests').doc(`${atcid}_${formid}`).set({
+    atcid, formid, profileid: PF.tss, participantid: PF.tsp, filledby: 'sponsor', product: SP_MODEL, sentby: PF.admin, sentat: daysAgo(4), ...extra, ...tag });
+  await request(FATC.SP0, SPF.support, { formstatus: 'submitted' });
+  await request(FATC.SP1, SPF.feedback, { formstatus: 'sent' });
+  // the sponsor signs in to the app (Flutter sponsor test): an unverified profile is sent to Profile Verification
+  await db.collection('profile_data').doc(PF.tss).set({ enable: true, profileverified: true }, { merge: true });
+}
+
 async function teardownATC() {
   const admin = initAdminAuto();
   const db = admin.firestore();
@@ -834,6 +895,7 @@ module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_
   ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
   TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW,
   FORMS_DB_ID, FORMS_MODEL, DF, DF_NAME, DF_QUESTION, FORMS_CONFIG, FATC, FANS, FANSWER_TEXT,
+  SP_MODEL, SPF, SPF_NAME, SP_PP, SP_ANS, SP_DELIVERY_NAME, SP_TEXT,
   DF_ALL, DF_ALL_NAME, ALL_MODEL, W, MEDIA, DQ, DQ_QUEUE_NAME, DQ_STAGE, DQ_FORM, DQ_ANS, DQ_TEXT, seedATC, teardownATC };
 
 if (require.main === module) {

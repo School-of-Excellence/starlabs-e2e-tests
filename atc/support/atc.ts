@@ -72,6 +72,13 @@ export const DQ_STAGE: string = S.DQ_STAGE;
 export const DQ_FORM = S.DQ_FORM;
 export const DQ_ANS = S.DQ_ANS;
 export const DQ_TEXT: (id: string) => string = S.DQ_TEXT;
+export const SP_MODEL: string = S.SP_MODEL;
+export const SPF = S.SPF;
+export const SPF_NAME = S.SPF_NAME;
+export const SP_PP: string = S.SP_PP;
+export const SP_ANS = S.SP_ANS;
+export const SP_DELIVERY_NAME: string = S.SP_DELIVERY_NAME;
+export const SP_TEXT: (id: string) => string = S.SP_TEXT;
 /** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
 export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
   const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);

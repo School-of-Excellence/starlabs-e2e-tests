@@ -119,4 +119,21 @@ test.describe('Product Designer — ATC model forms config (real UI, emulator)',
     await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms.map((f: any) => f.formid), { timeout: 20_000 })
       .toEqual([F.c, F.gone]);
   });
+
+  // plan 2026-11-02-atc-sponsor-forms: "filled by" has a third option, Sponsor
+  test('AMF-05 a form can be filled by the sponsor: the third toggle saves filledby "sponsor"', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    const a = rows.filter({ hasText: NAME.a });
+    await a.getByTestId('ca-form-sponsor').click();
+    await expect(a.getByTestId('ca-form-sponsor')).toHaveAttribute('class', /mat-button-toggle-checked/);
+    await page.getByTestId('ca-on-submit-2').click();
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
+      { formid: F.a, filledby: 'sponsor' },
+      { formid: F.c, filledby: 'participant' },
+      { formid: F.gone, filledby: 'participant' },
+    ]);
+  });
 });

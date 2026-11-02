@@ -187,10 +187,11 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await expectRow(DF_NAME.life, 'Waiting for update', ['View answer', 'Withdraw']);        // request with answerid on V0 (earlier version)
     await expectRow(DF_NAME.sleep, 'Submitted', ['View answer', 'Ask to update']);           // OTHER's request must not count here
     await expectRow(DF_NAME.oldSub, 'Submitted', ['View answer']);                           // soft-deleted but answered → View only (no Edit)
-    await expect(formRow(r, DF_NAME.oldSub).getByTestId('vatc-form-note')).toHaveText('Filled by you');
+    // who filled it = the answer's profileid (plan 2026-11-02): the seeded specialist answers carry the admin's
+    await expect(formRow(r, DF_NAME.oldSub).getByTestId('vatc-form-note')).toHaveText(`Filled by ${EMAIL.admin}`);
     // groups + summary line + explanation lines
     await expect(r.getByTestId('vatc-forms-group-specialist')).toContainText('Forms you fill');
-    await expect(r.getByTestId('vatc-forms-group-participant')).toContainText('Forms the participant fills in the app');
+    await expect(r.getByTestId('vatc-forms-group-participant')).toContainText(`Forms the participant fills · ${EMAIL.tfa}`);
     await expect(r.getByTestId('vatc-forms-summary')).toHaveText('4 of 7 submitted · 2 waiting for participant · 1 for you to fill');
     await expect(formRow(r, DF_NAME.review).getByTestId('vatc-form-note')).toHaveText("You haven't filled this yet");
     await expect(formRow(r, DF_NAME.diet).getByTestId('vatc-form-note')).toHaveText(/^Sent \d{1,2} \w{3} \d{4}$/);
@@ -246,7 +247,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await expect(panel).toContainText(DF_NAME.clarity);
     await expect(panel).toContainText(DF_QUESTION);
     await expect(panel, 'the answer read from formsByClient').toContainText(FANSWER_TEXT('clarity'), { timeout: 15_000 });
-    await expect(panel).toContainText(EMAIL.tfa);                          // participant name = users_roles name (email)
+    await expect(panel).toContainText(EMAIL.admin);                        // who filled it = the answer's profileid (users_roles name)
     await page.getByTestId('fov-close-2').click();
     await expect(panel).toHaveCount(0);
   });
@@ -259,7 +260,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await expect(life.getByTestId('vatc-form-status')).toHaveText('Not sent');
     await life.getByTestId('vatc-form-send').click();
     const sent = await waitFor(() => requestDoc(FATC.ACT, DF.life), 'Send wrote the request');
-    expect({ ...sent, sentat: undefined }).toEqual({ atcid: FATC.ACT, formid: DF.life, profileid: PF.tfb, product: FORMS_MODEL, sentby: PF.admin, sentat: undefined, formstatus: 'sent' });
+    expect({ ...sent, sentat: undefined }).toEqual({ atcid: FATC.ACT, formid: DF.life, profileid: PF.tfb, filledby: 'participant', product: FORMS_MODEL, sentby: PF.admin, sentat: undefined, formstatus: 'sent' });
     expect(sent.sentat?.toDate?.(), 'sentat is a server timestamp').toBeTruthy();
     expect(sent.answerid, 'Send carries no answerid').toBeUndefined();
     await expect(life.getByTestId('vatc-form-status')).toHaveText('Waiting for participant', { timeout: 15_000 });
@@ -306,7 +307,8 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await releaseViewAtc(page);
     const url = new URL(tab.url());
     expect(url.pathname).toBe('/formtemplate');
-    expect(Object.fromEntries(url.searchParams)).toEqual({ id: DF.clarity, type: 'form', profileid: PF.tfc, atcid: FATC.FILL });
+    // no profileid in the link (plan 2026-11-02): the form screen saves the logged-in specialist's profile id
+    expect(Object.fromEntries(url.searchParams)).toEqual({ id: DF.clarity, type: 'form', atcid: FATC.FILL });
 
     const text = `Specialist answer ${RUN}`;
     await tab.locator('.form-content input').first().fill(text, { timeout: 45_000 });
@@ -321,7 +323,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     expect(answer.formid).toBe(DF.clarity);
     expect(answer.atcid).toBe(FATC.FILL);
     expect(answer.filledby).toBe('specialist');
-    expect(answer.profileid).toBe(PF.tfc);
+    expect(answer.profileid, 'the specialist who filled it').toBe(PF.admin);
     expect(answer.formarray.find((f: any) => f.fieldname === DF_QUESTION).value).toBe(text);
     expect(Object.keys(atc.formsubmitted), 'only that form was recorded').toEqual([DF.clarity]);
 
@@ -400,7 +402,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     const tab = await popupFrom(page, () => formRow(r, DF_ALL_NAME).getByTestId('vatc-form-fill').click());
     await releaseViewAtc(page);
     const sliderShown = await fillAllWidgets(tab);
-    await expectDraftSaved(tab, PF.tfe);
+    await expectDraftSaved(tab, PF.admin);              // the specialist's draft: their profile id (plan 2026-11-02)
 
     const closed = tab.waitForEvent('close', { timeout: 45_000 });
     await tab.getByTestId('for-on-submit-15').click();
@@ -411,7 +413,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     expect(saved.atcid).toBe(FATC.ALL);
     expect(saved.filledby).toBe('specialist');
     expectAllAnswers(saved, sliderShown);
-    const drafts = await formsDb().collection('temporary_forms').where('formid', '==', DF_ALL).where('profileid', '==', PF.tfe).get();
+    const drafts = await formsDb().collection('temporary_forms').where('formid', '==', DF_ALL).where('profileid', '==', PF.admin).get();
     expect(drafts.size, 'the draft is removed on submit').toBe(0);
 
     await openFor(page, 'tfe', false);
@@ -451,7 +453,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     await releaseViewAtc(page);
     const url = new URL(tab.url());
     expect(url.pathname).toBe('/formtemplate');
-    expect(Object.fromEntries(url.searchParams)).toEqual({ id: DF.clarity, type: 'form', patchdata: `formsByClient/${FANS.editClarity}`, profileid: PF.tfe, atcid: FATC.EDIT });
+    expect(Object.fromEntries(url.searchParams)).toEqual({ id: DF.clarity, type: 'form', patchdata: `formsByClient/${FANS.editClarity}`, atcid: FATC.EDIT });
 
     const input = tab.locator('.form-content input').first();
     await expect(input, 'prefilled with the saved answer, not blank').toHaveValue(FANSWER_TEXT('clarity'), { timeout: 45_000 });

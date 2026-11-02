@@ -3,9 +3,10 @@
 // (app repo).
 //
 // World (seed-atc.js phase 7): tfp did WiSH twice — ATC_A (purchase a: 3 answers, Life Check twice) and ATC_B
-// (purchase b: 1 answer) — and has a queue ATC (ATC_Q: 1 answer in its queue). Negative controls: another participant's
-// answer of purchase a, tfp's answer with no purchase id, tfp's answer in another queue, another participant's answer
-// in tfp's queue. Anti-circularity: the rows on screen are compared with what the emulator holds for the ATC's
+// (purchase b: 1 answer) — and has a queue ATC (ATC_Q: 1 answer in its queue). Since the one forms query (plan
+// 2026-11-02) the purchase clause has no profileid match, so another participant's answer carrying purchase a SHOWS
+// (duplicate ids stay visible); the queue clause matches the participant. Negative controls: tfp's answer with no
+// purchase id, tfp's answer in another queue, another participant's answer in tfp's queue. Anti-circularity: the rows on screen are compared with what the emulator holds for the ATC's
 // participantproductid / queueid (Admin SDK), never with a list typed into the spec.
 import { test, expect, Page } from '@playwright/test';
 import {
@@ -30,9 +31,12 @@ async function openFull(page: Page, id: string) {
 }
 // the date line the screen writes (Angular DatePipe 'd MMM y', en-US)
 const dmy = (d: Date) => `${d.getDate()} ${d.toLocaleString('en-US', { month: 'short' })} ${d.getFullYear()}`;
-/** The answers the emulator holds for one filter, newest first: { id, name, note }. */
-async function expected(profileid: string, field: 'participantproductid' | 'queueref', value: any) {
-  const snap = await formsDb().collection('formsByClient').where('profileid', '==', profileid).where(field, '==', value).get();
+/** The answers the emulator holds for one clause of the forms query (plan 2026-11-02), newest first: { id, name, note }.
+ *  purchase: participantproductid only (one participant's purchase); queue: queueref AND the ATC's participant. */
+async function expected(profileid: string | null, field: 'participantproductid' | 'queueref', value: any) {
+  let q = formsDb().collection('formsByClient').where(field, '==', value);
+  if (profileid) q = q.where('profileid', '==', profileid);
+  const snap = await q.get();
   return snap.docs.map((d) => {
     const a = d.data();
     const date: Date = a.date.toDate();
@@ -66,8 +70,10 @@ test.describe('ATC — View Prescribed ATC delivery / queue forms (real UI, emul
   test('VATCA-01 Delivery activities: every answer of the ATC\'s purchase, newest first; View answer opens it', async ({ page }) => {
     const atc = await atcDoc(`atc_alpha/${DQ.ATC_A}`);
     expect(atc.participantproductid, 'precondition: the ATC carries its purchase').toBe(DQ.ppA);
-    const want = await expected(atc.profileid, 'participantproductid', atc.participantproductid);
-    expect(want.map((w) => w.id), 'precondition: purchase a holds three answers of tfp').toEqual([DQ_ANS.a3, DQ_ANS.a2, DQ_ANS.a1]);
+    const want = await expected(null, 'participantproductid', atc.participantproductid);
+    // purchase a: tfp's three answers + the seeded answer of another participant carrying the same purchase id — the
+    // purchase clause has no profileid match (plan 2026-11-02), so that duplicate-id answer shows and stays visible
+    expect(want.map((w) => w.id), 'precondition: purchase a holds four answers').toEqual([DQ_ANS.xPp, DQ_ANS.a3, DQ_ANS.a2, DQ_ANS.a1]);
 
     await openFor(page, 'tfp');
     const r = await openFull(page, DQ.ATC_A);
@@ -76,20 +82,19 @@ test.describe('ATC — View Prescribed ATC delivery / queue forms (real UI, emul
     await expect(part).toContainText('Delivery activities');
     await expect(r.getByTestId('vatc-forms-delivery-count')).toHaveText(`${want.length} answers`);
     expect(await rowsOf(part), 'all answers, the same form twice included, newest first').toEqual(want.map((w) => ({ name: w.name, note: w.note })));
-    // negative controls: another participant's answer of purchase a, tfp's answer without a purchase id
-    await expect(r).not.toContainText(DQ_FORM.otherPp);
+    // negative control: tfp's answer without a purchase id
     await expect(r).not.toContainText(DQ_FORM.noPp);
     // no queue on this ATC, and the WiSH model has no forms → only the delivery part
     await expect(r.getByTestId('vatc-forms-part-queue')).toHaveCount(0);
     await expect(r.getByTestId('vatc-forms-part-atc')).toHaveCount(0);
 
-    await part.getByTestId('vatc-activity-row').nth(0).getByTestId('vatc-activity-view').click();
+    await part.getByTestId('vatc-activity-row').nth(1).getByTestId('vatc-activity-view').click(); // a3 (xPp is newer)
     await expect(page.getByTestId('fov-panel-3')).toContainText(DQ_TEXT(DQ_ANS.a3), { timeout: 15_000 });
   });
 
   test('VATCA-02 the second purchase of the same product shows only its own answers', async ({ page }) => {
     const atc = await atcDoc(`atc_alpha/${DQ.ATC_B}`);
-    const want = await expected(atc.profileid, 'participantproductid', atc.participantproductid);
+    const want = await expected(null, 'participantproductid', atc.participantproductid);
     expect(want.map((w) => w.id)).toEqual([DQ_ANS.b1]);
 
     await openFor(page, 'tfp');
