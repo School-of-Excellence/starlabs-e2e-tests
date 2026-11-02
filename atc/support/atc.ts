@@ -43,6 +43,16 @@ export const AI_ADJ: string = S.AI_ADJ;
 export const TPL = S.TPL;
 export const TPL_MODEL = S.TPL_MODEL;
 export const TPL_DIRECTIVE = S.TPL_DIRECTIVE;
+// the near-miss model names the substring match must NOT pick up (PTPL-08)
+// phase 9 (2026-11-02) — the ATC form web link world
+export const WL_MODEL: string = S.WL_MODEL;
+export const WLF = S.WLF;
+export const WLF_NAME = S.WLF_NAME;
+export const WLATC = S.WLATC;
+export const WL_ANS = S.WL_ANS;
+export const WL_TEXT: (id: string) => string = S.WL_TEXT;
+export const TPL_NEAR_MISS = S.TPL_NEAR_MISS;
+export const TPL_NEAR_MISS_DIRECTIVE = S.TPL_NEAR_MISS_DIRECTIVE;
 export const LIVE_QUEUE_NAME: string = S.LIVE_QUEUE_NAME;
 export const LIVE_STAGE: string = S.LIVE_STAGE;
 // phase 4 (2026-10-23) — what the Edit / View template ATCs hold

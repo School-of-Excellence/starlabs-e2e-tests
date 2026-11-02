@@ -59,7 +59,13 @@ const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
   // phase 7 (2026-11-01): tfp — delivery / queue forms on View ATC (two purchases of WiSH + a queue ATC)
   'tfp',
   // phase 8 (2026-11-02): sponsor forms — tsp the participant, tss the sponsor (an existing user)
-  'tsp', 'tss'];
+  'tsp', 'tss',
+  // phase 9 (2026-11-02): tnm / tnw — the near-miss model names (EI Starter Pack / W!SH must NOT get the
+  // templates). One participant per pick, as everywhere in phase 3: a leftover draft must not open another
+  // case's picker.
+  'tnm', 'tnw',
+  // phase 9 (2026-11-02): twp fills an ATC form in web from a copied link, tws is the sponsor who does the same
+  'twp', 'tws'];
 const PF = {
   admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
   eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
@@ -174,7 +180,9 @@ const ROUTES = [
   { route: '/previewtripleATC', label: 'Preview Triple ATC' }, { route: '/edittripleATC', label: 'Edit Triple ATC' },
   { route: '/viewaigeneratedatc', label: 'EI AI' },
   // phase 6 (2026-10-29): View ATC → Fill form opens the form screen
-  { route: '/formtemplate', label: 'Form Template' },
+  // phase 9 (2026-11-02): a participant / sponsor opens the SAME screen from a copied link, so the route
+  // grants the entry-level `participant` role as production does.
+  { route: '/formtemplate', label: 'Form Template', participant: true },
 ];
 
 // Default-DB collections this seed owns (testrunid-tagged; teardown sweeps by tag).
@@ -272,6 +280,25 @@ const SP_PP = `${RUN}_pp_tsp`;
 const SP_ANS = { support: `${RUN}_spa_support`, life: `${RUN}_spa_life`, delivery: `${RUN}_spa_delivery`,
   xSponsor: `${RUN}_spx_sponsor`, xOther: `${RUN}_spx_other` };
 const SP_DELIVERY_NAME = `Sponsor World Delivery ${RUN}`;
+
+// ---- phase 9 (2026-11-02): the ATC form web link ---------------------------------------------------------
+// twp is the participant, tws the sponsor. One model with a participant form, a sponsor form and a form that
+// is already answered (the "Ask to update" case). Four ATCs, one per request state.
+const WL_MODEL = `ATC Model WebLink ${RUN}`;
+const WLF = { part: `${RUN}_df_wl_part`, spon: `${RUN}_df_wl_spon`, edit: `${RUN}_df_wl_edit` };
+const WLF_NAME = { part: `Web Participant Form ${RUN}`, spon: `Web Sponsor Form ${RUN}`, edit: `Web Update Form ${RUN}` };
+// One ATC per case: the cases run in order in one worker, so a request consumed by one must not be the
+// request another depends on.
+const WLATC = {
+  NEW:   `${RUN}_F_WL_NEW`,    // twp: request 'sent', no answerid → consumed by the new-submit case
+  EDIT:  `${RUN}_F_WL_EDIT`,   // twp: request 'sent' WITH answerid → consumed by the edit case
+  SPON:  `${RUN}_F_WL_SPON`,   // tws: sponsor request 'sent' → consumed by the sponsor case
+  DONE:  `${RUN}_F_WL_DONE`,   // twp: request already 'submitted' → the link must refuse
+  OTHER: `${RUN}_F_WL_OTHER`,  // twp: request 'sent', never submitted — the Copy button + wrong-login cases read it
+  DRAFT: `${RUN}_F_WL_DRAFT`,  // twp: request 'sent', never submitted — the draft case types into it
+};
+const WL_ANS = { edit: `${RUN}_wla_edit` };
+const WL_TEXT = (id) => `Web link answer ${id}`;
 const SP_TEXT = (id) => `Sponsor world answer ${id}`;
 // Every field type the form screen renders (formtemplate.component.html), incl. video/audio — the shape that broke
 // draft + submit (SafeResourceUrl written to Firestore). Media URLs are local assets: a real Storage URL would be
@@ -314,9 +341,17 @@ const ALL_FORMARRAY = [
 ];
 
 // ---- phase 3: prescribe templates (2026-10-22) ------------------------------------------------------------
-// EI Solution / WiSH are matched by name (lowercase) in Prescribe ATC, so the model names are exact.
-const TPL_MODEL = { ei: 'EI Solution', wish: 'WiSH' };
+// EI Solution / WiSH are matched by NAME in the app — by substring since 2026-11-02 (starlabs-angular
+// src/app/ATC/shared/atc-product.ts), because the real `atc model` records say "EI Solutions" (plural).
+// `ei` therefore carries the PRODUCTION spelling on purpose: it is what makes every EI case below a
+// regression test for that fix. Do NOT 'correct' it back to the singular prototype name.
+const TPL_MODEL = { ei: 'EI Solutions', wish: 'WiSH' };
 const TPL_DIRECTIVE = { ei: `EI directive ${RUN}`, wish: `WiSH directive ${RUN}` };
+// Near misses for the substring match (PTPL-08): names that share a prefix or a shape with the two template
+// models and must NOT get their sections. 'EI Starter Pack' is the live product the match has always had to
+// exclude; 'W!SH' is the other spelling the app deliberately does not match.
+const TPL_NEAR_MISS = { starter: 'EI Starter Pack', bang: 'W!SH' };
+const TPL_NEAR_MISS_DIRECTIVE = { starter: `Starter directive ${RUN}`, bang: `Bang directive ${RUN}` };
 const TPL = {
   roleDiag: `${RUN}_role_diag`, roleShadow: `${RUN}_role_shadow`,
   atEi: `${RUN}_at_ei`, atOther: `${RUN}_at_other`, atrEi: `${RUN}_atr_ei`, atrOther: `${RUN}_atr_other`,
@@ -505,6 +540,7 @@ async function seedATC() {
   await seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
   await seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj });
   await seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase9({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
 
   console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
 }
@@ -619,6 +655,9 @@ async function seedPhase3({ db, adb, T, tag, daysAgo }) {
   const hoursFromNow = (h) => T.fromMillis(Date.now() + h * 3600e3);
   for (const k of Object.keys(TPL_MODEL)) {
     await db.collection('atc model').doc(`${RUN}_model_${k}`).set({ atcmodel: TPL_MODEL[k], directive: TPL_DIRECTIVE[k], ...tag });
+  }
+  for (const k of Object.keys(TPL_NEAR_MISS)) {
+    await db.collection('atc model').doc(`${RUN}_model_nm_${k}`).set({ atcmodel: TPL_NEAR_MISS[k], directive: TPL_NEAR_MISS_DIRECTIVE[k], ...tag });
   }
   // roles + types + the ATC mapping (role → bigactivity ids; ACT.ca is assigned_to → Prescribe must skip it)
   await db.collection('eisroles').doc(TPL.roleDiag).set({ docid: TPL.roleDiag, id: TPL.roleDiag, role: `EI Diagnostics Specialist ${RUN}`, ...tag });
@@ -849,6 +888,42 @@ async function seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simple
   await db.collection('profile_data').doc(PF.tss).set({ enable: true, profileverified: true }, { merge: true });
 }
 
+// Phase 9 (2026-11-02): the ATC form web link — a participant / sponsor fills the form screen from a copied
+// link. Plan: specs/plans/2026-11-02-atc-form-web-link.md (app repo).
+async function seedPhase9({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  for (const k of Object.keys(WLF)) {
+    await db.collection('delivery forms').doc(WLF[k]).set({ docid: WLF[k], formname: WLF_NAME[k], formdescription: `Web link forms ${RUN}`, formarray: [question], ...tag });
+  }
+  const config = [{ formid: WLF.part, filledby: 'participant' }, { formid: WLF.edit, filledby: 'participant' },
+    { formid: WLF.spon, filledby: 'sponsor' }];
+  await db.collection('atc model').doc(`${RUN}_model_weblink`).set({ atcmodel: WL_MODEL, directive: `Web link directive ${RUN}`, forms: config, ...tag });
+  await db.collection('products').doc(`${RUN}_product_weblink`).set({ atcmodel: WL_MODEL, directive: `Web link directive ${RUN}`, ...tag });
+
+  // the answer the EDIT request sends them back to update (filled in the app, as a resubmission would be)
+  await fdb.collection('formsByClient').doc(WL_ANS.edit).set({ docid: WL_ANS.edit, formid: WLF.edit, formname: WLF_NAME.edit,
+    profileid: PF.twp, atcid: WLATC.EDIT, filledby: 'participant', submittedin: 'breakthroughs',
+    date: daysAgo(6), formarray: [{ ...question, value: WL_TEXT(WL_ANS.edit) }], ...tag });
+
+  const wl = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, WL_MODEL, d), status: 'validated', ...extra });
+  await writeATC('atc_alpha', WLATC.NEW, wl(PF.twp, 480), simpleAdj(`F_WL_NEW adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.EDIT, wl(PF.twp, 481, { formsubmitted: { [WLF.edit]: WL_ANS.edit } }), simpleAdj(`F_WL_EDIT adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.SPON, wl(PF.twp, 482, { sponsorid: PF.tws }), simpleAdj(`F_WL_SPON adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.DONE, wl(PF.twp, 483), simpleAdj(`F_WL_DONE adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.OTHER, wl(PF.twp, 484), simpleAdj(`F_WL_OTHER adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.DRAFT, wl(PF.twp, 485), simpleAdj(`F_WL_DRAFT adjustment ${RUN}`));
+
+  const request = (atcid, formid, extra) => adb.collection('atc_form_requests').doc(`${atcid}_${formid}`).set({
+    atcid, formid, product: WL_MODEL, sentby: PF.admin, sentat: daysAgo(5), ...extra, ...tag });
+  await request(WLATC.NEW, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+  await request(WLATC.EDIT, WLF.edit, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent', answerid: WL_ANS.edit });
+  await request(WLATC.SPON, WLF.spon, { profileid: PF.tws, participantid: PF.twp, filledby: 'sponsor', formstatus: 'sent' });
+  await request(WLATC.DONE, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'submitted' });
+  await request(WLATC.OTHER, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+  await request(WLATC.DRAFT, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+}
+
 async function teardownATC() {
   const admin = initAdminAuto();
   const db = admin.firestore();
@@ -893,9 +968,10 @@ async function teardownATC() {
 
 module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, QUEUE_NAME,
   ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
-  TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW,
+  TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_NEAR_MISS, TPL_NEAR_MISS_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW,
   FORMS_DB_ID, FORMS_MODEL, DF, DF_NAME, DF_QUESTION, FORMS_CONFIG, FATC, FANS, FANSWER_TEXT,
   SP_MODEL, SPF, SPF_NAME, SP_PP, SP_ANS, SP_DELIVERY_NAME, SP_TEXT,
+  WL_MODEL, WLF, WLF_NAME, WLATC, WL_ANS, WL_TEXT,
   DF_ALL, DF_ALL_NAME, ALL_MODEL, W, MEDIA, DQ, DQ_QUEUE_NAME, DQ_STAGE, DQ_FORM, DQ_ANS, DQ_TEXT, seedATC, teardownATC };
 
 if (require.main === module) {

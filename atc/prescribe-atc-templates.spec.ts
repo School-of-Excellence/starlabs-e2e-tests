@@ -17,7 +17,7 @@
 // wrote to the emulator — never a value the test wrote.
 import { test, expect, Page, Browser, Locator } from '@playwright/test';
 import {
-  PF, NAME, ACT, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE,
+  PF, NAME, ACT, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_NEAR_MISS, LIVE_QUEUE_NAME, LIVE_STAGE,
   installAtcGuards, assertNoRealDb, loginAsAtc, atcDb, atcDocs, waitFor, pickOptions, selectText, tid, AtcGuard, fillEditorDialog,
   wavBuffer,
 } from './support/atc';
@@ -491,6 +491,27 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
       await expect(page.getByTestId('patc-submit')).toBeVisible({ timeout: 30_000 });
       await expect(micro, `${model}: micro ATC section ${shown ? 'shown' : 'hidden'}`).toHaveCount(shown ? 1 : 0);
       await expect(readyItem(page, 'Micro ATC directives have an assignee')).toHaveCount(shown ? 1 : 0);
+    }
+  });
+
+  // The model name is matched by SUBSTRING since 2026-11-02 (the records say "EI Solutions", plural), so the match
+  // has to stay narrow: these two names sit right next to the template models and must get NEITHER template.
+  // 'EI Starter Pack' is a live product that shares the "EI" prefix; 'W!SH' is the spelling the app does not match.
+  test('PTPL-08 near-miss model names get neither template: EI Starter Pack has no Ask, W!SH has no outcomes', async ({ page }) => {
+    const checks: [keyof typeof NAME, string][] = [
+      ['tnm', TPL_NEAR_MISS.starter],
+      ['tnw', TPL_NEAR_MISS.bang],
+    ];
+    for (const [pf, model] of checks) {
+      await page.goto('/prescribeATC');
+      await pickParticipant(page, pf);
+      await pickProduct(page, model);
+      await expect(page.getByTestId('patc-submit'), `${model}: form ready`).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId('patc-ask-card'), `${model}: no EI Solution Ask`).toHaveCount(0);
+      await expect(page.getByTestId('patc-outcome-card'), `${model}: no WiSH outcomes`).toHaveCount(0);
+      await expect(readyItem(page, 'Add at least one complete ask'), `${model}: no ask checklist item`).toHaveCount(0);
+      // a plain model keeps the plain directive heading, not the WiSH wording
+      await expect(page.locator('#atcfield-directive'), `${model}: plain directive heading`).toContainText('ATC DIRECTIVE');
     }
   });
 });

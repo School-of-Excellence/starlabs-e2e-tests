@@ -568,7 +568,9 @@ async function seedBookingSlot(db, T, profileRef, apptTypeRef) {
 const ATC_ACT = { author: `${TESTRUNID}_ba_author`, observer: `${TESTRUNID}_ba_observer`, ca: `${TESTRUNID}_ba_ca`, plain: `${TESTRUNID}_ba_plain` };
 const ATC_ACT_NAME = { author: 'Diagnostics Solo', observer: 'Diagnostics Shadow', ca: 'Changework Solo', plain: `Plain Activity ${TESTRUNID}` };
 const ATC_ACT_PROP = { author: 'author', observer: 'observer', ca: 'assigned_to', plain: null };
-const ATC_MODEL = { ei: 'EI Solution', wish: 'WiSH' };
+// `ei` carries the PRODUCTION spelling ("EI Solutions", plural): the app matches the model name by substring
+// since 2026-11-02 (starlabs-angular src/app/ATC/shared/atc-product.ts). Do not shorten it to the singular.
+const ATC_MODEL = { ei: 'EI Solutions', wish: 'WiSH' };
 
 /**
  * The map-appointment-role dialog's ATC world, owned by map-appointment-role-atc.spec.ts (beforeAll):
