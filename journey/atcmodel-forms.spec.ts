@@ -5,7 +5,7 @@
 // one ATC model configured with A (specialist), C (participant) and a form id with no delivery forms doc.
 // Anti-circularity: names on screen are compared with the seeded delivery forms; the saved config is read back
 // from the emulator with the Admin SDK.
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, Locator } from '@playwright/test';
 import { installJourneyStubs, loginAsJourneyAdmin } from './support/journey';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -100,10 +100,10 @@ test.describe('Product Designer — ATC model forms config (real UI, emulator)',
     await page.getByTestId('ca-on-submit-2').click();
 
     await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
-      { formid: F.a, filledby: 'specialist' },
-      { formid: F.b, filledby: 'participant' },
-      { formid: F.c, filledby: 'participant' },
-      { formid: F.gone, filledby: 'participant' },
+      { formid: F.a, filledby: 'specialist', participantview: false },
+      { formid: F.b, filledby: 'participant', participantview: true },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
     ]);
     await expect(row.getByTestId('va-form-name').nth(1)).toHaveText(NAME.b, { timeout: 20_000 });
   });
@@ -131,9 +131,53 @@ test.describe('Product Designer — ATC model forms config (real UI, emulator)',
     await expect(a.getByTestId('ca-form-sponsor')).toHaveAttribute('class', /mat-button-toggle-checked/);
     await page.getByTestId('ca-on-submit-2').click();
     await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
-      { formid: F.a, filledby: 'sponsor' },
-      { formid: F.c, filledby: 'participant' },
-      { formid: F.gone, filledby: 'participant' },
+      { formid: F.a, filledby: 'sponsor', participantview: false },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
     ]);
+  });
+
+  // participantview (operator 2026-11-03): the participant app shows an ATC form only when this is true. The flag is
+  // per row whatever "filled by" says, so the checkbox is on the specialist row too. CONFIG carries no such key,
+  // which makes the three seeded rows the negative control: absent must read as unchecked, and a row the admin never
+  // touches must save false rather than becoming visible on its own.
+  test('AMF-06 "Participant can view": on every row, unchecked when the saved config has no flag, checked on a new row, saved per row', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    const box = (r: Locator) => r.getByTestId('ca-form-participantview').locator('input');
+
+    // one box per row: the specialist row and the row whose delivery form doc is gone have it too
+    await expect(page.getByTestId('ca-form-participantview')).toHaveCount(3);
+    for (const i of [0, 1, 2]) {
+      await expect(box(rows.nth(i)), `row ${i}: no flag in the saved config → unchecked`).not.toBeChecked();
+    }
+
+    // a form added in the dialog starts visible
+    await page.getByTestId('ca-form-input').click();
+    await page.getByTestId('ca-form-input').fill(NAME.b);
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: NAME.b }).click();
+    const b = rows.filter({ hasText: NAME.b });
+    await expect(box(b), 'a row added in the dialog starts checked').toBeChecked();
+    await b.getByTestId('ca-form-participant').click();
+
+    // tick the specialist row, leave the two unnamed ones alone
+    await box(rows.filter({ hasText: NAME.a })).check();
+    await page.getByTestId('ca-on-submit-2').click();
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
+      { formid: F.a, filledby: 'specialist', participantview: true },
+      { formid: F.b, filledby: 'participant', participantview: true },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
+    ]);
+
+    // round trip: what the emulator holds is what the reopened dialog shows (A, B, then the unnamed ones)
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    await expect(rows).toHaveCount(4, { timeout: 20_000 });
+    await expect(box(rows.nth(0)), 'saved true comes back checked').toBeChecked();
+    await expect(box(rows.nth(1))).toBeChecked();
+    await expect(box(rows.nth(2))).not.toBeChecked();
+    await expect(box(rows.nth(3))).not.toBeChecked();
   });
 });

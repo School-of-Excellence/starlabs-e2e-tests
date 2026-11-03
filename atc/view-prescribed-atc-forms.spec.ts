@@ -84,10 +84,10 @@ async function fillAllWidgets(p: Page): Promise<number> {
   await arr.getByTestId('for-on-add-13').click();
   await item(1, W.aText).locator('input').fill(AW.item2);
   await card(p, W.text).locator('input').press('End');     // a last keyup → autosave runs with every value in
-  return Number((await card(p, W.slider).locator('.slider-value strong').innerText()).trim());
+  return (await card(p, W.slider).locator('.slider-value strong').innerText()).trim();
 }
 /** Every saved value, by field name, against what fillAllWidgets typed. */
-function expectAllAnswers(saved: any, sliderShown: number) {
+function expectAllAnswers(saved: any, sliderShown: string) {
   const f = (name: string) => saved.formarray.find((x: any) => x.fieldname === name);
   const day = (v: any) => { const d = v.toDate(); return [d.getFullYear(), d.getMonth() + 1, d.getDate()]; };
   expect.soft(f(W.video).options, 'video URL saved as the plain string from delivery forms').toEqual([MEDIA.video]);
@@ -95,20 +95,25 @@ function expectAllAnswers(saved: any, sliderShown: number) {
   expect.soft(f(W.text).value).toBe(AW.text);
   expect.soft(f(W.number).value, 'number inputs save the typed text (existing behaviour)').toBe('42');
   expect.soft(f(W.email).value).toBe('aw@example.com');
-  const t = f(W.time).value.toDate();
-  expect.soft([t.getHours(), t.getMinutes()], 'time').toEqual([10, 30]);
+  // a time answer is the "HH:mm" string both apps now read and write, not a Timestamp (operator, 2026-11-03)
+  expect.soft(f(W.time).value, 'time saved as "HH:mm", not a Timestamp').toBe('10:30');
   expect.soft(day(f(W.date).value), 'date').toEqual([2026, 1, 15]);
   expect.soft(f(W.dropdown).value).toBe('Drop B');
   expect.soft(f(W.multiselect).value).toEqual(['Multi A', 'Multi C']);
   expect.soft(f(W.paragraph).value).toBe(AW.paragraph);
   expect.soft(f(W.checkbox).value).toBe(true);
-  expect.soft(sliderShown, 'slider moved off its minimum').toBeGreaterThan(1);
-  expect.soft(f(W.slider).value).toBe(sliderShown);
+  const sl = f(W.slider);
+  expect.soft(sl.value, 'slider moved off its first option').toBeGreaterThan(0);
+  expect.soft(sl.options[sl.value], 'the saved index names the option the screen showed').toBe(sliderShown);
   expect.soft(f(W.multicheckbox).value).toEqual(['Box A', 'Box C']);
   const flip = f(W.multicheckbox).flippingquestion.value;
   expect.soft(Object.keys(flip).sort(), 'one flipping slider per ticked box').toEqual(['Box A', 'Box C']);
-  expect.soft(Number(flip['Box A']), 'flipping slider Box A').toBeGreaterThan(1);
-  expect.soft(Number(flip['Box C']), 'flipping slider Box C').toBeGreaterThan(1);
+  const flipOptions = f(W.multicheckbox).flippingquestion.options;
+  for (const box of ['Box A', 'Box C']) {
+    const index = Number(flip[box]);
+    expect.soft(index, `flipping ${box} moved off its first option`).toBeGreaterThan(0);
+    expect.soft(flipOptions[index], `flipping ${box} index names a real option`).toBeTruthy();
+  }
   expect.soft(f(W.radio).value).toBe('Yes');
   const items = f(W.array).value;
   expect(items).toHaveLength(2);
