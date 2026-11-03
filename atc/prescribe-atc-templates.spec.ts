@@ -502,6 +502,7 @@ test.describe('ATC — Prescribe ATC 2026-10-22: product check, Ask, panel (emul
       ['tnm', TPL_NEAR_MISS.starter],
       ['tnw', TPL_NEAR_MISS.bang],
     ];
+    await loginAsAtc(page, 'admin');     // the loop does its own goto, so log in once up front
     for (const [pf, model] of checks) {
       await page.goto('/prescribeATC');
       await pickParticipant(page, pf);

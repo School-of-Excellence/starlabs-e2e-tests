@@ -183,8 +183,8 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     };
     await expectRow(DF_NAME.clarity, 'Submitted', ['View answer', 'Edit answer']);          // specialist, answered → can resubmit
     await expectRow(DF_NAME.review, 'To fill', ['Fill form']);                               // specialist, no answer
-    await expectRow(DF_NAME.diet, 'Waiting for participant', ['Withdraw']);                  // request on V1, no answer
-    await expectRow(DF_NAME.life, 'Waiting for update', ['View answer', 'Withdraw']);        // request with answerid on V0 (earlier version)
+    await expectRow(DF_NAME.diet, 'Waiting for participant', ['Copy link', 'Withdraw']);     // request on V1, no answer
+    await expectRow(DF_NAME.life, 'Waiting for update', ['View answer', 'Copy link', 'Withdraw']);  // request with answerid on V0 (earlier version)
     await expectRow(DF_NAME.sleep, 'Submitted', ['View answer', 'Ask to update']);           // OTHER's request must not count here
     await expectRow(DF_NAME.oldSub, 'Submitted', ['View answer']);                           // soft-deleted but answered → View only (no Edit)
     // who filled it = the answer's profileid (plan 2026-11-02): the seeded specialist answers carry the admin's
@@ -275,7 +275,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     const resent = await waitFor(() => requestDoc(FATC.ACT, DF.sleep), 'Resend wrote the request');
     expect(resent.answerid, 'Resend points at the answer to edit').toBe(FANS.actSleep);
     await expect(sleep.getByTestId('vatc-form-status')).toHaveText('Waiting for update', { timeout: 15_000 });
-    await expect(sleep.locator('.form-actions button')).toHaveText(['View answer', 'Withdraw']);
+    await expect(sleep.locator('.form-actions button')).toHaveText(['View answer', 'Copy link', 'Withdraw']);
     await sleep.getByTestId('vatc-form-revoke').click();
     await waitFor(async () => !(await requestDoc(FATC.ACT, DF.sleep)), 'Revoke deleted the resend');
     await expect(sleep.getByTestId('vatc-form-status')).toHaveText('Submitted', { timeout: 15_000 });
@@ -537,7 +537,7 @@ test.describe('ATC — View Prescribed ATC forms (real UI, emulator only)', () =
     const all = await atcDb().collection('atc_form_requests').where('formid', '==', DF.sleep).where('profileid', '==', PF.tfb).get();
     expect(all.docs.map((d) => d.id)).toEqual([`${FATC.RV0}_${DF.sleep}`]);
     await expect(sleep.getByTestId('vatc-form-status')).toHaveText('Waiting for update', { timeout: 15_000 });
-    await expect(sleep.locator('.form-actions button')).toHaveText(['View answer', 'Withdraw']);
+    await expect(sleep.locator('.form-actions button')).toHaveText(['View answer', 'Copy link', 'Withdraw']);
 
     // a soft-deleted form already sent: no "no longer required", Revoke enabled; after Revoke → deleted note, Send off
     const old = formRow(r, DF_NAME.old);
