@@ -824,6 +824,73 @@ test.describe('Workshop dashboard — Sale Achieved card (live workshops)', () =
     await expect(byAmount).toHaveAttribute('aria-pressed', 'true');
     await expect(page.getByTestId('wdash-sale-tip'), 'WDC-15: no purchases hover card without buyers').toHaveCount(0);
   });
+
+  // WDC-16 (operator 2026-11-02): the panel's From–To purchase date range, bounded by the Sale Achieved
+  // window, and the "Total value" of the buyers listed. Anti-circular: the expected bounds are computed
+  // here from the SEEDED W_DASH dates (registration start .. workshop end + one calendar month), never
+  // read back from the app. No Watson in this build, so no buyers: the total reads ₹0 and the range
+  // narrowing itself is unit-tested in the app (watson-purchases.spec.ts, saleBuyersInRange).
+  test('WDC-16 Sale Achieved panel has a From–To date range bounded by the window, a clear, and a Total value', async ({ page }) => {
+    const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const ws: any = await getDoc('workshopconfiguration', wsIds.W_DASH);
+    const regStart: Date | undefined = ws?.detailpage?.registrationStartDate?.toDate?.();
+    const wsEnd: Date | undefined = ws?.detailpage?.workshopEndDate?.toDate?.();
+    expect(regStart && wsEnd, 'WDC-16 precondition: W_DASH is seeded with registration start and workshop end').toBeTruthy();
+    const lastDayNextMonth = new Date(wsEnd!.getFullYear(), wsEnd!.getMonth() + 2, 0).getDate();
+    const winMin = ymd(regStart!);
+    const winMax = ymd(new Date(wsEnd!.getFullYear(), wsEnd!.getMonth() + 1, Math.min(wsEnd!.getDate(), lastDayNextMonth)));
+    const inside = ymd(new Date(regStart!.getFullYear(), regStart!.getMonth(), regStart!.getDate() + 2));
+    const toPick = ymd(new Date(regStart!.getFullYear(), regStart!.getMonth(), regStart!.getDate() + 3));   // after From, before the window end
+
+    await setDashWorkshopType('liveworkshop');
+    await openDashboard(page);
+    const card = page.getByTestId('wdash-sale-card');
+    await expect(card, 'WDC-16: a live workshop shows Sale Achieved').toBeVisible({ timeout: 45_000 });
+    // [NEGATIVE CONTROL] the range belongs to the Sale Achieved panel only — nothing before it opens.
+    await expect(page.getByTestId('wdash-sale-from'), 'WDC-16: no range before the panel opens').toHaveCount(0);
+    await card.click();
+    const panel = page.locator('.participant-panel.panel-visible');
+    await expect(panel.locator('h3').first()).toHaveText('Sale Achieved', { timeout: 15_000 });
+
+    const from = page.getByTestId('wdash-sale-from');
+    const to = page.getByTestId('wdash-sale-to');
+    const clear = page.getByTestId('wdash-sale-range-clear');
+    const total = page.getByTestId('wdash-sale-panel-total');
+    await expect(from, 'WDC-16: From starts blank (the whole window)').toHaveValue('');
+    await expect(to, 'WDC-16: To starts blank').toHaveValue('');
+    await expect(clear, 'WDC-16: nothing to clear yet').toHaveCount(0);
+    await expect(from, 'WDC-16: From cannot go before registration start').toHaveAttribute('min', winMin);
+    await expect(to, 'WDC-16: To cannot go past one month after the workshop end').toHaveAttribute('max', winMax);
+    await expect(from, 'WDC-16: with no To, From is capped at the window end').toHaveAttribute('max', winMax);
+    await expect(total, 'WDC-16: no Watson -> no buyers -> Total value ₹0').toHaveText('₹0');
+
+    // Pick From: To can no longer go before it, and the clear appears.
+    await from.fill(inside);
+    await expect(from).toHaveValue(inside);
+    await expect(to, 'WDC-16: To is floored at the picked From').toHaveAttribute('min', inside);
+    await expect(clear, 'WDC-16: a picked date can be cleared').toHaveCount(1);
+    // Pick To: From can no longer go after it.
+    await to.fill(toPick);
+    await expect(to).toHaveValue(toPick);
+    await expect(from, 'WDC-16: From is capped at the picked To, not the window end').toHaveAttribute('max', toPick);
+    await expect(to, 'WDC-16: To stays capped at the window end').toHaveAttribute('max', winMax);
+    await expect(panel.locator('h4').filter({ hasText: 'Buyers' }), 'WDC-16: the list follows the range').toHaveText('Buyers (0)');
+    await expect(total, 'WDC-16: the total follows the list').toHaveText('₹0');
+
+    await clear.click();
+    await expect(from, 'WDC-16: clear empties From').toHaveValue('');
+    await expect(to, 'WDC-16: clear empties To').toHaveValue('');
+    await expect(clear, 'WDC-16: the clear hides once nothing is picked').toHaveCount(0);
+    await expect(to, 'WDC-16: To is floored at the window start again').toHaveAttribute('min', winMin);
+
+    // Re-opening from the card starts on the whole window again.
+    await from.fill(inside);
+    await expect(clear).toHaveCount(1);
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await card.click();
+    await expect(panel.locator('h3').first()).toHaveText('Sale Achieved', { timeout: 15_000 });
+    await expect(from, 'WDC-16: the card opens the panel with no range').toHaveValue('');
+  });
 });
 
 // =============================================================================================

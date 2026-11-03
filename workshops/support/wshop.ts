@@ -1892,3 +1892,192 @@ export async function clearHotLeads(): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all(wsHotLeadLogIds.map(id => db.collection('content analytics').doc(id).delete()));
 }
+
+// =================================================================================================
+// 2026-11-02 — Engagement dashboard v2 (/engagementdashboardv2): content engagement, month by month.
+// =================================================================================================
+
+/**
+ * A small world under two run-scoped journeys, so every journey row the spec asserts is its own:
+ *   activeEngaged    active,     activejourney ALPHA,                             viewed THIS month from
+ *                    'EiflixWorkshop' (5400 s) AND 'eiflixcontent' (1800 s) — 2h over two sources
+ *   nonActiveLast    non active, no activejourney, lastcompletedjourney ALPHA,     viewed THIS month from
+ *                    'eiflixworkshop' (600 s) — the same source as Asha's, spelt in lower case
+ *   activeLastMonth  active,     activejourney ALPHA,                             viewed LAST month only
+ *   expired          'expired',  activejourney ALPHA,                             viewed THIS month — NOT in the dashboard
+ *   activeBeta       active,     activejourney BETA,                              never viewed
+ *   farahFlip        non active, lastcompletedjourney GAMMA, completed journey ran 9 months ago .. the 15th of
+ *                    LAST month -> Non active now, but ACTIVE last month (past months use the dates)
+ *   gitaUndated      active,     activejourney GAMMA, no subscription dates -> counted now, left out of
+ *                    last month
+ * plus a view THIS month by a profile with no metadata at all (must be ignored).
+ * FREE USERS (`new_user_data`, doc id = profileid, 2026-11-03):
+ *   hari   signed up 2 months ago, viewed THIS month (900 s, eiflixcontent on eiflixapp) -> engaged free user
+ *   ivy    signed up on the 1st of THIS month, never viewed -> free now, not yet a user last month
+ *   jai    movedtoexist: true, viewed THIS month -> never a free user (negative control)
+ *   Asha   ALSO has a new_user_data doc (not moved) -> still counted once, as paid (negative control)
+ * Subscription dates (2026-11-03): Asha 2 months ago .. +10 months; Bala's completed journey ended on the 10th
+ * two months ago (Non active last month); Chitra 3 months ago .. +9; Esha started on the 1st of THIS month
+ * (not a customer last month -> BETA has no row last month).
+ * Expected ALPHA this month: 3 people, 2 engaged, 1 not engaged, 67%. Last month: 1 engaged (Chitra).
+ * From = eiflixcontent only: ALPHA 3 / 1 engaged (Asha) / 2 not engaged / 33%.
+ * Platforms: Asha's workshop view is on 'EiflixApp', her content view on 'eiflixweb'; everyone else is on
+ * 'eiflixapp'. Platform = eiflixweb only: ALPHA 3 / 1 (Asha) / 2 / 33%. From eiflixworkshop AND platform
+ * eiflixweb: no single view matches both -> ALPHA 3 / 0 / 3 / 0%.
+ */
+export const wsEd2 = {
+  JOURNEY_ALPHA: `${RUN}_J_ed2_alpha`,
+  JOURNEY_BETA: `${RUN}_J_ed2_beta`,
+  JOURNEY_GAMMA: `${RUN}_J_ed2_gamma`,
+  ALPHA_NAME: `ED2 Alpha ${RUN}`,
+  BETA_NAME: `ED2 Beta ${RUN}`,
+  GAMMA_NAME: `ED2 Gamma ${RUN}`,
+  people: {
+    activeEngaged: { id: `${RUN}_ed2_asha`, name: `ED2 Asha ${RUN}`, email: `ed2.asha.${RUN}@example.test` },
+    nonActiveLast: { id: `${RUN}_ed2_bala`, name: `ED2 Bala ${RUN}`, email: `ed2.bala.${RUN}@example.test` },
+    activeLastMonth: { id: `${RUN}_ed2_chitra`, name: `ED2 Chitra ${RUN}`, email: `ed2.chitra.${RUN}@example.test` },
+    expired: { id: `${RUN}_ed2_dev`, name: `ED2 Dev ${RUN}`, email: `ed2.dev.${RUN}@example.test` },
+    activeBeta: { id: `${RUN}_ed2_esha`, name: `ED2 Esha ${RUN}`, email: `ed2.esha.${RUN}@example.test` },
+    farahFlip: { id: `${RUN}_ed2_farah`, name: `ED2 Farah ${RUN}`, email: `ed2.farah.${RUN}@example.test` },
+    gitaUndated: { id: `${RUN}_ed2_gita`, name: `ED2 Gita ${RUN}`, email: `ed2.gita.${RUN}@example.test` },
+  },
+  STRAY: `${RUN}_ed2_stray`,
+  free: {
+    hari: { id: `${RUN}_ed2_hari`, name: `ED2 Hari ${RUN}`, email: `ed2.hari.${RUN}@example.test` },
+    ivy: { id: `${RUN}_ed2_ivy`, name: `ED2 Ivy ${RUN}`, email: `ed2.ivy.${RUN}@example.test` },
+    jai: { id: `${RUN}_ed2_jai`, name: `ED2 Jai ${RUN}`, email: `ed2.jai.${RUN}@example.test` },
+  },
+  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`,
+    `${RUN}_ed2_log_hari`, `${RUN}_ed2_log_jai`],
+  ASHA_SECONDS: 7200,
+};
+
+/** PRECONDITION writes only: two journeys, five metadata docs, five content views. */
+export async function seedEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = new Date();
+  const thisMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth(), 1, 10, 0, 0));
+  const lastMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth() - 1, 15, 10, 0, 0));
+  const P = wsEd2.people;
+  // A local date `months` from this month, on `day`, 10:00.
+  const at = (months: number, day: number) => T.fromDate(new Date(now.getFullYear(), now.getMonth() + months, day, 10, 0, 0));
+  const meta = (p: { id: string; name: string; email: string }, customerstatus: string, activejourney: string | null,
+    lastcompletedjourney: string | null, dates: Record<string, any> = {}) =>
+    db.collection('participant metadata').doc(p.id).set({
+      profileid: p.id, name: p.name, email: p.email, countrycode: '+91', phonenumber: '9000000000',
+      customerstatus, activejourney, lastcompletedjourney, ...dates, ...tag,
+    });
+  const view = (id: string, profileid: string, logdate: any, totaltimespend: number, from: string, platform_name: string) =>
+    db.collection('content analytics').doc(id).set({
+      docid: id, profileid, logdate, totaltimespend, from, platform_name, type: 'eiflixcontent',
+      videoid: `${RUN}_vid_ed2`, videoname: `TEST_VID_ED2_${RUN}`, ...tag,
+    });
+  const [lAsha, lBala, lChitra, lDev, lStray, lAsha2, lHari, lJai] = wsEd2.LOGS;
+  const F = wsEd2.free;
+  const nud = (p: { id: string; name: string; email: string }, created: any, extra: Record<string, any> = {}) =>
+    db.collection('new_user_data').doc(p.id).set({
+      name: p.name, email: p.email, countryCode: '+91', phonenumber: '9000000001', created, ...extra, ...tag,
+    });
+  await Promise.all([
+    db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
+    db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
+    db.collection('journey').doc(wsEd2.JOURNEY_GAMMA).set({ id: wsEd2.JOURNEY_GAMMA, journey: wsEd2.GAMMA_NAME, ...tag }),
+    meta(P.activeEngaged, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-2, 1), subscriptionend: at(10, 1) }),
+    meta(P.nonActiveLast, 'non active', null, wsEd2.JOURNEY_ALPHA, { lastsubscriptionstart: at(-8, 1), lastsubscriptionend: at(-2, 10) }),
+    meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null, { subscriptionstart: at(0, 1), subscriptionend: at(12, 1) }),
+    meta(P.farahFlip, 'non active', null, wsEd2.JOURNEY_GAMMA, { lastsubscriptionstart: at(-9, 1), lastsubscriptionend: at(-1, 15) }),
+    meta(P.gitaUndated, 'active', wsEd2.JOURNEY_GAMMA, null),
+    view(lAsha, P.activeEngaged.id, thisMonth, 5400, 'EiflixWorkshop', 'EiflixApp'),
+    view(lAsha2, P.activeEngaged.id, thisMonth, 1800, 'eiflixcontent', 'eiflixweb'),
+    view(lBala, P.nonActiveLast.id, thisMonth, 600, 'eiflixworkshop', 'eiflixapp'),
+    view(lChitra, P.activeLastMonth.id, lastMonth, 1200, 'eiflixcontent', 'eiflixapp'),
+    view(lDev, P.expired.id, thisMonth, 900, 'EiflixWorkshop', 'eiflixapp'),
+    view(lStray, wsEd2.STRAY, thisMonth, 300, 'eiflixcontent', 'eiflixweb'),
+    nud(F.hari, at(-2, 1)),
+    nud(F.ivy, at(0, 1)),
+    nud(F.jai, at(-2, 1), { movedtoexist: true }),
+    nud(P.activeEngaged, at(-2, 1)),
+    view(lHari, F.hari.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
+    view(lJai, F.jai.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
+  ]);
+}
+
+/** Undo seedEd2World, by id. */
+export async function clearEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all([
+    ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA, wsEd2.JOURNEY_GAMMA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
+    ...Object.values(wsEd2.people).map(p => db.collection('participant metadata').doc(p.id).delete().catch(() => undefined)),
+    ...[...Object.values(wsEd2.free), wsEd2.people.activeEngaged].map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)),
+    ...wsEd2.LOGS.map(id => db.collection('content analytics').doc(id).delete().catch(() => undefined)),
+  ]);
+}
+
+/**
+ * INDEPENDENT oracle for the headline cards, straight from Firestore: everyone in `participant metadata`
+ * with customerstatus 'active' / 'non active' (optionally one of them), once per profile, and how many of
+ * them have a `content analytics` view dated inside the LOCAL calendar month of `when` — optionally only
+ * views whose `from` (and `platform_name`), trimmed and lower-cased, is one of `froms` (and `platforms`).
+ * For a PAST month the status comes from each person's one subscription period (subscriptionstart/end,
+ * else lastsubscriptionstart/end): ran on a day of the month = active, ended before it = non active, began
+ * after it = not yet (left out), no dates = undated (left out). The current month uses customerstatus.
+ * Free users: `new_user_data` docs with movedtoexist not true whose id is not in the paid population; in a
+ * past month one whose `created` is after the month is not yet a user (left out, counted in notYet).
+ * Its own code path — the spec never reads the app's numbers back into its expectation.
+ */
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active' | 'free', froms: string[] = [], platforms: string[] = []):
+  Promise<{ total: number; engaged: number; active: number; nonActive: number; free: number; notYet: number; undated: number }> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const start = new Date(when.getFullYear(), when.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(when.getFullYear(), when.getMonth() + 1, 0, 23, 59, 59, 999);
+  const [metas, views, nuds] = await Promise.all([
+    db.collection('participant metadata').where('customerstatus', 'in', ['active', 'non active']).get(),
+    // Up to the last nanosecond of the month's final second — logdate is stored to the microsecond.
+    db.collection('content analytics').where('logdate', '>=', T.fromDate(start))
+      .where('logdate', '<=', new T(Math.floor(end.getTime() / 1000), 999_999_999)).get(),
+    db.collection('new_user_data').get(),
+  ]);
+  const fromOk = (d: any) => !froms.length || froms.includes(String(d.get('from') ?? '').trim().toLowerCase());
+  const platformOk = (d: any) => !platforms.length || platforms.includes(String(d.get('platform_name') ?? '').trim().toLowerCase());
+  const viewed = new Set(views.docs.filter(d => fromOk(d) && platformOk(d)).map(d => String(d.get('profileid') ?? '')));
+  const today = new Date();
+  const past = when.getFullYear() * 12 + when.getMonth() < today.getFullYear() * 12 + today.getMonth();
+  const asDate = (v: any): Date | null => (v && typeof v.toDate === 'function' ? v.toDate() : null);
+  const placed = (d: any): string => {
+    if (!past) return String(d.get('customerstatus'));
+    const s = asDate(d.get('subscriptionstart')), e = asDate(d.get('subscriptionend'));
+    const from = s || e ? s : asDate(d.get('lastsubscriptionstart'));
+    const to = s || e ? e : asDate(d.get('lastsubscriptionend'));
+    if (to && to.getTime() < start.getTime()) return 'non active';
+    if (from && from.getTime() > end.getTime()) return 'notyet';
+    return from && to ? 'active' : 'undated';
+  };
+  const byProfile = new Map<string, string>();
+  metas.docs.forEach(d => {
+    const pid = String(d.get('profileid') ?? d.id);
+    if (!byProfile.has(pid)) byProfile.set(pid, placed(d));
+  });
+  nuds.docs.forEach(d => {
+    if (d.get('movedtoexist') === true || byProfile.has(d.id)) return;
+    const created = asDate(d.get('created'));
+    byProfile.set(d.id, past && created && created.getTime() > end.getTime() ? 'notyet' : 'free');
+  });
+  let total = 0, engaged = 0, active = 0, nonActive = 0, free = 0, notYet = 0, undated = 0;
+  byProfile.forEach((s, pid) => {
+    if (s === 'notyet') { notYet++; return; }
+    if (s === 'undated') { undated++; return; }
+    if (s === 'active') active++; else if (s === 'free') free++; else nonActive++;
+    if (status !== 'all' && s !== status) return;
+    total++;
+    if (viewed.has(pid)) engaged++;
+  });
+  return { total, engaged, active, nonActive, free, notYet, undated };
+}
