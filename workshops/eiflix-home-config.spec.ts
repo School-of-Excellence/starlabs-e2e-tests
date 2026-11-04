@@ -15,6 +15,7 @@ import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetHomeWidgetAds,
   wsUpcomingCostTitle, cleanUpcomingCostWidget,
   wsHomeSeriesTitle, wsHomeSeriesFields, wsHomeSeriesEpisodeTitle, cleanHomeSeriesFieldsDoc,
+  wsHomeSeriesLink, seedHomeSeriesLinkDoc, cleanHomeSeriesLinkDoc,
   wsAudienceNames, eiflixHomeConfig, resetEiflixHomeConfig,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -364,5 +365,66 @@ test.describe('Workshops — eiflix home config (real UI, anti-circular)', () =>
       .toEqual([]);
 
     await resetEiflixHomeConfig();
+  });
+  // ===========================================================================================
+  // WS-74 — Edit Home Series: each episode card copies its EiFlix player link
+  // ===========================================================================================
+  // Added 2026-11-04. Link = https://eiflix.com/eiflix/play/<eiflixhomeseries id>/<episode id>.
+  //
+  // Anti-circularity: the seed writes ids only — no link anywhere. The clipboard stub just records
+  // what the app hands it, so the asserted URL can only come from the app joining the two ids.
+  // Negative controls: a row with no episode gets no button, and the Add dialog (no series id yet)
+  // shows none even with an episode picked.
+  test('WS-74 Edit Home Series copies each episode\'s EiFlix play link', async ({ page }) => {
+    await seedHomeSeriesLinkDoc();
+    await page.addInitScript(() => {
+      const copied: string[] = [];
+      (window as any).__copied = copied;
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: (t: string) => { copied.push(t); return Promise.resolve(); } },
+      });
+    });
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixhomeconfig', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('tab', { name: 'Home Series' }).click();
+
+    // [NEGATIVE] Add mode: an episode picked, but the series has no id yet → no link to copy.
+    await page.getByTestId('upc-open-home-series-dialog-8').click();
+    const addDialog = page.getByRole('dialog');
+    await expect(addDialog, 'WS-74: the Add Home Series dialog must open').toBeVisible({ timeout: 30_000 });
+    await addDialog.locator('mat-select[formcontrolname="selectedEpisodes"]').click();
+    await page.getByRole('option', { name: wsHomeSeriesEpisodeTitle }).click();
+    await page.keyboard.press('Escape');
+    await expect(addDialog.locator('.episode-card'), 'WS-74: the picked episode shows as a card').toHaveCount(1);
+    await expect(addDialog.getByTestId('hom-copy-link'), 'WS-74: an unsaved series offers no link')
+      .toHaveCount(0);
+    await addDialog.getByTestId('hom-cancel-4').click();
+    await expect(addDialog, 'WS-74: the Add dialog closes').toBeHidden({ timeout: 30_000 });
+
+    // Edit the seeded series.
+    const row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: wsHomeSeriesLink.title });
+    await expect(row, 'WS-74: the seeded series is listed').toHaveCount(1, { timeout: 30_000 });
+    await row.getByTestId('upc-open-home-series-dialog-9').click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('heading', { name: 'Edit Home Series' })).toBeVisible({ timeout: 30_000 });
+
+    // [NEGATIVE] two cards, but only the one with an episode gets a link.
+    await expect(dialog.locator('.episode-card'), 'WS-74: both stored rows render').toHaveCount(2);
+    const copy = dialog.getByTestId('hom-copy-link');
+    await expect(copy, 'WS-74: only the row with an episode can be copied').toHaveCount(1);
+    await expect(dialog.locator('.episode-card').first().getByTestId('hom-copy-link'),
+      'WS-74: the copy button sits on the episode row').toBeVisible();
+
+    await copy.click();
+    await expect(page.getByText('Link copied.'), 'WS-74: the app confirms the copy').toBeVisible();
+
+    // [ASSERT] exactly the agreed URL: series doc id, then the episode doc id.
+    await expect.poll(() => page.evaluate(() => (window as any).__copied as string[]),
+      { message: 'WS-74: the clipboard got the EiFlix play link' })
+      .toEqual([`https://eiflix.com/eiflix/play/${wsHomeSeriesLink.id}/${wsAddIds.EP_HS}`]);
+
+    await cleanHomeSeriesLinkDoc();
   });
 });

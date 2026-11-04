@@ -702,6 +702,38 @@ export async function cleanHomeSeriesFieldsDoc(): Promise<void> {
 }
 
 // =================================================================================================
+// 2026-11-04 — per-episode "Copy link" on the Edit Home Series dialog.
+// =================================================================================================
+
+/** A SAVED series (so it has an id) with one real episode and one row that points at none. */
+export const wsHomeSeriesLink = {
+  id: `${RUN}_hs_link`,
+  title: `WS HS Link ${RUN}`,
+};
+
+/**
+ * Seed the WS-74 series: row 1 references the seeded episode, row 2 has no episode at all (the
+ * negative control — it must get no link). PRECONDITION write only.
+ */
+export async function seedHomeSeriesLinkDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('eiflixhomeseries').doc(wsHomeSeriesLink.id).set({
+    docid: wsHomeSeriesLink.id, title: wsHomeSeriesLink.title, created: admin.firestore.Timestamp.now(),
+    homeseries: [
+      { title: 'Linked', footer: '', headtag: '', subtitle: '', episoderef: db.doc(`episodes/${wsAddIds.EP_HS}`) },
+      { title: 'No episode', footer: '', headtag: '', subtitle: '' },
+    ],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function cleanHomeSeriesLinkDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('eiflixhomeseries').doc(wsHomeSeriesLink.id).delete().catch(() => { });
+}
+
+// =================================================================================================
 // 2026-09-29 — audience (Journey OR Tier) on a Create / Assign EiFlix Home row.
 // =================================================================================================
 
