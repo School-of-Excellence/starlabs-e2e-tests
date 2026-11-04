@@ -2081,3 +2081,45 @@ export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non acti
   });
   return { total, engaged, active, nonActive, free, notYet, undated };
 }
+
+// =================================================================================================
+// 2026-11-04 — /newusersprofile "Referred by": a referrer can be a NEW USER (new_user_data), not only a
+// participant. Four referred users, each pointing at a different kind of referrer (PRECONDITION writes only):
+//   byNew      refferedprofile = NU_A's id            (new_user_data only)    -> NU_A's name
+//   byNewRef   refferedprofile = DocumentReference to new_user_data/NU_B       -> NU_B's name
+//   byMeta     refferedprofile = p0                   (participant metadata)   -> p0's metadata name (wins)
+//   byUnknown  refferedprofile = an id nobody has                              -> the id itself
+// Created "now" so they are the newest rows (top of the table).
+// =================================================================================================
+export const wsReferred = {
+  byNew: { id: `${RUN}_nu_ref_new`, name: `Ref By New ${RUN}` },
+  byNewRef: { id: `${RUN}_nu_ref_newref`, name: `Ref By NewRef ${RUN}` },
+  byMeta: { id: `${RUN}_nu_ref_meta`, name: `Ref By Meta ${RUN}` },
+  byUnknown: { id: `${RUN}_nu_ref_unknown`, name: `Ref By Unknown ${RUN}` },
+  UNKNOWN_REFERRER: `${RUN}_nobody_refers`,
+};
+
+export async function seedReferredNewUsers(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const now = admin.firestore.Timestamp.now();
+  const tag = { testrunid: RUN, _testdata: true };
+  const put = (p: { id: string; name: string }, refferedprofile: any) => db.collection('new_user_data').doc(p.id).set({
+    docid: p.id, name: p.name, email: `${p.id}@example.com`, phonenumber: '9999900009', countryCode: '+91',
+    enable: true, created: now, tags: [], refferedby: 'E2EREF', refferedprofile, ...tag,
+  });
+  const R = wsReferred;
+  await Promise.all([
+    put(R.byNew, wsAddIds.NU_A),
+    put(R.byNewRef, db.collection('new_user_data').doc(wsAddIds.NU_B)),
+    put(R.byMeta, wsProfileIds.p0),
+    put(R.byUnknown, R.UNKNOWN_REFERRER),
+  ]);
+}
+
+export async function clearReferredNewUsers(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all([wsReferred.byNew, wsReferred.byNewRef, wsReferred.byMeta, wsReferred.byUnknown]
+    .map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)));
+}
