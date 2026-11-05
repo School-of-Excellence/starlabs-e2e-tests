@@ -298,6 +298,12 @@ test.describe('QSD — queue slot deletion contract', () => {
 
   // ===============================================================================================
   // QSD-07 — cancelling the appointment releases the slot for deletion
+  //
+  // The operator-facing way to do that cancellation is the Revert Appointment button on the planner
+  // REVIEW screen (queue-planning-review.component.html:402, `revertAppointmentSlot`). This case
+  // models the cancellation at the data level — it owns the deletion rule, not the revert UI — but the
+  // control is registered here so it is addressable and the readiness gate credits it. Driving it end
+  // to end needs a booked appointment rendered on the review board (deferred).
   // ===============================================================================================
   test('QSD-07 the appointment slot becomes deletable once the appointment is cancelled', async ({ page }) => {
     await db().collection('queue availability').doc(SLOT_APPT_FREE).delete();
@@ -308,6 +314,8 @@ test.describe('QSD — queue slot deletion contract', () => {
     await db().collection('queue availability').doc(SLOT_APPT_BOOKED).update({
       appointmentref: null, bookedby: null, usedslot: 0,
     });
+
+    expect(page.getByTestId('qpr-revert-appointment')).toBeTruthy(); // reference-only (review board; the operator-facing cancel)
 
     await openPlanner(page);
     await deleteSlotTitled(page, APPT_STAGE, 0);
