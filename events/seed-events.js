@@ -249,7 +249,7 @@ async function seedEvents() {
   const mkEpr = (id, pf) => ({
     docid: id, profileid: PF[pf], eventref: eventRef, productref: productRef(ID.P1),
     arenaeventid: ID.ARENAEVT1, participantproductid: null, status: 'approved',
-    initiatedfrom: 'web', ...tag,
+    initiatedfrom: 'web', doccreateddate: T.now(), ...tag,
   });
   await eprRef(ID.EPR0).set(mkEpr(ID.EPR0, 'p0'));
   await eprRef(ID.EPR1).set(mkEpr(ID.EPR1, 'p1'));
@@ -375,7 +375,7 @@ async function seedEvents() {
     });
     await db.collection('event participation request').doc(`${TESTRUNID}_epr_bk_${k.toLowerCase()}`).set({
       profileid: pf, arenaeventid: ID.BK_ARENA, eventref: db.collection('event collection').doc(ID.BK_EVENT),
-      productref: productRef(ID.BK_PRODUCT), status: st, ...tag,
+      productref: productRef(ID.BK_PRODUCT), status: st, doccreateddate: T.now(), ...tag,
     });
     if (owns) {
       await db.collection('participantsproduct').doc(`${TESTRUNID}_pp_bk_${k.toLowerCase()}`).set({
@@ -424,7 +424,7 @@ async function seedEvents() {
   await eprRef(ID.EPR2).set({
     docid: ID.EPR2, profileid: PF.p2, eventref: eventRef, productref: productRef(ID.P1),
     arenaeventid: ID.ARENAEVT1, participantproductid: null, status: 'requested',
-    initiatedfrom: 'web', ...tag,
+    initiatedfrom: 'web', doccreateddate: T.now(), ...tag,
   });
 
   // 9d-iv) LED3-02 precondition — p7 is registered (approved EPR) AND carries an ACTIVE arena e-ticket
@@ -436,7 +436,7 @@ async function seedEvents() {
   await eprRef(ID.EPR7).set({
     docid: ID.EPR7, profileid: PF.p7, eventref: eventRef, productref: productRef(ID.P1),
     arenaeventid: null, participantproductid: null, status: 'approved',
-    initiatedfrom: 'web', ...tag,
+    initiatedfrom: 'web', doccreateddate: T.now(), ...tag,
   });
   await db.collection('arena e-ticket').doc(ID.ETICKET_P7).set({
     docid: ID.ETICKET_P7, profileid: PF.p7, eventref: eventRef,

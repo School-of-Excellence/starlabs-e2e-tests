@@ -29,3 +29,14 @@ executed locally — the gate is the first real run.
 
 ## Landing order
 App change (charan-release) first, then this branch.
+
+## Seed + spec update to Surya's design (same day)
+First local emulator run: 41 passed, 4 failed. Three were the rewrite:
+- The funnel now queries EPRs with `orderBy('doccreateddate')`; Firestore drops docs missing an orderBy
+  field, and the seeded EPRs had none → funnel Requested/Approved/Addon all 0 while the overview (no orderBy)
+  counted them. Every real writer (web funnel, Flutter eventPlanning / viewupcomingopportunities /
+  mastercalendar) sets `doccreateddate`, so the seed was the outlier: added `doccreateddate: T.now()` to all
+  four seeded EPR writes. Risk for prod: any real EPR without the field silently vanishes from the funnel.
+- The funnel tab is per EVENT now (label = event name + date range) → EPC-01/EPC-02 locate it by event name.
+The fourth (EVT-08 QR duplicate scan) passed on the rerun with no change — flaky, qr-scanner untouched.
+Rerun: 45 passed, 2 skipped, 0 failed (emulator lane, local; Firestore on 8085 because a simulator app held 8080).
