@@ -40,3 +40,10 @@ First local emulator run: 41 passed, 4 failed. Three were the rewrite:
 - The funnel tab is per EVENT now (label = event name + date range) → EPC-01/EPC-02 locate it by event name.
 The fourth (EVT-08 QR duplicate scan) passed on the rerun with no change — flaky, qr-scanner untouched.
 Rerun: 45 passed, 2 skipped, 0 failed (emulator lane, local; Firestore on 8085 because a simulator app held 8080).
+
+## 73 more hooks registered (after the first push)
+The console's rollout gate also flagged 73 interactive elements in Surya's markup with no `data-testid`
+(update-event-detail 8, event-participation-confirmations 4, product-funnel 61). The app now hooks all of
+them (starlabs-angular `36b62f1c`); this branch registers them literally in events-controls-addressable —
+`ued-req-*` in the create_event/editor case, the `epc-*`/`pf-*` ones in the event-participation-confirmation
+case. Addressable only (popups/dialogs are not opened). Local emulator run: 45 passed, 2 skipped, 0 failed.
