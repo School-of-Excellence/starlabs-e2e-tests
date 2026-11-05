@@ -98,8 +98,10 @@ async function seedPreconditions(): Promise<void> {
   await d.collection('queue availability').doc(ANCHOR_SLOT).set({
     docid: ANCHOR_SLOT, queueid: QUEUE_DOCID, stagename: QUEUE_STAGE,
     variationid: VARIATION, segmentid: SEGMENT, slottype: 'queue', title: 'QPA anchor',
-    startdate: admin.firestore.Timestamp.fromDate(at(6, 9)),
-    enddate: admin.firestore.Timestamp.fromDate(at(6, 17)),
+    // Day 3 on purpose: slot-deletion.spec.ts addresses its cards by date label, and both suites'
+    // rows render on the same planner. Every seeded slot across the two must start on a distinct day.
+    startdate: admin.firestore.Timestamp.fromDate(at(3, 9)),
+    enddate: admin.firestore.Timestamp.fromDate(at(3, 17)),
     maxslot: 4, usedslot: 0, ...TAG,
   });
 

@@ -174,18 +174,30 @@ async function openPlanner(page: Page): Promise<void> {
   await expect(page.getByRole('button', { name: '+ Add New Slot' }).first()).toBeVisible({ timeout: 60_000 });
 }
 
+/** The card's own date label, e.g. "09 Nov 2026" (`date:'dd MMM yyyy'` in the template). */
+function dayLabel(d: Date): string {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`;
+}
+
 /**
- * Clicks the bin on the slot card whose title matches, accepting the confirm and collecting any
- * alert text (the refusal is an alert). Returns everything the app said.
+ * Clicks the bin on the slot card that STARTS on the given day, accepting the confirm and collecting
+ * any alert text (the refusal is an alert). Returns everything the app said.
+ *
+ * Addressed by DATE, not by position. The planner pushes cards in whatever order the
+ * `queue availability` query returns, so an nth index is not stable — and that cost a real false
+ * result: when nth(0) landed on the unbooked slot, QSD-02 deleted THAT one, the booked slot survived
+ * untouched, and "a booked slot must not be deleted" passed for entirely the wrong reason. Every slot
+ * this suite seeds starts on a distinct day, which makes the date label unique.
  */
-async function deleteSlotTitled(page: Page, stage: string, nth: number): Promise<string[]> {
+async function deleteSlotStartingOn(page: Page, start: Date): Promise<string[]> {
   const said: string[] = [];
   const onDialog = async (dialog: any) => { said.push(`${dialog.type()}: ${dialog.message()}`); await dialog.accept(); };
   page.on('dialog', onDialog);
 
-  const bin = page.getByTestId(new RegExp(`^qp-slotdel-.*-${stage}-${nth}$`)).first();
-  await expect(bin).toBeVisible({ timeout: 30_000 });
-  await bin.click();
+  const card = page.locator('.date-entry').filter({ hasText: dayLabel(start) });
+  await expect(card).toHaveCount(1, { timeout: 30_000 });
+  await card.locator('mat-icon.btn-delete').click();
   await page.waitForTimeout(3_000);
 
   page.off('dialog', onDialog);
@@ -215,7 +227,7 @@ test.describe('QSD — queue slot deletion contract', () => {
 
     await openPlanner(page);
     // Two queue-stage slots exist; the free one is the later window, rendered second.
-    const said = await deleteSlotTitled(page, QUEUE_STAGE, 1);
+    const said = await deleteSlotStartingOn(page, at(6, 9));    // the unbooked queue slot
 
     expect(said.join(' ')).toContain('Are you sure');
     await pollUntil(() => slotExists(SLOT_FREE), gone => gone === false, { timeoutMs: 20_000, label: 'free queue slot removed' });
@@ -231,7 +243,7 @@ test.describe('QSD — queue slot deletion contract', () => {
     expect(await bookingExists(), 'the precondition must leave a booking in place').toBe(true);
 
     await openPlanner(page);
-    const said = await deleteSlotTitled(page, QUEUE_STAGE, 0);
+    const said = await deleteSlotStartingOn(page, SLOT_START);  // the booked queue slot
 
     expect(await slotExists(SLOT_BOOKED), 'a booked slot must not be deleted').toBe(true);
     expect(said.join(' ').toLowerCase(), 'the refusal must name the reason')
@@ -245,7 +257,7 @@ test.describe('QSD — queue slot deletion contract', () => {
   // ===============================================================================================
   test('QSD-03 a refused delete leaves the booking intact', async ({ page }) => {
     await openPlanner(page);
-    await deleteSlotTitled(page, QUEUE_STAGE, 0);
+    await deleteSlotStartingOn(page, SLOT_START);  // the booked queue slot
 
     expect(await slotExists(SLOT_BOOKED), 'the slot must survive').toBe(true);
     expect(await bookingExists(), 'the booking must survive').toBe(true);
@@ -263,7 +275,7 @@ test.describe('QSD — queue slot deletion contract', () => {
     expect(await bookingExists()).toBe(false);
 
     await openPlanner(page);
-    await deleteSlotTitled(page, QUEUE_STAGE, 0);
+    await deleteSlotStartingOn(page, SLOT_START);  // the booked queue slot
 
     await pollUntil(() => slotExists(SLOT_BOOKED), gone => gone === false, { timeoutMs: 20_000, label: 'booked queue slot removed after cancellation' });
   });
@@ -275,7 +287,7 @@ test.describe('QSD — queue slot deletion contract', () => {
     await db().collection('queue availability').doc(SLOT_APPT_BOOKED).delete();
 
     await openPlanner(page);
-    await deleteSlotTitled(page, APPT_STAGE, 0);
+    await deleteSlotStartingOn(page, at(7, 14)); // the FREE appointment slot
 
     await pollUntil(() => slotExists(SLOT_APPT_FREE), gone => gone === false, { timeoutMs: 20_000, label: 'free appointment slot removed' });
   });
@@ -290,7 +302,7 @@ test.describe('QSD — queue slot deletion contract', () => {
     await db().collection('queue availability').doc(SLOT_APPT_FREE).delete();
 
     await openPlanner(page);
-    const said = await deleteSlotTitled(page, APPT_STAGE, 0);
+    const said = await deleteSlotStartingOn(page, APPT_START); // the booked appointment slot
 
     expect(await slotExists(SLOT_APPT_BOOKED), 'a slot with a live appointment must not be deleted').toBe(true);
     expect(said.join(' ').toLowerCase()).toMatch(/booked|cancel/);
@@ -318,7 +330,7 @@ test.describe('QSD — queue slot deletion contract', () => {
     expect(page.getByTestId('qpr-revert-appointment')).toBeTruthy(); // reference-only (review board; the operator-facing cancel)
 
     await openPlanner(page);
-    await deleteSlotTitled(page, APPT_STAGE, 0);
+    await deleteSlotStartingOn(page, APPT_START); // the booked appointment slot
 
     await pollUntil(() => slotExists(SLOT_APPT_BOOKED), gone => gone === false, { timeoutMs: 20_000, label: 'appointment slot removed after cancellation' });
     const appt = await getDoc('appointments', APPOINTMENT);
