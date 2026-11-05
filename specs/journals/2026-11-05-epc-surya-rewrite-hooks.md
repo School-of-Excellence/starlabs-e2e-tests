@@ -1,0 +1,31 @@
+# 2026-11-05 — Events: register hooks from Surya's event-participation-confirmation rewrite
+
+## What
+starlabs-angular charan-release took Surya's `surya-development` rewrite of
+`src/app/Events/event-participation-confirmations/` (main screen + product funnel) and
+`src/app/Events/event-list/update-event-detail/`. Four hooks on those screens had no spec reference, so the
+readiness gate would block. Registered them literally in `events/events-controls-addressable.spec.ts`:
+
+| Hook | Screen | Added to case |
+|---|---|---|
+| `epc-tab-start-date`, `epc-tab-end-date` | event-participation-confirmation tab date range | event-participation-confirmation + product-funnel |
+| `pf-potsplit-sales` | product funnel potential split chip | same |
+| `ued-cancel` | update-event-detail dialog Cancel | create_event list + event editor dialog |
+
+## Why ADDRESSABLE only
+The file's contract is reachability (literal `getByTestId`), not behaviour. No seed change: these
+controls render from the world the case already seeds. Behavioural coverage of the rewrite (date-range
+filter, sales split) is deferred — the rewrite also writes e-tickets / checklists / queue tokens, which
+deserves its own seeded spec with negative controls, not a bolt-on here.
+
+## The other direction
+Surya's rewrite had dropped `pf-bar-finance`, `pf-bar-customer-status`, `pf-table-clear-filter` (the
+controls themselves). The operator chose to re-add the controls in the app rather than delete the refs
+here, so this spec keeps asserting them.
+
+## Verification
+`hook-diff.py` aligned (0/0) for both app folders; `playwright --list` = 47 tests in 13 files. Cases not
+executed locally — the gate is the first real run.
+
+## Landing order
+App change (charan-release) first, then this branch.

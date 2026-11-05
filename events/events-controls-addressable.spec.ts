@@ -65,6 +65,7 @@ test.describe('Events interactive controls — addressable + mount smoke (non-AT
     await expect.soft(page.getByTestId('ued-eventname')).toBeVisible({ timeout: 30_000 });
     await expect.soft(page.getByTestId('ued-save')).toBeVisible();
     expect(page.getByTestId('ued-close')).toBeTruthy();
+    expect(page.getByTestId('ued-cancel')).toBeTruthy();
     expect(page.getByTestId('ued-eventname')).toBeTruthy();
     expect(page.getByTestId('ued-atcmodel')).toBeTruthy();
     expect(page.getByTestId('ued-startdate')).toBeTruthy();
@@ -196,11 +197,14 @@ test.describe('Events interactive controls — addressable + mount smoke (non-AT
     expect(page.getByTestId('epc-overview-row')).toBeTruthy();
     expect(page.getByTestId('epc-overview-clear-search')).toBeTruthy();
     expect(page.getByTestId('epc-tab-close')).toBeTruthy();
+    expect(page.getByTestId('epc-tab-start-date')).toBeTruthy();
+    expect(page.getByTestId('epc-tab-end-date')).toBeTruthy();
     expect(page.getByTestId('pf-error-retry')).toBeTruthy();
     expect(page.getByTestId('pf-breakdown-row')).toBeTruthy();
     expect(page.getByTestId('pf-potsplit-active')).toBeTruthy();
     expect(page.getByTestId('pf-potsplit-nonactive')).toBeTruthy();
     expect(page.getByTestId('pf-potsplit-discontinued')).toBeTruthy();
+    expect(page.getByTestId('pf-potsplit-sales')).toBeTruthy();
     expect(page.getByTestId('pf-overall-requested')).toBeTruthy();
     expect(page.getByTestId('pf-journey-group-toggle')).toBeTruthy();
     expect(page.getByTestId('pf-journey-group-name')).toBeTruthy();
