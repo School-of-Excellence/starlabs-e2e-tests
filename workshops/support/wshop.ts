@@ -541,6 +541,51 @@ export async function resetWorkshopConfigBaseline(): Promise<void> {
   }, { merge: true });
 }
 
+// =================================================================================================
+// 2026-11-05 — "Allow edit" on a Question assignment (workshopconfig v2 → Challenges).
+// =================================================================================================
+
+/** A dedicated workshop (copy of W_INACTIVE) so WS-76 never races WS-06/WS-10 on the same doc. */
+export const wsAllowEdit = {
+  id: `${RUN}_W_allowedit`,
+  set: `Allow Edit Set ${RUN}`,
+  question: `AE Question ${RUN}`,
+  form: `AE Form ${RUN}`,
+};
+
+/**
+ * Seed one set with two assignment activities: a Question one written BEFORE the switch existed
+ * (no `allowedit` key at all) and a Form one (the negative control — it must never show the switch).
+ * PRECONDITION write only.
+ */
+export async function seedAllowEditConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const base: any = (await db.collection('workshopconfiguration').doc(wsIds.W_INACTIVE).get()).data() || {};
+  // No `active` key (WS-13 counts active==false docs) and its own title (list specs find rows by the
+  // W_INACTIVE title), so this copy is invisible to every other case that may run beside it.
+  delete base.active;
+  await db.collection('workshopconfiguration').doc(wsAllowEdit.id).set({
+    ...base,
+    docid: wsAllowEdit.id,
+    detailpage: { ...(base.detailpage || {}), title: `Allow Edit Workshop ${RUN}` },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_ae_set`, heading: wsAllowEdit.set, subheading: '',
+      challenges: [
+        { type: 'assignment', challengeid: `${RUN}_ae_q`, name: wsAllowEdit.question, assignmenttype: 'question',
+          submissionformat: 'text', status: '' },
+        { type: 'assignment', challengeid: `${RUN}_ae_f`, name: wsAllowEdit.form, assignmenttype: 'form', status: '' },
+      ],
+    }],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function cleanAllowEditConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsAllowEdit.id).delete().catch(() => { });
+}
+
 /**
  * Delete any enrollment docs the WS-08 enroll flow created for p2 on the dashboard workshop, so the test
  * is re-runnable (it asserts a +1 delta). App-written docs carry NO testrunid — we key them by their

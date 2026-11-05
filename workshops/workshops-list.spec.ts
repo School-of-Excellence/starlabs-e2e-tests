@@ -283,6 +283,69 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
   });
 
   // ===========================================================================================
+  // WS-75 — EiFlix Banner: "Show Text" single-select (Video / Image / Both), stored as `showtext` (2026-11-05)
+  // ===========================================================================================
+  // Anti-circular: the default is Both and the case picks Video, then Image on edit, so each stored
+  // value can only come from the pick the test made. The edit step also proves the form reloads it.
+  test('WS-75 Show Text defaults to Both, stores the pick, and an edit reloads and changes it', async ({ page }) => {
+    const title = `ShowText Banner ${RUN}`;
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const select = dialog.getByTestId('eb-showtext');
+      await expect(select, 'WS-75: Show Text is in Banner Details').toBeVisible({ timeout: 30_000 });
+      await expect(select, 'WS-75: a new banner starts on Both').toContainText('Both');
+
+      await dialog.locator('input[formcontrolname="title"]').fill(title);
+      await select.click();
+      await expect(page.getByTestId('eb-showtext-both'), 'WS-75: Both is the selected option')
+        .toHaveAttribute('aria-selected', 'true');
+      await page.getByTestId('eb-showtext-video').click();
+      await expect(select, 'WS-75: single select — Video replaces Both').toHaveText(/^\s*Video\s*$/);
+      await dialog.getByTestId('eb-submit-6').click();
+
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-75: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).showtext, 'WS-75: stored as the string "video"').toBe('video');
+      // The form resets after a save, back to the default.
+      await expect(select, 'WS-75: the form resets to Both after saving').toContainText('Both');
+
+      // Edit: the stored value comes back, and a new pick overwrites it.
+      await dialog.getByRole('tab', { name: /Banner List/ }).click();
+      const row = dialog.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: title });
+      await expect(row, 'WS-75: the banner is listed').toHaveCount(1, { timeout: 30_000 });
+      await row.getByTestId('eb-edit-banner-11').click();
+      await expect(select, 'WS-75: the edit form reloads Video').toHaveText(/^\s*Video\s*$/, { timeout: 15_000 });
+      await select.click();
+      await page.getByTestId('eb-showtext-image').click();
+      await dialog.getByTestId('eb-submit-6').click();
+      const after = await pollUntil(
+        () => getDoc('eiflixbanner', created[0]),
+        (d) => !!d && (d as any).showtext === 'image',
+        { label: 'WS-75: the edit writes showtext "image"', timeoutMs: 30_000 },
+      );
+      expect((after as any).title, 'WS-75: the same banner was updated, not a new one').toBe(title);
+      expect((await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)).length,
+        'WS-75: editing added no extra banner').toBe(1);
+    } finally {
+      // Delete every banner that appeared during the case, not just the one recorded — a failure
+      // before `created` is set (or a wrongly added second doc) must not leak into a rerun.
+      const leftover = (await queryWhere('eiflixbanner')).map((d) => d.id).filter((id) => !before.has(id));
+      await Promise.all([...new Set([...created, ...leftover])].map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
+  });
+
+  // ===========================================================================================
   // WS-67 — the header has ONE Actions button; the former header buttons are its menu items
   // ===========================================================================================
   test('WS-67 the header shows one Actions button whose menu lists every workshop action', async ({ page }) => {
