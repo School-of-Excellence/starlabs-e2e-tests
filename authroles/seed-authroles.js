@@ -123,6 +123,47 @@ function navChildren() {
   ];
 }
 
+// ── ROUTE-CONFIG ICON fixtures (RCI-01..04, route-configuration-icon-select.spec.ts) ───────────────
+// The Create/Edit Route dialog's icon <mat-select> renders its ~1000 options lazily (IconOptionsPipe).
+// It once rendered ZERO options while closed when the doc had no icon or an icon outside iconList, and
+// mat-select refuses to open with zero options, so the list never loaded. These docs reproduce each state
+// through the Edit dialog, which the seeded admin can open (Create Route / Add Sub Component need the
+// `developer` role, which no actor in this suite has, and the Edit dialog with icon '' is the same state):
+//   • none     icon ''                 → the dropdown must still open and list the full icon set
+//   • unknown  icon not in iconList    → the trigger must show the saved name; open keeps it on top
+//   • known    icon 'home' (CONTROL)   → the trigger shows 'home'; the open list holds it exactly ONCE
+//   • parent   no route + one child with icon '' → the CHILD icon dropdown must open too
+// Every doc is showInSidenav:false with empty roles/profileid, and the child is showInSidenav:false, so
+// filterNavItems() keeps no new child and the AR-05/06/07 nav matrix is unchanged. Routes are harmless
+// run-namespaced paths nothing navigates to (one routeConfig() match each, never a guarded screen).
+const ICON_UNKNOWN = 'zz_not_a_material_icon';
+const ICON = {
+  none: `Auth Icon None ${TESTRUNID}`,
+  unknown: `Auth Icon Unknown ${TESTRUNID}`,
+  known: `Auth Icon Known ${TESTRUNID}`,
+  parent: `Auth Icon Parent ${TESTRUNID}`,
+  child: `Auth Icon Child ${TESTRUNID}`,
+  unknownName: ICON_UNKNOWN,
+};
+function iconDocs() {
+  const top = (key, label, icon, order) => ({
+    id: `${TESTRUNID}_dash_icon_${key}`,
+    data: { label, route: `/auth-icon-${key}-${TESTRUNID}`, icon, showInSidenav: false, order, roles: [], profileid: [] },
+  });
+  return [
+    top('none', ICON.none, '', 901),
+    top('unknown', ICON.unknown, ICON_UNKNOWN, 902),
+    top('known', ICON.known, 'home', 903),
+    {
+      id: `${TESTRUNID}_dash_icon_parent`,
+      data: {
+        label: ICON.parent, icon: 'folder', showInSidenav: false, order: 904, roles: [], profileid: [],
+        children: [{ label: ICON.child, route: `/auth-icon-child-${TESTRUNID}`, icon: '', showInSidenav: false, roles: [], profileid: [], favourites: [] }],
+      },
+    },
+  ];
+}
+
 // classify/AHCRM_dashboard_access — the Business-Dashboard per-section access doc the
 // profile-role-access AHCRM table renders (docData live stream, profile-based-access.component.ts:537).
 // SHARED-DOC SAFETY: this is a SINGLETON doc path (not run-namespaced). The component's add/edit writes a
@@ -201,12 +242,15 @@ async function seedAuthRoles() {
   // 5) LOGIN-EDGE profiles — the number-required + role-not-found dologin gates (AR-LOGIN-NONUM/NOROLE).
   await seedLoginEdgeProfiles(db, tag);
 
+  // 6) ROUTE-CONFIG ICON fixtures — the Edit-dialog icon-select states (RCI-01..04).
+  for (const d of iconDocs()) await db.collection('dashboard').doc(d.id).set({ ...d.data, ...tag });
+
   return {
     TESTRUNID, PF, EMAIL, AHCRM_KEY,
     routes: ROUTES.map((r) => r.route),
     counts: {
       staff: staff.length, participants: participants.length, routes: ROUTES.length,
-      ahcrmKeys: 1, navChildren: navChildren().length, edgeProfiles: 2,
+      ahcrmKeys: 1, navChildren: navChildren().length, edgeProfiles: 2, iconDocs: iconDocs().length,
     },
   };
 }
@@ -233,7 +277,7 @@ async function teardownAuthRoles() {
   return n;
 }
 
-module.exports = { TESTRUNID, PF, EMAIL, ROUTES, SEEDED, AHCRM_KEY, NAV, NAVTREE_DOC, navChildren, EDGE, seedAuthRoles, teardownAuthRoles };
+module.exports = { TESTRUNID, PF, EMAIL, ROUTES, SEEDED, AHCRM_KEY, NAV, NAVTREE_DOC, navChildren, EDGE, ICON, iconDocs, seedAuthRoles, teardownAuthRoles };
 
 if (require.main === module) {
   const mode = process.argv[2];
