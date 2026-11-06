@@ -163,3 +163,33 @@ test.describe('Journey — Delivery dashboard All tab + filters (customer status
     expect(page.getByTestId('ddc-btn-128')).toBeTruthy();
   });
 });
+
+// DDC-WR (app fe76c262 / 97760808, mahalakshmi 2026-10-26, pulled onto charan-release 2026-11-06 —
+// starlabs-angular specs/journals/2026-11-06-pull-mahalakshmi-development.md): the new outer "Weekly
+// Report" tab. Its filters and Clear / Export sit behind `*ngIf="weeklyReportCardId"`, so before a product
+// is chosen ONLY the product picker may render — that gating is the negative control proved here. The
+// filtered report itself (initiated / appointment ranges, booked vs completed) needs a weekly-report seed
+// and stays a deferred behavioral case (DDC-ADDR2).
+test.describe('Journey — Delivery dashboard Weekly Report tab (product picker gates the filters)', () => {
+  test('DDC-WR-01 the Weekly Report tab opens on the product picker; filters, Clear and Export wait for a product', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-delivery-dashboard-clone'), 'ddc must mount').toBeAttached({ timeout: 30_000 });
+    await page.getByTestId('ddc-btn-130').click();
+    await expect(page.getByTestId('ddc-msel-131'), 'DDC-WR-01: the product picker renders').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('ddc-msel-136'), 'DDC-WR-01: no status filter before a product').toHaveCount(0);
+    await expect(page.getByTestId('ddc-btn-137'), 'DDC-WR-01: no Clear Filter before a product').toHaveCount(0);
+    await expect(page.getByTestId('ddc-btn-138'), 'DDC-WR-01: no Export before a product').toHaveCount(0);
+  });
+
+  test.fixme('DDC-ADDR2 Weekly Report filters / Clear / Export addressable (deferred behavioral — needs a weekly-report seed)', async ({ page }) => {
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('ddc-inp-132')).toBeTruthy();
+    expect(page.getByTestId('ddc-inp-133')).toBeTruthy();
+    expect(page.getByTestId('ddc-inp-134')).toBeTruthy();
+    expect(page.getByTestId('ddc-inp-135')).toBeTruthy();
+    expect(page.getByTestId('ddc-msel-136')).toBeTruthy();
+    expect(page.getByTestId('ddc-btn-137')).toBeTruthy();
+    expect(page.getByTestId('ddc-btn-138')).toBeTruthy();
+  });
+});
