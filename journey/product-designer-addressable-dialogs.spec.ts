@@ -20,6 +20,8 @@ test.describe('Product Designer — dialog & child components controls addressab
     if ((await page.getByTestId('ud-close-dialog-1').count()) > 0) await expect(page.getByTestId('ud-close-dialog-1').first()).toBeAttached();
     if ((await page.getByTestId('ud-close-dialog-2').count()) > 0) await expect(page.getByTestId('ud-close-dialog-2').first()).toBeAttached();
     if ((await page.getByTestId('ud-submit-appointment-3').count()) > 0) await expect(page.getByTestId('ud-submit-appointment-3').first()).toBeAttached();
+    if ((await page.getByTestId('ud-appt-changework').count()) > 0) await expect(page.getByTestId('ud-appt-changework').first()).toBeAttached();
+    if ((await page.getByTestId('ud-appt-group').count()) > 0) await expect(page.getByTestId('ud-appt-group').first()).toBeAttached();
     if ((await page.getByTestId('ud-toggle-all-collapsed-4').count()) > 0) await expect(page.getByTestId('ud-toggle-all-collapsed-4').first()).toBeAttached();
     if ((await page.getByTestId('ud-toggle-collapsed-5').count()) > 0) await expect(page.getByTestId('ud-toggle-collapsed-5').first()).toBeAttached();
     if ((await page.getByTestId('ud-duplicate-field-6').count()) > 0) await expect(page.getByTestId('ud-duplicate-field-6').first()).toBeAttached();
