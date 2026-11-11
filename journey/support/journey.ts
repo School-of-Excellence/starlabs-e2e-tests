@@ -60,6 +60,7 @@ export const journeyIds = {
   /** Approval-path lead: pending, but with the initial payment pre-approved (JP-27..32). */
   SL2: `${RUN}_SL2`,
   DF1: `${RUN}_DF1`, APT1: `${RUN}_APT1`, EMT1: `${RUN}_EMT1`,
+  DFM: `${RUN}_DFM`,   // delivery forms doc with media fields (UDM-*)
   // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks). Mirrors seed-journey.js.
   JOD1: `${RUN}_JOD1`, JOD2: `${RUN}_JOD2`,
   // sales_teams rows (JP-23 / JP-24). Mirrors seed-journey.js.
@@ -334,3 +335,16 @@ export async function cleanProductDeliveryFor(productId: string): Promise<number
   }
   return n;
 }
+
+/** update-delivery media copy/play world (seed-journey.js, ID.DFM). Cards are found by their field name. */
+export const udmWorld = {
+  formName: `Media Copy Play Form ${RUN}`,
+  watchUrl: 'https://www.youtube.com/watch?v=udmVid01xyz&t=7',
+  embedUrl: 'https://www.youtube.com/embed/udmVid01xyz',
+  mp4Url: `https://media.example.test/${RUN}/` + 'very-long-folder-name/'.repeat(8) + 'clip.mp4?alt=media&token=0123456789abcdef0123456789abcdef',
+  audioUrl: `https://media.example.test/${RUN}/track.mp3`,
+  field: {
+    watch: `Watch Video ${RUN}`, mp4: `Direct Video ${RUN}`, empty: `Empty Video ${RUN}`,
+    radio: `Pick One ${RUN}`, audioArray: `Audio List ${RUN}`,
+  },
+};
