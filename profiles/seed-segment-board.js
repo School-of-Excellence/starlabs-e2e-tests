@@ -23,6 +23,7 @@
  *   sb_d  "SB Delta"    active, on the profiles seed's journey J1 → EXCLUDED by journey
  *   sb_e  (no name)     active      → EXCLUDED from the whole board: no `name` field (orderBy('name'))
  *   SB_MANUAL           a manual segment config (active, empty) for the move / add cases
+ *   SB_IMPORT           a second empty manual segment: the Import & move target (SGB-08)
  * Each exclusion is a negative control: without it, "the list has 2 people" could not tell a rule that
  * ran from a world that only ever had 2 people in it.
  *
@@ -38,12 +39,16 @@ const SB_IDS = {
   J: `${TESTRUNID}_SB_J`,                 // the run's own journey (journey doc id)
   a: `${TESTRUNID}_sb_a`, b: `${TESTRUNID}_sb_b`, c: `${TESTRUNID}_sb_c`, d: `${TESTRUNID}_sb_d`, e: `${TESTRUNID}_sb_e`,
   MANUAL: `${TESTRUNID}_SB_MANUAL`,       // seeded manual segment (config doc id = segment id)
+  IMPORT: `${TESTRUNID}_SB_IMPORT`,       // seeded manual segment: the Import & move target (SGB-08)
 };
 const SB_NAMES = {
   J: `SB Journey ${TESTRUNID}`,
   a: `SB Alpha ${TESTRUNID}`, b: `SB Bravo ${TESTRUNID}`, c: `SB Charlie ${TESTRUNID}`, d: `SB Delta ${TESTRUNID}`,
   MANUAL: `SB Manual ${TESTRUNID}`,
+  IMPORT: `SB Import ${TESTRUNID}`,
   AUTO: `SB Active ${TESTRUNID}`,         // created by the spec through the dialog
+  // segment groups the spec creates in SGB-07 (segmentboardgroups; GB is renamed to GB2)
+  GA: `SB Group A ${TESTRUNID}`, GB: `SB Group B ${TESTRUNID}`, GB2: `SB Group B2 ${TESTRUNID}`,
 };
 const SB_EMAILS = {
   a: `sb-a+${TESTRUNID}@example.com`, b: `sb-b+${TESTRUNID}@example.com`, c: `sb-c+${TESTRUNID}@example.com`,
@@ -62,6 +67,12 @@ async function cleanupSpecSegments(db) {
     for (const s of (await db.collection('segmentboardlist').where('segmentname', '==', name).get()).docs) await s.ref.delete();
   }
   await db.collection('segmentboardlist').doc(SB_IDS.MANUAL).delete().catch(() => {});
+  await db.collection('segmentboardlist').doc(SB_IDS.IMPORT).delete().catch(() => {});
+  await db.recursiveDelete(db.collection('segmentboardconfig').doc(SB_IDS.IMPORT)).catch(() => {});
+  // the app soft-deletes groups; test data is removed for real, with each group's grouphistory subcollection
+  for (const name of [SB_NAMES.GA, SB_NAMES.GB, SB_NAMES.GB2]) {
+    for (const g of (await db.collection('segmentboardgroups').where('name', '==', name).get()).docs) await db.recursiveDelete(g.ref);
+  }
   await db.recursiveDelete(db.collection('segmentboardconfig').doc(SB_IDS.MANUAL)).catch(() => {});
 }
 
@@ -86,6 +97,12 @@ async function seedSegmentBoard(db, tag, J1) {
   await db.collection('segmentboardconfig').doc(SB_IDS.MANUAL).set({
     id: SB_IDS.MANUAL, name: SB_NAMES.MANUAL, mode: 'manual', status: 'active', journeys: [],
     eligibility: null, displayIndex: 0, createdBy: 'seed', ...tag,
+  });
+  // the Import & move target (SGB-08): a second empty manual segment, so a person already placed in SB_MANUAL
+  // shows as "In another manual segment" (unticked) and is taken out of SB_MANUAL when ticked
+  await db.collection('segmentboardconfig').doc(SB_IDS.IMPORT).set({
+    id: SB_IDS.IMPORT, name: SB_NAMES.IMPORT, mode: 'manual', status: 'active', journeys: [],
+    eligibility: null, displayIndex: 1, createdBy: 'seed', ...tag,
   });
 }
 

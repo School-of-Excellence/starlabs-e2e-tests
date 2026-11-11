@@ -69,3 +69,54 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 **Migration hooks:** `sgb-mig-open`, `-dlg`, `-row`, `-run` and `-done` are registered in SGB-ADDR3 (`test.fixme`) and never driven. The migration rewrites every text-id segment on the project, which on the shared test project would include other runs' and real segments.
 
 **Needs:** the test admin user must have a `profile_data` doc linked by `user_ref`. Otherwise every save is refused ("No profile found…"), and SGB-02..06 fail on their first write.
+
+## 2026-10-22 · SGB-07 segment groups; SGB-06 on updatedat / updatedby
+
+**What changed in the app:** segment history now writes `updatedat` and `updatedby` (a profile id). SGB-06 asserts those fields, and that `updatedby` has no `@`.
+
+**SGB-07** runs on the seeded manual segment, because SGB-06 has already archived the automated one. Steps:
+1. Create groups A and B in Manage groups. A gets a `create` grouphistory entry.
+2. Assign A in the segment dialog. Check that config `groupid` = A and the card label shows A.
+3. Move the segment to B. A gets `segment-removed`; B gets `segment-added` for the segment, with a profile-id `updatedby` and an `updatedat`.
+4. Rename B to B2. The group doc's name changes, the segment's `groupid` is unchanged, a `rename` entry is written, and the group History view lists items.
+5. Delete B2. The group doc stays, set to `deleted: true`. The segment's `groupid` is removed, a `delete` entry is written, the segment history has `groupid {from: B, to: null}`, and the card label is gone.
+
+**Isolation and cleanup:**
+- The group names are run-unique.
+- Teardown `recursiveDelete`s those group docs, including their grouphistory subcollection. The app itself only ever soft-deletes groups; removing them for real is right for test data.
+
+**ADDR3:** now also registers the dialog's inline "New group…" (`sgb-dlg-group-new` / `-add`). SGB-07 creates its groups from Manage groups instead.
+
+**Needs (console):**
+- rules for `segmentboardgroups` and `grouphistory` on starlabs-test;
+- the test admin's `profile_data` linked by `user_ref`.
+
+## 2026-11-11 · SGB-08 Import & move (list → manual segment, review first)
+
+**App change:** a board-level **Import & move** dialog. It reads a CSV/Excel file or a pasted list (a Name/Email template can be downloaded), matches each value to participant metadata and shows a review list before anything moves. People in an automated segment are ticked by default. People in another manual segment, or in no segment, are unticked. Rows already in the target, not found, repeated, or a name shared by several people can't be ticked. The move writes the lists and the `members-added` / `members-removed` history in one batch.
+
+**Seed:** a second empty manual segment, **SB Import** (`${run}_SB_IMPORT`), is the target. The target can't be SB Manual, because Charlie already sits there: Charlie is the "in another manual segment" case.
+
+**Why SGB-08 un-archives SB Active first:** SGB-06 leaves it archived. Without it, Alpha would be "Not in a segment", and the default-tick rule (ticked only when in an automated segment) would go untested.
+
+**The file (5 rows, the template's Name, Email headers), and why each row is there:**
+| Row | Proves |
+|---|---|
+| Alpha | ticked by default, moved; leaves the automated list |
+| Charlie | unticked by default (in SB Manual); ticked by the case, so it leaves SB Manual → `members-removed` |
+| the nameless doc's email | never loaded (rule #2) → Not found |
+| an email nobody has | Not found |
+| Alpha in upper case | Repeated, counted once |
+| (Bravo, absent) | must stay in the automated list: negative control for the resync |
+
+**Oracles:**
+- `segmentboardlist` for SB Import = [Alpha, Charlie]; SB Manual = []; SB Active = [Bravo].
+- SB Import history `members-added`: `changes.members.to` = [Alpha, Charlie], `source.source` = the file name, and `updatedby` is a profile id.
+- SB Manual history `members-removed`: `from` = [Charlie].
+- A re-import shows both as Already there (0/0/2/3), and Move is disabled.
+
+**ADDR4:** registers paste, search, tick-all, the template download and export. SGB-08 drives the file path instead.
+
+**Never run here:** the cases were listed (`--list`, 12 tests), not executed. The gate is the first real run.
+
+**Cleanup:** the seed and teardown `recursiveDelete` the SB Import config, including its history, and delete its list doc.
