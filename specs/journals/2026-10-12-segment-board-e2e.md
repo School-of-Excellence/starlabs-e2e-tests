@@ -120,3 +120,8 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 **Never run here:** the cases were listed (`--list`, 12 tests), not executed. The gate is the first real run.
 
 **Cleanup:** the seed and teardown `recursiveDelete` the SB Import config, including its history, and delete its list doc.
+
+**First real run (local emulator lane, 2026-11-11):** 8 passed, 4 ADDR skipped. Fixes it needed:
+- **SGB-06 / SGB-07:** the card's edit pencil is hidden until hover (design pass 2026-10-12), so clicking it timed out on "not visible". The new `editCard()` helper hovers the card first. These cases had not run since that design pass.
+- **SGB-07:** after the rename, the row was still looked up by the old name (`input[value=GB]`), which no longer exists once the dialog re-renders. It is now found again by GB2.
+- **SGB-08** found an app bug: a ticked row jumped out of the "Not ticked" view. Fixed in the app (tab rows are fixed while the tab is open).

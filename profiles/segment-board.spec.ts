@@ -68,6 +68,11 @@ async function open(page: Page) {
   await expect(page.getByTestId('sgb-new-seg'), 'the board finishes loading').toBeVisible({ timeout: 90_000 });
 }
 const card = (page: Page, name: string) => page.getByTestId('sgb-card').filter({ has: page.getByTestId('sgb-card-title').filter({ hasText: name }) });
+/** The card's edit pencil is shown on hover / focus only (design pass 2026-10-12): hover the card, then click it. */
+async function editCard(page: Page, name: string) {
+  await card(page, name).hover();
+  await card(page, name).getByTestId('sgb-card-edit').click();
+}
 
 test.describe.serial('Profiles — Segment Board (stored lists, manual placement, search, archive)', () => {
   test.beforeEach(async ({ page }) => { guard = attachConsoleGuard(page); });
@@ -156,7 +161,7 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     const hist = (action: string) => queryWhere(`segmentboardconfig/${AUTO_ID}/segmenthistory`, [['action', '==', action]]);
     await open(page);
     const archive = async () => {
-      await card(page, NAMES.AUTO).getByTestId('sgb-card-edit').click();
+      await editCard(page, NAMES.AUTO);
       await page.getByTestId('sgb-dlg-archive').click();
       await pollUntil(() => getDoc('segmentboardconfig', AUTO_ID), (d) => d?.archived === true, { label: 'archived' });
     };
@@ -223,7 +228,7 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await page.keyboard.press('Escape');
 
     const pick = async (label: string) => {
-      await card(page, NAMES.MANUAL).getByTestId('sgb-card-edit').click();
+      await editCard(page, NAMES.MANUAL);
       await page.getByTestId('sgb-dlg-group').selectOption({ label });
       await page.getByTestId('sgb-dlg-save').click();
     };
@@ -259,7 +264,9 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     await pollUntil(() => getDoc('segmentboardgroups', GB), (d) => d?.name === NAMES.GB2, { label: 'group renamed' });
     expect((await cfg())?.groupid, 'SGB-07: rename leaves the segment untouched').toBe(GB);
     expect((await gh(GB, 'rename')).length).toBe(1);
-    await rowB.getByTestId('sgb-grp-hist').click();
+    // the dialog re-renders with the new name, so find the row again by it
+    const rowB2 = dlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.GB2}"]`) });
+    await rowB2.getByTestId('sgb-grp-hist').click();
     await expect(dlg.getByTestId('sgb-history-item').first(), 'SGB-07: the group History lists its events').toBeVisible();
 
     // delete: soft — the group doc stays as deleted, the segment loses its groupid, both histories record it
