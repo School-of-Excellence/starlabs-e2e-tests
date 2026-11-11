@@ -71,7 +71,10 @@ on:
 
 jobs:
   web-e2e:
-    runs-on: ubuntu-latest
+    # Pinned (2026-10-24): ubuntu-latest moved to Ubuntu 26.04, which Playwright 1.60 has no Chromium build for
+    # ("Playwright does not support chromium on ubuntu26.04-x64" — every suite failed at install). 24.04 is the
+    # image the suites last passed on. Unpin when @playwright/test is upgraded to a version that supports 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 75
     env:
       FIREBASE_PROJECT: ${{ inputs.firebase_project }}
@@ -170,6 +173,11 @@ jobs:
 
       - name: Install Cloud Functions deps
         if: inputs.suite != 'unit'
+        # onnxruntime-node's postinstall downloads its CUDA (GPU) binaries from api.nuget.org — the e2e never uses a GPU,
+        # and that external download timed out on a runner (2026-10-25, atc job: ETIMEDOUT). "skip" makes its install
+        # script exit early; the CPU runtime is bundled in the npm package (onnxruntime js/node/script/install.js).
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: cd starlabs-cloud-function/functions && npm ci
 
       - name: Install e2e deps
@@ -212,9 +220,29 @@ jobs:
           for i in $(seq 1 120); do curl -sf http://localhost:4200 >/dev/null 2>&1 && break; sleep 3; done
           if ! curl -sf http://localhost:4200 >/dev/null 2>&1; then echo "::error::app failed to serve on :4200"; tail -60 /tmp/app.log; exit 1; fi
 
+      # ── HUB-AHEAD RULE, run-time half (operator decision D2, 2026-10-17) ──────────────────────────
+      # Drop spec files that reference data-testid hooks THIS app checkout does not declare: their
+      # feature is still on another branch (its tests reached hub main first) and can only fail here.
+      # Real drift (a hook this branch removed) is blocked earlier by readiness (NEEDS_UPDATE), so a skip
+      # is never a hidden breakage. Skips are listed in the job summary. When every spec is skipped,
+      # LANDED_NONE=1 stops the gate from falling back to run-isolated's "whole directory" default.
+      - name: Skip specs whose hooks have not landed on this branch
+        id: landed
+        if: inputs.suite != 'unit'
+        run: |
+          SPECS="${ONLY:-$(cd e2e && find "${SUITE_DIR:-queue}" -name '*.spec.ts' | sort | tr '\n' ' ')}"
+          KEPT="$(node e2e/scripts/readiness/landed-specs.cjs --hub e2e --app "$GITHUB_WORKSPACE" --specs "$SPECS")"
+          if [ -z "$KEPT" ]; then
+            echo "LANDED_NONE=1" >> "$GITHUB_ENV"
+            echo "No spec in this suite can run on this branch — gate skipped."
+          else
+            echo "ONLY=$KEPT" >> "$GITHUB_ENV"
+            echo "Running: $KEPT"
+          fi
+
       - name: Run isolated e2e suite (the gate)   # ── CHANGE 4 (was "Run isolated queue e2e suite") ──
         id: gate
-        if: inputs.suite != 'unit'
+        if: inputs.suite != 'unit' && env.LANDED_NONE != '1'
         run: cd e2e && EMU_REUSE=1 EMU_REUSE_APP=1 TESTRUNID=run1 bash scripts/run-isolated.sh
         # ↑ run-isolated.sh now reads CONFIG + SUITE_DIR from the env (set above). No per-suite change here.
 
@@ -284,7 +312,7 @@ jobs:
           STAGE="${STAGE:-gate}" \
           CF_REPO="${CF_REPO:-starlabs-cloud-function}" \
           CF_BRANCH="${CF_BRANCH:-development}" \
-          RESULT="${{ steps.gate.outcome == 'success' && 'pass' || 'fail' }}" \
+          RESULT="${{ steps.gate.outcome == 'success' && 'pass' || (env.LANDED_NONE == '1' && 'unknown' || 'fail') }}" \
           REPORT_DIR=playwright-report \
           ATTACH="fixtures/sample-queue-config.json,fixtures/firestore-seed.json" \
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \

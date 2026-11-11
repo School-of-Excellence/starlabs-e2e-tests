@@ -10,6 +10,9 @@
 // request` reads. We assert them against INDEPENDENT server-side counts of the same predicates, never
 // against a value this test wrote.
 //
+// Seed note (2026-11-05): the funnel now orders its EPR query by `doccreateddate`, and Firestore drops
+// docs missing an orderBy field — every seeded EPR carries doccreateddate, as every real writer does.
+//
 // Selectors were derived from static source review of event-participation-confirmations.component.ts
 // and product-funnel.component.ts/.html (no Angular unit test exists for either to cross-check
 // against, and this suite has never opened the route before), not from a live DOM — expect to true
@@ -75,8 +78,9 @@ test.describe('Event Participation Confirmations — overview + funnel (real UI,
     await expect(row, 'EPC-01: the seeded arena row must render on the overview').toBeVisible({ timeout: 30_000 });
     await row.click();
 
-    // The funnel opens in its own dynamic tab (tab label combines product + event name).
-    const funnelTab = page.getByRole('tab', { name: new RegExp(PRODUCT_NAME) });
+    // The funnel opens in its own dynamic tab. Since surya 9d52356d (2026-11-05) the tab is per EVENT
+    // (label = event name + date range), not per product.
+    const funnelTab = page.getByRole('tab', { name: new RegExp(EVENT_NAME) });
     await expect(funnelTab, 'EPC-01: the funnel tab must open').toBeVisible({ timeout: 30_000 });
 
     // [ASSERT] the app-computed "Potential" and "Approved" funnel cards.
@@ -127,7 +131,7 @@ test.describe('Event Participation Confirmations — Approve (real UI, write-pat
     const row = page.getByRole('button', { name: `Open ${PRODUCT_NAME} ${EVENT_NAME}` });
     await expect(row).toBeVisible({ timeout: 30_000 });
     await row.click();
-    await expect(page.getByRole('tab', { name: new RegExp(PRODUCT_NAME) })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('tab', { name: new RegExp(EVENT_NAME) })).toBeVisible({ timeout: 30_000 });
 
     // [REAL-UI] switch to the "Not requested" segment. Verified live against the emulator: p6 (owns
     // P1, no request, no queue token) lands in "Not requested" (count 1), not "Eligible" (count 0) —

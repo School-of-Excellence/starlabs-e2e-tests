@@ -1,11 +1,16 @@
 // ATC-integrating / ATC-folder routes that MUST be excluded from CI E2E (sensitive ATC data — D-001).
 // Source: specs/operator-screens.md §C + the ATC route group in DOCS.md. Tests must never navigate to these.
 export const ATC_EXCLUDED_ROUTES: string[] = [
-  // ATC route group
-  '/addtripleATC', '/atctrajectory', '/editATC', '/edittripleATC', '/liveprescription',
-  '/pickformentoring', '/prescribeATC', '/previewATC', '/previewtripleATC', '/reviewflagATC',
-  '/view-participant-atc', '/viewassignedATC', '/viewprescribedATC', '/viewtripleATC',
-  '/viewUpgradedATC', '/viewaigeneratedatc',
+  // ATC route group.
+  // RE-ALLOWED 2026-10-13 (operator; plan specs/plans/2026-10-13-atc-prescribe-edit-view.md): /prescribeATC,
+  // /editATC, /viewprescribedATC — driven ONLY by the `atc` suite, against the EMULATOR ONLY (seeded
+  // firestore-atc; never the development or production database).
+  // RE-ALLOWED 2026-10-17 (operator; plan specs/plans/2026-10-17-atc-live-screens.md) — the 13 live ATC
+  // screens of phase 2, same rules: /previewATC /viewUpgradedATC /view-participant-atc /viewassignedATC
+  // /reviewflagATC /pickformentoring /atctrajectory /liveprescription /addtripleATC /viewtripleATC
+  // /previewtripleATC /edittripleATC /viewaigeneratedatc. The ATC route group is now fully re-allowed. The
+  // three screens the operator left untested stay as they are: /viewrubrics_scoring_atc (below) stays
+  // excluded; /queue-atc-generation and /queue-atc-usage were never listed and stay unclaimed.
   // Non-ATC-folder screens that integrate ATC data (operator-screens.md §C)
   '/updateprofiletaxonomy', '/overall_event_dashboard', '/big-dashboard', '/profilelist',
   '/JourneycoachDashboard-new', '/ecosystem', '/live_event_dashboard', '/first_timers_dashboard',

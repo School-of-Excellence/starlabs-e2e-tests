@@ -7,11 +7,14 @@
 //
 // Reference: starlabs-angular specs/journals/2026-09-24-view-participants-form-server-filters.md.
 //
-// LANES: the fetch reads `formsByClient` from the firestore-forms NAMED db. The emulator has no rules for a
-// named db (multi-db unsupported) so that client read is DENIED there — same limitation as PA-13/PA-14.
+// LANES: the fetch reads `formsByClient` from the firestore-forms NAMED db. Since 2026-10-17 the emulator build
+// connects that db (src/main.ts) — the old "multi-db unsupported → read denied" note was a misdiagnosis — so:
 //   VPF-F01  both lanes (no fetch involved: the active count is pure panel state)
-//   VPF-F02  cloud only (needs a successful fetch to set the applied snapshot)
-//   VPF-F03  emulator only (the denied read is a real read failure → the error notice path)
+//   VPF-F02  both lanes (needs a successful fetch to set the applied snapshot)
+//   VPF-F03  emulator: signs in as the seeded `formsdenied` admin, whose firestore-forms reads the EMULATOR-ONLY
+//            rules refuse (ci/overlay/firestore.rules, custom claim e2eDenyForms) — a real server refusal, the
+//            path a production read failure takes. (Aborting the browser's requests does NOT work: the SDK goes
+//            offline and getDocs resolves EMPTY from cache, so no error and no notice — CI 2026-10-17.)
 //
 // SEEDED WORLD: none of its own — the profiles seed's admin + the /view-participants-form grant. These cases
 // assert the panel's own state machine, not form data: toggles are query filters that only take effect on
@@ -22,15 +25,13 @@
 // negative control is the round-trip: toggling back to the applied state must remove the pill without a
 // fetch — proving the pill compares against the snapshot rather than latching on any click.
 import { test, expect } from '@playwright/test';
-import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
-
-const EMULATOR = !!process.env.FIRESTORE_EMULATOR_HOST;
-const FORMS_SKIP = 'EMULATOR LIMITATION: firestore-forms named DB has no rules in the emulator (multi-db unsupported) → client read denied; runs on the cloud config.';
+import { installProfileStubs, loginAsProfileAdmin, loginAsFormsDenied } from './support/profiles';
 
 test.describe('View Participants Form — filter panel (active count, pending changes, fetch)', () => {
   test.beforeEach(async ({ page }) => {
     await installProfileStubs(page);
-    await loginAsProfileAdmin(page);
+    if (test.info().title.startsWith('VPF-F03')) await loginAsFormsDenied(page); // its on-load forms read is refused
+    else await loginAsProfileAdmin(page);
     await page.goto('/view-participants-form', { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('vpf-filter-panel'), 'the filter panel must render').toBeVisible({ timeout: 30_000 });
     // The screen fetches on load; wait for that fetch to settle (success or failure) before clicking.
@@ -49,7 +50,6 @@ test.describe('View Participants Form — filter panel (active count, pending ch
   });
 
   test('VPF-F02 a toggle is pending until Fetch applies it; toggling back needs no fetch', async ({ page }) => {
-    test.skip(EMULATOR, FORMS_SKIP);
     await expect(page.getByTestId('vpf-result-count'), 'the initial fetch must succeed').toBeVisible({ timeout: 60_000 });
     const opp = page.getByTestId('vpf-filter-opportunity');
     await expect(page.getByTestId('vpf-pending-changes')).toHaveCount(0);
@@ -67,7 +67,6 @@ test.describe('View Participants Form — filter panel (active count, pending ch
   });
 
   test('VPF-F03 a failed read surfaces the fetch notice and leaves nothing pending', async ({ page }) => {
-    test.skip(!EMULATOR, 'Needs a denied formsByClient read — only the emulator lane produces one deterministically.');
     await expect(page.getByTestId('vpf-fetch-notice')).toHaveText(/Could not fetch forms/);
     await expect(page.getByTestId('vpf-result-count'), 'VPF-F03: no applied snapshot → no result count').toHaveCount(0);
     await page.getByTestId('vpf-filter-opportunity').click();

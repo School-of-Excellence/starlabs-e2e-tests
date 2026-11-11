@@ -188,6 +188,55 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     updatedAt: '2026-06-21T12:16:00Z',
   },
 
+  // 4b) FLUTTER on the v3 flow (plan 2026-10-13): two branch APKs in Storage, suite check n/a,
+  //      suites passed → approvable. Stage 1 renders DOWNLOAD BUTTONS rather than anchors, because
+  //      previewStatus carries the Storage OBJECT PATH instead of a URL (§5). No mobileDelivery and
+  //      no web preview facet: v3 drives stage 1 from previewStatus alone.
+  {
+    id: 'breakthroughs-flutter__feature/offline-cache',
+    repo: 'breakthroughs-flutter',
+    branch: 'feature/offline-cache',
+    headSha: 'f1f1aaa',
+    headCommit: { msg: 'Cache lesson media offline', author: 'mobile@soexcellence.com', at: '2026-10-12T09:00:00Z' },
+    preview: { buildState: 'NONE' },
+    previewStatus: {
+      sha: 'f1f1aaa',
+      commitMsg: 'Cache lesson media offline',
+      author: 'mobile@soexcellence.com',
+      runId: '910007',
+      runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910007',
+      updatedAt: 1760259600000,
+      dev: { status: 'SUCCESS', url: 'apks/feature/offline-cache/dev.apk', project: 'starlabs-test', deployedAt: 1760259600000 },
+      prod: { status: 'SUCCESS', url: 'apks/feature/offline-cache/prod.apk', project: 'fir-sample-aae4a', deployedAt: 1760259600000 },
+    },
+    testSuiteStatus: {
+      state: 'NOT_APPLICABLE',
+      canProceed: true,
+      sha: 'f1f1aaa',
+      checkedAt: 1760259600000,
+      // Mirrors what the gate posts: NOT_APPLICABLE (no per-suite mapping for flutter yet) but with
+      // the checks that DID run named, so the card says something rather than just "n/a".
+      suites: ['analyze', 'flutter test'],
+      run: {
+        state: 'PASSED',
+        sha: 'f1f1aaa',
+        passed: 18,
+        failed: 0,
+        startedAt: 1760259900000,
+        finishedAt: 1760260140000,
+        runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910008',
+      },
+    },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
+    derivedStatus: 'NO_ACTION',
+    lastActivity: { type: 'push', sha: 'f1f1aaa', actor: 'mobile@soexcellence.com', at: '2026-10-12T09:00:00Z' },
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-10-12T09:09:00Z',
+  },
+
   // 5) Tester signed off for dev — developer may open PR → dev.
   {
     id: 'starlabs-angular__feature/profile-cohorts',
@@ -416,6 +465,49 @@ export const MOCK_RELEASE_CANDIDATES: ReleaseCandidate[] = [
     lastActivity: { type: 'push', sha: 'kkk2222', actor: 'dev@soexcellence.com', at: '2026-06-15T18:00:00Z' },
     reconcile: 'NEEDS_DECISION',
     updatedAt: '2026-06-15T18:10:00Z',
+  },
+
+  // 11b) DEVELOPMENT (flutter) — what a dev-merge produces: two APKs in Storage, nothing deployed.
+  //      One leg still BUILDING so the Release Channel's APK row shows a mid-build state.
+  {
+    id: 'breakthroughs-flutter__development',
+    repo: 'breakthroughs-flutter',
+    branch: 'development',
+    headSha: 'dev7fff',
+    headCommit: { msg: 'Merge feature/offline-cache', author: 'mobile@soexcellence.com', at: '2026-10-21T11:25:00Z' },
+    preview: { buildState: 'NONE' },
+    // STALE, on purpose: left behind by the retired native lane (the deleted
+    // android-firebase-distribution.yml failed on every push to development for weeks). The old-flow
+    // projection turns this into derivedStatus PREVIEW_FAILED — which is why the chip is not rendered
+    // for flutter any more. Kept in the fixture so a regression would be visible.
+    mobileDelivery: { android: { prod: { status: 'FAILED', at: '2026-10-06T10:14:00Z' } } },
+    previewStatus: {
+      sha: 'dev7fff',
+      commitMsg: 'Merge feature/offline-cache',
+      author: 'mobile@soexcellence.com',
+      runId: '910044',
+      runUrl: 'https://github.com/School-of-Excellence/breakthroughs-flutter/actions/runs/910044',
+      updatedAt: 1761045900000,
+      dev: { status: 'SUCCESS', url: 'apks/development/dev.apk', project: 'starlabs-test', deployedAt: 1761045900000 },
+      prod: { status: 'BUILDING', project: 'fir-sample-aae4a', deployedAt: 1761045900000 },
+    },
+    // The gate runs on `development` too, so its result lands here. Release Channel reads this
+    // (new flow) rather than gateRun (old flow) — see testBadge().
+    testSuiteStatus: {
+      state: 'NOT_APPLICABLE',
+      canProceed: true,
+      sha: 'dev7fff',
+      checkedAt: 1761045900000,
+      suites: ['analyze', 'flutter test'],
+      run: { state: 'PASSED', sha: 'dev7fff', passed: 6, failed: 0, finishedAt: 1761046000000 },
+    },
+    devGate: { verdict: 'NONE' },
+    prDev: { state: 'NONE' },
+    prodGate: { verdict: 'NONE' },
+    prProd: { state: 'NONE' },
+    derivedStatus: 'NO_ACTION',
+    reconcile: 'IN_SYNC',
+    updatedAt: '2026-10-21T11:25:00Z',
   },
 
   // 12) DEVELOPMENT — promotion hub. Integrated dev branch, ready to promote → production.

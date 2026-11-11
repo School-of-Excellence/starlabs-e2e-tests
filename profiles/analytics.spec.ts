@@ -91,11 +91,9 @@ test.describe('Profiles — analytics + form/break viewers (real UI, anti-circul
   // PA-13 — view-participants-form renders the seeded formsByClient row (forms DB, last-30d)
   // ===========================================================================================
   test('PA-13 view-participants-form renders the seeded formsByClient row the app queried (forms DB)', async ({ page }) => {
-    // EMULATOR LIMITATION: the screen reads `formsByClient` from the `firestore-forms` NAMED DB via the client
-    // SDK. The Firestore emulator (firebase-tools) does not support named databases / per-named-db rules yet,
-    // so the named db has no permissive rules → client reads default to DENY (Admin seeds still reach it). This
-    // case validates the real forms-DB read against the CLOUD test project (playwright.profiles.config.ts).
-    test.skip(!!process.env.FIRESTORE_EMULATOR_HOST, 'EMULATOR LIMITATION: firestore-forms named DB has no rules in the emulator (multi-db unsupported) → client read denied; runs on the cloud config.');
+    // 2026-10-17: the emulator build now connects the `firestore-forms` named DB (src/main.ts), so the forms-DB read runs on the
+    // emulator too. The old skip ("multi-db unsupported → client read denied") was a misdiagnosis: the emulator
+    // serves named DBs to the client fine — the app simply never pointed this handle at it.
     await loginAsProfileAdmin(page);
     await page.goto('/view-participants-form', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/view-participants-form/, { timeout: 30_000 });

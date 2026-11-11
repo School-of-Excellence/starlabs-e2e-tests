@@ -1,6 +1,5 @@
 // segment-board.spec.ts — /segmentboard: master segments built from participant metadata, their stored lists,
-// manual placement, search, the archive lifecycle (no hard delete), the per-segment change history and
-// segment groups (segmentboardgroups, soft delete, grouphistory subcollection)
+// manual placement, search, the archive lifecycle (no hard delete) and the per-segment change history
 // (segmentboardconfig/{id}/segmenthistory, written by the app in the same batch as each change).
 //
 // Prefix: sgb — SegmentBoardComponent (segment-board.component.html + the engine it mounts,
@@ -34,6 +33,14 @@
 // Shared-project isolation: the board reads unfiltered collections, so cases only assert on run-named
 // participants/segments (never a global count). The stats tiles are therefore registered, not asserted.
 //
+// SGB-07 (2026-10-22, plan specs/plans/2026-10-22-segment-groups.md): segment GROUPS are reference labels in
+// segmentboardgroups (soft delete only) with a grouphistory subcollection. The case creates both groups
+// through the app (inline "+ New group…" in the segment dialog, and Manage groups), assigns and moves the
+// manual segment, renames a group (the segment doc must not change) and deletes it (the group doc stays,
+// deleted: true; the segment's groupid goes, with history on both sides). The left Groups nav filters the
+// cards and Select fills the send bar. Every assertion reads what the APP wrote or rendered. The groups
+// carry no testrunid; cleanupSpecSegments() removes them by name.
+//
 // SERIAL: SGB-02 creates the automated segment the later cases act on.
 import { test, expect, Page } from '@playwright/test';
 import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
@@ -43,7 +50,7 @@ import { getDoc, pollUntil, queryWhere } from '../queue/support/firestore-admin'
 const RUN = process.env.PROF_RUNID || 'prof';
 const IDS = { J: `${RUN}_SB_J`, a: `${RUN}_sb_a`, b: `${RUN}_sb_b`, c: `${RUN}_sb_c`, d: `${RUN}_sb_d`, e: `${RUN}_sb_e`, MANUAL: `${RUN}_SB_MANUAL`, IMPORT: `${RUN}_SB_IMPORT` };
 const NAMES = { J: `SB Journey ${RUN}`, a: `SB Alpha ${RUN}`, b: `SB Bravo ${RUN}`, c: `SB Charlie ${RUN}`, MANUAL: `SB Manual ${RUN}`, AUTO: `SB Active ${RUN}`,
-  GA: `SB Group A ${RUN}`, GB: `SB Group B ${RUN}`, GB2: `SB Group B2 ${RUN}` };
+  G_REF: `SB Group Ref ${RUN}`, G_OPS: `SB Group Ops ${RUN}`, G_OPS2: `SB Group Ops Renamed ${RUN}` };
 const EMAILS = { a: `sb-a+${RUN}@example.com`, c: `sb-c+${RUN}@example.com`, e: `sb-e+${RUN}@example.com`, none: `sb-none+${RUN}@example.com` };
 /** The app gives a new segment a Firestore auto id: find it by its run-unique name (the live doc, never a migrated copy). */
 let autoIdCache = '';
@@ -68,11 +75,6 @@ async function open(page: Page) {
   await expect(page.getByTestId('sgb-new-seg'), 'the board finishes loading').toBeVisible({ timeout: 90_000 });
 }
 const card = (page: Page, name: string) => page.getByTestId('sgb-card').filter({ has: page.getByTestId('sgb-card-title').filter({ hasText: name }) });
-/** The card's edit pencil is shown on hover / focus only (design pass 2026-10-12): hover the card, then click it. */
-async function editCard(page: Page, name: string) {
-  await card(page, name).hover();
-  await card(page, name).getByTestId('sgb-card-edit').click();
-}
 
 test.describe.serial('Profiles — Segment Board (stored lists, manual placement, search, archive)', () => {
   test.beforeEach(async ({ page }) => { guard = attachConsoleGuard(page); });
@@ -161,7 +163,9 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     const hist = (action: string) => queryWhere(`segmentboardconfig/${AUTO_ID}/segmenthistory`, [['action', '==', action]]);
     await open(page);
     const archive = async () => {
-      await editCard(page, NAMES.AUTO);
+      // the card's Edit icon is display:none until the card is hovered (pointer devices), so hover first
+      await card(page, NAMES.AUTO).hover();
+      await card(page, NAMES.AUTO).getByTestId('sgb-card-edit').click();
       await page.getByTestId('sgb-dlg-archive').click();
       await pollUntil(() => getDoc('segmentboardconfig', AUTO_ID), (d) => d?.archived === true, { label: 'archived' });
     };
@@ -179,9 +183,10 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     expect((await hist('create')).length, 'SGB-06: the create from SGB-02 is recorded').toBe(1);
     const [a1] = await hist('archive');
     expect(a1?.changes?.archived, 'SGB-06: archive records archived false → true').toEqual({ from: false, to: true });
-    expect(a1?.updatedby, 'SGB-06: who changed it (updatedby = profile id)').toBeTruthy();
-    expect(String(a1?.updatedby ?? ''), 'SGB-06: updatedby is a profile id, not an email').not.toContain('@');
-    expect(a1?.updatedat, 'SGB-06: when (updatedat, server time)').toBeTruthy();
+    // 2026-10-22: history entries carry updatedby (profile id) / updatedat, matching the group history
+    expect(typeof a1?.updatedby === 'string' && a1.updatedby, 'SGB-06: who changed it (profile id)').toBeTruthy();
+    expect(a1?.updatedat, 'SGB-06: when (server time)').toBeTruthy();
+    expect(a1?.at, 'SGB-06: new entries no longer write the old `at`').toBeUndefined();
     // the side panel History tab lists them
     await card(page, NAMES.AUTO).getByTestId('sgb-card-viewall').click();
     await page.getByTestId('sgb-drawer').getByTestId('sgb-drawer-tab-history').click();
@@ -197,6 +202,87 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     expect(await getDoc('segmentboardlist', AUTO_ID), 'SGB-06: the stored list is kept').not.toBeNull();
   });
 
+  test('SGB-07 segment groups: create, assign, move, rename (segment untouched), delete (soft) — and the Groups nav filters and selects', async ({ page }) => {
+    await open(page);
+    const groupByName = async (name: string) => (await queryWhere('segmentboardgroups', [['name', '==', name]]))[0] ?? null;
+    const ghist = async (gid: string, action: string) => queryWhere(`segmentboardgroups/${gid}/grouphistory`, [['action', '==', action]]);
+    const manual = () => card(page, NAMES.MANUAL);
+    const editManual = async () => {
+      await manual().hover(); // the Edit icon only shows on hover
+      await manual().getByTestId('sgb-card-edit').click();
+    };
+
+    // 1) inline "+ New group…" in the segment dialog creates G_REF and assigns it on Save
+    await editManual();
+    await page.getByTestId('sgb-dlg-group').selectOption('__new__');
+    await page.getByTestId('sgb-dlg-group-new').fill(NAMES.G_REF);
+    await page.getByTestId('sgb-dlg-group-add').click();
+    const gRef = await pollUntil(() => groupByName(NAMES.G_REF), (g) => !!g, { label: 'G_REF created' });
+    await page.getByTestId('sgb-dlg-save').click();
+    await pollUntil(() => getDoc('segmentboardconfig', IDS.MANUAL), (d) => d?.groupid === gRef!.id, { label: 'manual → G_REF' });
+    await expect(manual().getByTestId('sgb-card-group'), 'SGB-07: the card shows its group').toContainText(NAMES.G_REF);
+    await pollUntil(() => ghist(gRef!.id, 'segment-added'), (r) => r.length === 1, { label: 'G_REF segment-added' });
+
+    // 2) Manage groups creates G_OPS; moving the segment writes removed / added on each side + segment history
+    await page.getByTestId('sgb-groups-manage').click();
+    const grpDlg = page.getByTestId('sgb-grp-dlg');
+    await grpDlg.getByTestId('sgb-grp-new-name').fill(NAMES.G_OPS);
+    await grpDlg.getByTestId('sgb-grp-create').click();
+    const gOps = await pollUntil(() => groupByName(NAMES.G_OPS), (g) => !!g, { label: 'G_OPS created' });
+    expect((await ghist(gOps!.id, 'create')).length, 'SGB-07: the create is in the group history').toBe(1);
+    await grpDlg.getByRole('button', { name: 'Close' }).click();
+
+    await editManual();
+    await page.getByTestId('sgb-dlg-group').selectOption(gOps!.id);
+    await page.getByTestId('sgb-dlg-save').click();
+    await pollUntil(() => getDoc('segmentboardconfig', IDS.MANUAL), (d) => d?.groupid === gOps!.id, { label: 'manual → G_OPS' });
+    await pollUntil(() => ghist(gRef!.id, 'segment-removed'), (r) => r.length === 1, { label: 'G_REF segment-removed' });
+    const [added] = await pollUntil(() => ghist(gOps!.id, 'segment-added'), (r) => r.length === 1, { label: 'G_OPS segment-added' });
+    expect(added.segmentid, 'SGB-07: the group entry names the segment').toBe(IDS.MANUAL);
+    expect(typeof added.updatedby === 'string' && added.updatedby, 'SGB-07: who (profile id)').toBeTruthy();
+    const moved = await queryWhere(`segmentboardconfig/${IDS.MANUAL}/segmenthistory`, [['action', '==', 'edit']]);
+    expect(moved.some((h: any) => h.changes?.groupid?.from === gRef!.id && h.changes?.groupid?.to === gOps!.id),
+      'SGB-07: the segment history records groupid G_REF → G_OPS').toBe(true);
+
+    // 3) the Groups nav: counts, filtering the cards, Not grouped, All, and Select → the send bar
+    const nav = page.getByTestId('sgb-gnav');
+    const opsItem = nav.getByTestId('sgb-gnav-item').filter({ hasText: NAMES.G_OPS });
+    await expect(opsItem.getByTestId('sgb-gnav-count'), 'SGB-07: one segment in G_OPS').toHaveText('1');
+    await expect(nav.getByTestId('sgb-gnav-item').filter({ hasText: NAMES.G_REF }).getByTestId('sgb-gnav-count'), 'SGB-07: G_REF is empty now').toHaveText('0');
+    await opsItem.locator('.gn-link').click();
+    await expect(page.getByTestId('sgb-card-title'), 'SGB-07: a group click shows only its cards').toHaveText([NAMES.MANUAL]);
+    await nav.getByTestId('sgb-gnav-none').locator('.gn-link').click();
+    await expect(manual(), 'SGB-07: Not grouped hides a grouped segment').toHaveCount(0);
+    await nav.getByTestId('sgb-gnav-all').locator('.gn-link').click();
+    await expect(manual(), 'SGB-07: All brings it back').toHaveCount(1);
+    await opsItem.hover();
+    await opsItem.getByTestId('sgb-gnav-select').click();
+    await expect(page.getByTestId('sgb-selbar-label'), 'SGB-07: Select fills the send bar with the group').toHaveText(
+      new RegExp(`Group: ${NAMES.G_OPS} · 1 segment · \\d+ participants?`));
+
+    // 4) rename: the group doc changes, the segment doc does not
+    const before = await getDoc('segmentboardconfig', IDS.MANUAL);
+    await page.getByTestId('sgb-groups-manage').click();
+    const opsRow = grpDlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.G_OPS}"]`) });
+    await opsRow.getByTestId('sgb-grp-name').fill(NAMES.G_OPS2);
+    await opsRow.getByTestId('sgb-grp-rename').click();
+    await pollUntil(() => getDoc('segmentboardgroups', gOps!.id), (g) => g?.name === NAMES.G_OPS2, { label: 'G_OPS renamed' });
+    expect(await getDoc('segmentboardconfig', IDS.MANUAL), 'SGB-07: a rename never touches the segment').toEqual(before);
+    const opsRow2 = grpDlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.G_OPS2}"]`) });
+    await opsRow2.getByTestId('sgb-grp-hist').click();
+    await expect(opsRow2.getByTestId('sgb-history-item'), 'SGB-07: create · segment-added · rename').toHaveCount(3, { timeout: 20_000 });
+
+    // 5) delete (window.confirm is accepted by open()): soft — doc kept, groupid removed, history both sides
+    await opsRow2.getByTestId('sgb-grp-delete').click();
+    await pollUntil(() => getDoc('segmentboardgroups', gOps!.id), (g) => g?.deleted === true, { label: 'G_OPS soft-deleted' });
+    await pollUntil(() => getDoc('segmentboardconfig', IDS.MANUAL), (d) => !!d && d.groupid === undefined, { label: 'groupid removed' });
+    const [del] = await ghist(gOps!.id, 'delete');
+    expect(JSON.stringify(del ?? {}), 'SGB-07: the delete entry lists the segment it was removed from').toContain(IDS.MANUAL);
+    await grpDlg.getByRole('button', { name: 'Close' }).click();
+    await expect(manual().getByTestId('sgb-card-group'), 'SGB-07: no group label after the delete').toHaveCount(0);
+    await expect(nav.getByTestId('sgb-gnav-item').filter({ hasText: NAMES.G_OPS2 }), 'SGB-07: a deleted group leaves the nav').toHaveCount(0);
+  });
+
   // Hooks no case above drives: stats tiles (global counts, not run-scoped), refresh controls, the remaining
   // dialog controls, the side panel's export / compare / save-as-list, and the uP! / CPM count filters.
   test.fixme('SGB-ADDR1 board, dialog and side-panel controls addressable (deferred behavioral)', async ({ page }) => {
@@ -209,79 +295,6 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
       page.getByTestId('sgb-drawer-search'), page.getByTestId('sgb-drawer-export'), page.getByTestId('sgb-drawer-save-list'),
     ]) expect(l).toBeTruthy();
   });
-  test('SGB-07 groups: create, assign, move, rename (segments untouched), soft delete (groupid removed, histories written)', async ({ page }) => {
-    const groupId = async (name: string) => (await pollUntil(() => queryWhere('segmentboardgroups', [['name', '==', name]]), (r) => r.length === 1, { label: `group ${name}` }))[0].id;
-    const gh = (gid: string, action: string) => queryWhere(`segmentboardgroups/${gid}/grouphistory`, [['action', '==', action]]);
-    const cfg = () => getDoc('segmentboardconfig', IDS.MANUAL);
-    await open(page);
-    // groups live in the always-visible left panel; its pencil opens the create / rename / delete dialog
-    const nav = page.getByTestId('sgb-gnav');
-    await nav.getByTestId('sgb-groups-manage').click();
-    const dlg = page.getByTestId('sgb-grp-dlg');
-    for (const n of [NAMES.GA, NAMES.GB]) {
-      await dlg.getByTestId('sgb-grp-new-name').fill(n);
-      await dlg.getByTestId('sgb-grp-create').click();
-      await expect(dlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${n}"]`) })).toHaveCount(1);
-    }
-    const GA = await groupId(NAMES.GA), GB = await groupId(NAMES.GB);
-    expect((await gh(GA, 'create')).length, 'SGB-07: the group records its creation').toBe(1);
-    await page.keyboard.press('Escape');
-
-    const pick = async (label: string) => {
-      await editCard(page, NAMES.MANUAL);
-      await page.getByTestId('sgb-dlg-group').selectOption({ label });
-      await page.getByTestId('sgb-dlg-save').click();
-    };
-    await pick(NAMES.GA);
-    await pollUntil(cfg, (d) => d?.groupid === GA, { label: 'segment in group A' });
-    await expect(card(page, NAMES.MANUAL).getByTestId('sgb-card-group'), 'SGB-07: the card shows its group').toHaveText(NAMES.GA);
-    await pick(NAMES.GB);
-    await pollUntil(cfg, (d) => d?.groupid === GB, { label: 'segment moved to group B' });
-    await pollUntil(() => gh(GA, 'segment-removed'), (r) => r.length === 1, { label: 'A records the segment leaving' });
-    const added = await gh(GB, 'segment-added');
-    expect(added.map((e) => e['segmentid']), 'SGB-07: B records the segment joining').toEqual([IDS.MANUAL]);
-    expect(String(added[0]?.['updatedby'] ?? ''), 'SGB-07: group history updatedby is a profile id').not.toContain('@');
-    expect(added[0]?.['updatedat'], 'SGB-07: group history updatedat').toBeTruthy();
-
-    // left panel: B counts 1 segment; Not grouped is listed; clicking B shows only its card; Select fills the send bar
-    const navB = nav.getByTestId('sgb-gnav-item').filter({ hasText: NAMES.GB });
-    await expect(navB.getByTestId('sgb-gnav-count'), 'SGB-07: the panel counts the segments in the group').toHaveText('1');
-    await expect(nav.getByTestId('sgb-gnav-none'), 'SGB-07: the panel lists Not grouped').toHaveCount(1);
-    await navB.getByRole('button', { name: NAMES.GB }).click();
-    await expect(page.getByTestId('sgb-card'), 'SGB-07: choosing the group shows only its segments').toHaveCount(1);
-    await expect(card(page, NAMES.MANUAL)).toHaveCount(1);
-    await navB.getByTestId('sgb-gnav-select').click();
-    await expect(page.getByTestId('sgb-selbar-label'), 'SGB-07: Select fills the send bar with the group').toContainText(`Group: ${NAMES.GB}`);
-    await page.locator('#selbar [data-act="clear-cardsel"]').click();
-    await nav.getByTestId('sgb-gnav-all').click();
-    await expect(page.getByTestId('sgb-card').filter({ hasText: NAMES.MANUAL })).toHaveCount(1);
-    await nav.getByTestId('sgb-groups-manage').click();
-
-    // rename: only the group doc changes
-    const rowB = dlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.GB}"]`) });
-    await rowB.getByTestId('sgb-grp-name').fill(NAMES.GB2);
-    await rowB.getByTestId('sgb-grp-rename').click();
-    await pollUntil(() => getDoc('segmentboardgroups', GB), (d) => d?.name === NAMES.GB2, { label: 'group renamed' });
-    expect((await cfg())?.groupid, 'SGB-07: rename leaves the segment untouched').toBe(GB);
-    expect((await gh(GB, 'rename')).length).toBe(1);
-    // the dialog re-renders with the new name, so find the row again by it
-    const rowB2 = dlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.GB2}"]`) });
-    await rowB2.getByTestId('sgb-grp-hist').click();
-    await expect(dlg.getByTestId('sgb-history-item').first(), 'SGB-07: the group History lists its events').toBeVisible();
-
-    // delete: soft — the group doc stays as deleted, the segment loses its groupid, both histories record it
-    await dlg.getByTestId('sgb-grp-row').filter({ has: page.locator(`input[value="${NAMES.GB2}"]`) }).getByTestId('sgb-grp-delete').click();
-    await pollUntil(() => getDoc('segmentboardgroups', GB), (d) => d?.deleted === true, { label: 'group soft-deleted' });
-    expect(await getDoc('segmentboardgroups', GB), 'SGB-07: the group doc is never deleted').not.toBeNull();
-    await pollUntil(cfg, (d) => !!d && d.groupid === undefined, { label: 'groupid removed from the segment' });
-    expect((await gh(GB, 'delete')).length).toBe(1);
-    const segRemoved = await queryWhere(`segmentboardconfig/${IDS.MANUAL}/segmenthistory`, [['changedfields', 'array-contains', 'groupid']]);
-    expect(segRemoved.some((h) => (h['changes'] as any)?.groupid?.from === GB && (h['changes'] as any)?.groupid?.to === null),
-      'SGB-07: the segment history records the group removal').toBe(true);
-    await page.keyboard.press('Escape');
-    await expect(card(page, NAMES.MANUAL).getByTestId('sgb-card-group'), 'SGB-07: no label after the delete').toHaveCount(0);
-  });
-
   test('SGB-08 import & move: review list (default ticks, not matched), move into a manual segment, lists + history', async ({ page }) => {
     const AUTO_ID = await autoId();
     const hist = (seg: string, action: string) => queryWhere(`segmentboardconfig/${seg}/segmenthistory`, [['action', '==', action]]);
@@ -346,8 +359,6 @@ test.describe.serial('Profiles — Segment Board (stored lists, manual placement
     for (const l of [
       page.getByTestId('sgb-mig-open'), page.getByTestId('sgb-mig-dlg'), page.getByTestId('sgb-mig-row'),
       page.getByTestId('sgb-mig-run'), page.getByTestId('sgb-mig-done'),
-      // the dialog's inline "New group…" (SGB-07 creates groups from Manage groups instead)
-      page.getByTestId('sgb-dlg-group-new'), page.getByTestId('sgb-dlg-group-add'),
     ]) expect(l).toBeTruthy();
   });
   test.fixme('SGB-ADDR2 import & compare and count filters addressable (deferred behavioral)', async ({ page }) => {

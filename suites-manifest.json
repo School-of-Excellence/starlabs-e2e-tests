@@ -25,15 +25,15 @@
       "*.spec.ts",
       "**/*.spec.ts",
       "firebase.json",
-    "firestore.indexes.json",
-    "firestore.rules",
+      "firestore.indexes.json",
+      "firestore.rules",
       "package-lock.json",
       "tsconfig*.json",
       "**/tsconfig*.json",
       "*.conf.js",
       "**/*.conf.js",
       "scripts/**",
-    "qa/**",
+      "qa/**",
       "src/app/LiveKit Cloud/**",
       "src/assets/**",
       "src/coi-serviceworker.js",
@@ -108,8 +108,8 @@
       "capture": "all",
       "specDir": "queue",
       "ciReady": true,
-      "_onlyWhy": "The queue GATE is the curated subset operator.spec + the logic self-tests (matches queue-e2e.yml:37). The full queue/ directory (37 files) carries a known flaky/divergent tail (studio-V2, big, count-drift) the operator decided to LEAVE (2026-09-15). branch-suites (the console lane) reads `only` so its queue leg runs the SAME gate as the per-app caller, instead of the whole directory — keeping the two lanes consistent.",
-      "only": "queue/operator.spec.ts queue/invariants-selftest.spec.ts queue/oracle-selftest.spec.ts",
+      "_onlyWhy": "The queue GATE is the curated subset operator.spec + the logic self-tests (matches queue-e2e.yml:37). The full queue/ directory (37 files) carries a known flaky/divergent tail (studio-V2, big, count-drift) the operator decided to LEAVE (2026-09-15). branch-suites (the console lane) reads `only` so its queue leg runs the SAME gate as the per-app caller, instead of the whole directory — keeping the two lanes consistent. 2026-11-05: queue/slot-deletion.spec.ts added to the gate — it is the acceptance contract for the slot-deletion fix (a slot may only be deleted when nothing is booked against it). QSD-02/QSD-03 are RED on purpose until that fix lands; the rest guard against regressing the cases that already pass.",
+      "only": "queue/operator.spec.ts queue/invariants-selftest.spec.ts queue/oracle-selftest.spec.ts queue/slot-deletion.spec.ts queue/appointment-slots.spec.ts",
       "appPaths": [
         "src/app/queue system/**",
         "src/app/big/**",
@@ -180,7 +180,7 @@
             "src/app/queue system/initiate-event-product/**",
             "src/app/big/**"
           ],
-          "only": "queue/big-analytics.spec.ts queue/big-cohorts-duplicate.spec.ts queue/big-ladder.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
+          "only": "queue/big-analytics.spec.ts queue/big-cohorts-duplicate.spec.ts queue/big-cohorts-randomize.spec.ts queue/big-ladder.spec.ts queue/cross-db-lowerbound.spec.ts queue/invariants-selftest.spec.ts queue/loop-bound-selftest.spec.ts queue/oracle-selftest.spec.ts"
         }
       }
     },
@@ -416,6 +416,40 @@
         "functions/components/clientissue.js"
       ],
       "reviewNote": "WIRED 2026-09-08; CI-READY 2026-09-15. The emulator twin now exists (playwright.support.emulator.config.ts via makeEmulatorConfig({suite:'support'}) + support/support/emulator-global-setup|teardown.ts), so the suite joins the emulator gate. config switched to the emulator twin and ciReady flipped true so the suite runs on the emulator gate via branch-suites and the console mirror (suites-deploy) credits src/app/Customer Support/**."
+    },
+    "atc": {
+      "title": "ATC (Prescribe / Edit / View)",
+      "description": "Prescribe ATC, Edit ATC and View Prescribed ATC incl. bulk Change Agent, drafts, two-device conflict and media — EMULATOR ONLY (seeded firestore-atc; never the development or production database).",
+      "config": "playwright.atc.emulator.report.config.ts",
+      "capture": "failure-only",
+      "specDir": "atc",
+      "ciReady": true,
+      "appPaths": [
+        "src/app/ATC/prescribe-atc/**",
+        "src/app/ATC/edit-atc/**",
+        "src/app/ATC/view-prescribed-atc/**",
+        "src/app/ATC/shared/**",
+        "src/app/ATC/atc-option/**",
+        "src/app/ATC/atc-ael-confirm/**",
+        "src/app/ATC/preview-atc-before-submission/**",
+        "src/app/ATC/select-validator/**",
+        "src/app/shared/atc-draft.service.ts",
+        "src/app/shared/atc-draft.logic.ts",
+        "src/app/shared/media-cache.service.ts",
+        "src/app/ATC/atc-preview/**",
+        "src/app/ATC/view-upgraded-atc/**",
+        "src/app/ATC/view-participant-atc/**",
+        "src/app/ATC/view-assigned-atc/**",
+        "src/app/ATC/review-flag-atc/**",
+        "src/app/ATC/add-review-notes/**",
+        "src/app/ATC/pick-for-mentoring/**",
+        "src/app/ATC/eit-education-atc/**",
+        "src/app/ATC/live-prescription/**",
+        "src/app/ATC/Triple ATC/**",
+        "src/app/view-ai-generated-atc/**"
+      ],
+      "cfPaths": [],
+      "reviewNote": "ADDED 2026-10-13 (plan specs/plans/2026-10-13-atc-prescribe-edit-view.md). ciReady:true 2026-10-13 — suite green 25/25 against offline-ATC (operator order: suite first, then ship). 2026-10-14: Charan set ciReady:false (aba4b287) because the atc specs drive hooks that existed ONLY on offline-ATC, which blocked other cross-cutting releases (app.routes.ts) — a fair call. Re-enabled 2026-10-14 by operator decision (option A) to gate the offline-ATC rollout on a real green run of the merged code; coordinated with Charan. While offline-ATC is not yet in development, any OTHER branch touching a crossCutting file will hit atc drift — merge offline-ATC promptly. Operator rule: ATC is tested against the EMULATOR ONLY — seed-atc.js refuses to run without the emulator hosts (G1), the specs abort and fail on any real Firestore/Storage request (G2), and emulator-wiring.spec.ts proves firestore-atc reads the emulator (G3). Only these three routes are re-allowed in _support/excluded-routes.ts; every other ATC route stays excluded and unclaimed."
     },
     "unit": {
       "title": "Unit tests",

@@ -6,7 +6,7 @@
 // or open a real Zoom window. NOTE: on the test project getCloudFunctionUrl() returns '' for
 // workshopprogressmessage (the project isn't in its URL map, workshop-dashboard.component.ts:481), so
 // the comms HTTP path is inert here regardless — the firewall is belt-and-suspenders.
-import { Page } from '@playwright/test';
+import { Page, Locator } from '@playwright/test';
 import { loginAs } from '../../queue/support/actors';
 import { installAllExternalStubs } from '../../queue/stubs';
 import { installProdFirewall } from '../../_shared/prod-firewall';
@@ -541,6 +541,51 @@ export async function resetWorkshopConfigBaseline(): Promise<void> {
   }, { merge: true });
 }
 
+// =================================================================================================
+// 2026-11-05 — "Allow edit" on a Question assignment (workshopconfig v2 → Challenges).
+// =================================================================================================
+
+/** A dedicated workshop (copy of W_INACTIVE) so WS-76 never races WS-06/WS-10 on the same doc. */
+export const wsAllowEdit = {
+  id: `${RUN}_W_allowedit`,
+  set: `Allow Edit Set ${RUN}`,
+  question: `AE Question ${RUN}`,
+  form: `AE Form ${RUN}`,
+};
+
+/**
+ * Seed one set with two assignment activities: a Question one written BEFORE the switch existed
+ * (no `allowedit` key at all) and a Form one (the negative control — it must never show the switch).
+ * PRECONDITION write only.
+ */
+export async function seedAllowEditConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const base: any = (await db.collection('workshopconfiguration').doc(wsIds.W_INACTIVE).get()).data() || {};
+  // No `active` key (WS-13 counts active==false docs) and its own title (list specs find rows by the
+  // W_INACTIVE title), so this copy is invisible to every other case that may run beside it.
+  delete base.active;
+  await db.collection('workshopconfiguration').doc(wsAllowEdit.id).set({
+    ...base,
+    docid: wsAllowEdit.id,
+    detailpage: { ...(base.detailpage || {}), title: `Allow Edit Workshop ${RUN}` },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_ae_set`, heading: wsAllowEdit.set, subheading: '',
+      challenges: [
+        { type: 'assignment', challengeid: `${RUN}_ae_q`, name: wsAllowEdit.question, assignmenttype: 'question',
+          submissionformat: 'text', status: '' },
+        { type: 'assignment', challengeid: `${RUN}_ae_f`, name: wsAllowEdit.form, assignmenttype: 'form', status: '' },
+      ],
+    }],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function cleanAllowEditConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsAllowEdit.id).delete().catch(() => { });
+}
+
 /**
  * Delete any enrollment docs the WS-08 enroll flow created for p2 on the dashboard workshop, so the test
  * is re-runnable (it asserts a +1 delta). App-written docs carry NO testrunid — we key them by their
@@ -699,6 +744,38 @@ export async function cleanHomeSeriesFieldsDoc(): Promise<void> {
   const snap = await admin.firestore().collection('eiflixhomeseries')
     .where('title', '==', wsHomeSeriesTitle).get().catch(() => ({ docs: [] as any[] }));
   for (const d of snap.docs) await d.ref.delete().catch(() => { });
+}
+
+// =================================================================================================
+// 2026-11-04 — per-episode "Copy link" on the Edit Home Series dialog.
+// =================================================================================================
+
+/** A SAVED series (so it has an id) with one real episode and one row that points at none. */
+export const wsHomeSeriesLink = {
+  id: `${RUN}_hs_link`,
+  title: `WS HS Link ${RUN}`,
+};
+
+/**
+ * Seed the WS-74 series: row 1 references the seeded episode, row 2 has no episode at all (the
+ * negative control — it must get no link). PRECONDITION write only.
+ */
+export async function seedHomeSeriesLinkDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('eiflixhomeseries').doc(wsHomeSeriesLink.id).set({
+    docid: wsHomeSeriesLink.id, title: wsHomeSeriesLink.title, created: admin.firestore.Timestamp.now(),
+    homeseries: [
+      { title: 'Linked', footer: '', headtag: '', subtitle: '', episoderef: db.doc(`episodes/${wsAddIds.EP_HS}`) },
+      { title: 'No episode', footer: '', headtag: '', subtitle: '' },
+    ],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function cleanHomeSeriesLinkDoc(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('eiflixhomeseries').doc(wsHomeSeriesLink.id).delete().catch(() => { });
 }
 
 // =================================================================================================
@@ -1474,4 +1551,652 @@ export async function clearUsersRangePaid(): Promise<void> {
   const FV = admin.firestore.FieldValue;
   await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_C)
     .set({ movedtoexist: FV.delete(), movedon: FV.delete() }, { merge: true });
+}
+
+// =================================================================================================
+// 2026-10-13 — Master Class Purchase card in the Users section (WS-60).
+// =================================================================================================
+
+export const wsMasterclassIds = {
+  capNew: `${RUN}_mc_cap_new`,     // captured, today, NU_A (a new user)  → tagged New User
+  capPm: `${RUN}_mc_cap_pm`,       // captured, today, p0 (a participant) → NOT tagged
+  capOld: `${RUN}_mc_cap_old`,     // captured, 40 days ago               → in All, outside 30D
+  failed: `${RUN}_mc_failed`,      // status 'failed', NU_C, today        → NEGATIVE CONTROL: never shown
+};
+export const wsMasterclassAmounts = { capNew: 499, capPm: 1500, capOld: 2999, failed: 777 };
+export const wsMasterclassJourney = `BIG Journey ${RUN}`;
+
+/**
+ * Four payments against the seeded W_DASH workshop (an existing doc, read-only elsewhere, so no other
+ * suite's workshop counts move). The failed row's payer (NU_C) appears in NO captured row, so if the
+ * card ever shows NU_C it can only be because the status filter let a non-captured payment through.
+ */
+export async function seedMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ref = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const daysAgo = (n: number) => { const d = new Date(); d.setDate(d.getDate() - n); return T.fromDate(d); };
+  const put = (id: string, status: string, profileid: string, amountRupees: number, datetime: any) =>
+    db.collection('workshoppaymentlog').doc(id).set({ docid: id, status, profileid, amountRupees, datetime, workshopref: ref, ...tag });
+  await Promise.all([
+    put(wsMasterclassIds.capNew, 'captured', wsAddIds.NU_A, wsMasterclassAmounts.capNew, daysAgo(0)),
+    put(wsMasterclassIds.capPm, 'captured', wsProfileIds.p0, wsMasterclassAmounts.capPm, daysAgo(0)),
+    put(wsMasterclassIds.capOld, 'captured', wsAddIds.NU_B, wsMasterclassAmounts.capOld, daysAgo(40)),
+    put(wsMasterclassIds.failed, 'failed', wsAddIds.NU_C, wsMasterclassAmounts.failed, daysAgo(0)),
+    // p0's journey doc names itself in `journeyname`; the dashboard reads `journey`. Give it one for
+    // this case so the participant row has a journey to show. Removed by clearMasterclassPayments().
+    db.collection('journey').doc(wsAddIds.JRN_BIG).set({ journey: wsMasterclassJourney }, { merge: true }),
+  ]);
+}
+
+export async function clearMasterclassPayments(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('journey').doc(wsAddIds.JRN_BIG)
+    .set({ journey: admin.firestore.FieldValue.delete() }, { merge: true });
+  await Promise.all(Object.values(wsMasterclassIds).map(id =>
+    admin.firestore().collection('workshoppaymentlog').doc(id).delete().catch(() => undefined)));
+}
+
+/** Captured payments in the Users-range window (null = All), counted by the TEST over the whole collection. */
+export async function countCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let n = 0;
+  snap.forEach((d: any) => {
+    if (!win) { n++; return; }
+    const at = asDate((d.data() || {})['datetime']);
+    if (at && at >= win.start && at <= win.end) n++;
+  });
+  return n;
+}
+
+/** Sum of amountRupees over captured payments in the Users-range window (non-numeric counts as 0, as the card does). */
+export async function sumCapturedForUsersRange(days: number | null): Promise<number> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshoppaymentlog').where('status', '==', 'captured').get();
+  const win = days === null ? null : usersRangeBounds(days);
+  let sum = 0;
+  snap.forEach((d: any) => {
+    const data = d.data() || {};
+    if (win) {
+      const at = asDate(data['datetime']);
+      if (!(at && at >= win.start && at <= win.end)) return;
+    }
+    const n = Number(data['amountRupees']);
+    sum += Number.isFinite(n) ? n : 0;
+  });
+  return sum;
+}
+
+// =================================================================================================
+// 2026-10-13 — Device Breakdown From–To (WS-61).
+// =================================================================================================
+
+/** 'yyyy-MM-dd' for a day offset — the register's doc-id format, and an <input type=date> value. */
+export function wsDbDayKey(dayOffset: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Two platform names no real device writes, so no other page in the emulator can contribute to them. */
+export const wsDbPlatforms = { recent: 'WS61Recent', older: 'WS61Older' };
+
+/**
+ * Register pages 20 and 50 days back — outside the 7-day window the dashboard heals (and rewrites) on
+ * load, inside the 90 days it reads. Written with merge and only under `platforms.<our name>`, so an
+ * existing page for those days keeps everything else, and `profileids` is never touched (Non-Active
+ * reads that, and must not see these seconds).
+ *   -20d  WS61Recent  2h   → inside 1M
+ *   -50d  WS61Older   1h   → outside 1M, inside 2M
+ */
+export async function seedDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: { [wsProfileIds.p0]: 7200 } } }, { merge: true }),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: { [wsProfileIds.p1]: 3600 } } }, { merge: true }),
+  ]);
+}
+
+export async function clearDeviceBreakdownPages(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  const col = admin.firestore().collection('eiflixdailywatchers');
+  await Promise.all([
+    col.doc(wsDbDayKey(-20)).set({ platforms: { [wsDbPlatforms.recent]: FV.delete() } }, { merge: true }).catch(() => undefined),
+    col.doc(wsDbDayKey(-50)).set({ platforms: { [wsDbPlatforms.older]: FV.delete() } }, { merge: true }).catch(() => undefined),
+  ]);
+}
+
+// =================================================================================================
+// 2026-10-13 — profileid in the SendmessagesComponent WhatsApp payload (WDC-14 / WS-63), and a
+// dependency-free .xlsx reader for the panel-export checks (WS-60 / WS-62).
+// =================================================================================================
+
+/** A WATI endpoint that exists only inside the test browser — every request to it is answered by a route. */
+export const wsWatiEndpoint = 'https://wati.e2e.test';
+/** The one template the stubbed WATI offers. No custom params, so the form is valid once it is picked. */
+export const wsWatiTemplate = 'e2e_progress_tpl';
+
+/**
+ * SendmessagesComponent reads `classify/wati` in TWO shapes before it will list templates:
+ * initWatiConfig() reads `wati[0]` and gives up if it is missing; loadTemplates() reads `['101723']`.
+ * Both point at the in-browser endpoint above, so no request can reach the real WATI. Merged and
+ * removed field-by-field, so an existing document keeps anything else it holds.
+ */
+export async function seedWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const cfg = { watitoken: 'e2e-token', endpoint: wsWatiEndpoint };
+  await admin.firestore().collection('classify').doc('wati').set({ wati: [cfg], '101723': cfg }, { merge: true });
+}
+
+export async function clearWatiConfig(): Promise<void> {
+  const admin = seed.initAdmin();
+  const FV = admin.firestore.FieldValue;
+  await admin.firestore().collection('classify').doc('wati')
+    .set({ wati: FV.delete(), '101723': FV.delete() }, { merge: true }).catch(() => undefined);
+}
+
+/**
+ * Answer the dialog's template request with one UTILITY template, and capture the bulk-send POST the
+ * screen makes to `workshopprogressmessage`. On the emulator project that function's URL resolves to ''
+ * (the project is not in the screens' URL maps), so the POST goes to the app's own origin — it is
+ * matched by its body, never by URL, and answered here so nothing is sent anywhere.
+ */
+export async function captureWorkshopProgressSend(page: Page): Promise<() => any | null> {
+  let captured: any = null;
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': 'GET,POST,OPTIONS' };
+  await page.route(`${wsWatiEndpoint}/**`, async (route) => {
+    if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    return route.fulfill({
+      status: 200, headers: cors, contentType: 'application/json',
+      body: JSON.stringify({ messageTemplates: [
+        { elementName: wsWatiTemplate, status: 'APPROVED', type: 'template', category: 'UTILITY', customParams: [] },
+      ] }),
+    });
+  });
+  await page.route('**/*', async (route) => {
+    const req = route.request();
+    const body = req.method() === 'POST' ? req.postData() : null;
+    if (body && /"type"\s*:\s*"(whatsapp|mail)"/.test(body) && /"(participants|recipients)"/.test(body)) {
+      captured = JSON.parse(body);
+      return route.fulfill({ status: 200, contentType: 'application/json',
+        body: JSON.stringify({ successCount: 1, failureCount: 0, broadcastName: 'e2e' }) });
+    }
+    return route.fallback();
+  });
+  return () => captured;
+}
+
+/**
+ * Read the first sheet of an .xlsx into rows of cell values — no dependency, just the zip container
+ * and the sheet XML. Handles stored and deflated entries, and shared / inline / str / numeric cells,
+ * which covers what SheetJS writes. The hub has no SheetJS, which is why WS-55 could only check size.
+ */
+export function readXlsxRows(file: string): (string | number)[][] {
+  const zlib = require('zlib');
+  const buf: Buffer = require('fs').readFileSync(file);
+  let eocd = buf.length - 22;
+  while (eocd >= 0 && buf.readUInt32LE(eocd) !== 0x06054b50) eocd--;
+  if (eocd < 0) throw new Error('readXlsxRows: not a zip file');
+  const entries = new Map<string, Buffer>();
+  let p = buf.readUInt32LE(eocd + 16);
+  for (let i = 0, n = buf.readUInt16LE(eocd + 10); i < n; i++) {
+    const method = buf.readUInt16LE(p + 10), size = buf.readUInt32LE(p + 20);
+    const nameLen = buf.readUInt16LE(p + 28), extraLen = buf.readUInt16LE(p + 30), commentLen = buf.readUInt16LE(p + 32);
+    const local = buf.readUInt32LE(p + 42);
+    const name = buf.toString('utf8', p + 46, p + 46 + nameLen);
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
+    const raw = buf.subarray(start, start + size);
+    entries.set(name, method === 8 ? zlib.inflateRawSync(raw) : raw);
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  const xml = (n: string) => entries.get(n)?.toString('utf8') ?? '';
+  const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const shared = [...xml('xl/sharedStrings.xml').matchAll(/<si>([\s\S]*?)<\/si>/g)]
+    .map((m) => unesc([...m[1].matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((t) => t[1]).join('')));
+  const sheetName = [...entries.keys()].find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k)) || 'xl/worksheets/sheet1.xml';
+  const colIndex = (ref: string) => ref.replace(/\d+/g, '').split('').reduce((a, c) => a * 26 + c.charCodeAt(0) - 64, 0) - 1;
+  const rows: (string | number)[][] = [];
+  for (const r of xml(sheetName).matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
+    const line: (string | number)[] = [];
+    for (const c of r[1].matchAll(/<c r="([A-Z]+\d+)"([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/g)) {
+      const t = (/t="([^"]+)"/.exec(c[2]) || [])[1];
+      const inner = c[3] || '';
+      const v = (/<v>([\s\S]*?)<\/v>/.exec(inner) || [])[1];
+      let value: string | number = '';
+      if (t === 's') value = shared[Number(v)] ?? '';
+      else if (t === 'inlineStr') value = unesc([...inner.matchAll(/<t[^>]*>([\s\S]*?)<\/t>/g)].map((m) => m[1]).join(''));
+      else if (t === 'str' || t === 'b' || t === 'e') value = unesc(v ?? '');
+      else if (v !== undefined) value = Number(v);
+      line[colIndex(c[1])] = value;
+    }
+    rows.push(Array.from(line, (x) => (x === undefined ? '' : x)));
+  }
+  return rows;
+}
+
+/** Pick the stubbed template in SendmessagesComponent (the list arrives after the in-browser WATI answers). */
+export async function pickWatiTemplate(page: Page, composer: Locator): Promise<void> {
+  await composer.locator('mat-select[formcontrolname="templateName"]').click();
+  await page.locator('mat-option').filter({ hasText: wsWatiTemplate }).click();
+}
+
+// =================================================================================================
+// 2026-10-14 — Sale Achieved card (live workshops only) on the workshop dashboard (WDC-15).
+// =================================================================================================
+
+/** Make W_DASH a live workshop for one case (`workshoptype` is the root creation field). */
+export async function setDashWorkshopType(value: string): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH).set({ workshoptype: value }, { merge: true });
+}
+
+/** Put W_DASH back as seeded — no `workshoptype` at all. */
+export async function clearDashWorkshopType(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsIds.W_DASH)
+    .set({ workshoptype: admin.firestore.FieldValue.delete() }, { merge: true });
+}
+
+/**
+ * Three extra workshops for the /workshops Status and Type filters (WS-64): live on the web only,
+ * live on EiFlix mobile only, and completed with every switch off. No `testrunid`, so WS-01's count of
+ * the three base seeds is untouched; removed by clearListFilterWorkshops. PRECONDITION writes only.
+ */
+export const wsListFilterIds = {
+  WEB: `${RUN}_W_list_web`,
+  MOBILE: `${RUN}_W_list_mobile`,
+  DONE: `${RUN}_W_list_done`,
+};
+export const wsListFilterTitles = {
+  WEB: `Web Only Workshop ${RUN}`,
+  MOBILE: `Mobile Only Workshop ${RUN}`,
+  DONE: `Completed Workshop ${RUN}`,
+};
+
+export async function seedListFilterWorkshops(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  const base = (id: string, title: string) => ({
+    docid: id, atcmodel: null, categorybased: false, created: day(-3),
+    detailpage: { type: 'workshop', title, shortdescription: 'seeded list filter',
+      workshopStartDate: day(1), workshopEndDate: day(8), registrationStartDate: day(-4), registrationEndDate: day(0) },
+  });
+  await Promise.all([
+    db.collection('workshopconfiguration').doc(wsListFilterIds.WEB).set({
+      ...base(wsListFilterIds.WEB, wsListFilterTitles.WEB),
+      active: false, webactive: true, eiflixmobileactive: false, workshopcompleted: false, workshoptype: 'cpworkshop' }),
+    db.collection('workshopconfiguration').doc(wsListFilterIds.MOBILE).set({
+      ...base(wsListFilterIds.MOBILE, wsListFilterTitles.MOBILE),
+      active: false, webactive: false, eiflixmobileactive: true, workshopcompleted: false, workshoptype: 'evergreenworkshop' }),
+    db.collection('workshopconfiguration').doc(wsListFilterIds.DONE).set({
+      ...base(wsListFilterIds.DONE, wsListFilterTitles.DONE),
+      active: false, webactive: false, eiflixmobileactive: false, workshopcompleted: true, workshoptype: 'liveworkshop' }),
+  ]);
+}
+
+export async function clearListFilterWorkshops(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(Object.values(wsListFilterIds).map(id => db.collection('workshopconfiguration').doc(id).delete()));
+}
+
+/**
+ * Independent count for WS-03's upper bound: not-completed workshops with ANY of the three live
+ * switches on, read straight from Firestore.
+ */
+export async function countLiveNotCompletedWorkshops(): Promise<number> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').get();
+  return snap.docs.filter(d => {
+    const x = d.data();
+    return x.workshopcompleted !== true && (x.active === true || x.webactive === true || x.eiflixmobileactive === true);
+  }).length;
+}
+
+/** temporary_forms drafts the app autosaved for a delivery form, read from the firestore-forms EMULATOR db (WS-27). */
+export async function formDraftsFor(formid: string): Promise<any[]> {
+  const forms = seed.getFormsDb(seed.initAdmin());
+  return (await forms.collection('temporary_forms').where('formid', '==', formid).get()).docs.map((d: any) => d.data());
+}
+
+/** Remove those drafts (the app writes them untagged, so the run-tag teardown cannot catch them). */
+export async function deleteFormDraftsFor(formid: string): Promise<void> {
+  const forms = seed.getFormsDb(seed.initAdmin());
+  const snap = await forms.collection('temporary_forms').where('formid', '==', formid).get();
+  await Promise.all(snap.docs.map((d: any) => d.ref.delete()));
+}
+
+/**
+ * Total Enrolled export (WS-69, 2026-10-21). Two extra enrollments on W_DASH:
+ *   ENR_NU    — NU_A, a genuine new user (new_user_data, no movedtoexist).
+ *   ENR_MOVED — a person moved to existing (movedtoexist: true) with NO participant metadata doc
+ *               yet. That shape had no `metadata` on its panel row and crashed the export
+ *               ("reading 'email'") in production.
+ * Removed by id in clearEnrolledExportCase. PRECONDITION writes only.
+ */
+export const wsExportIds = {
+  MOVED: `${RUN}_pf_moved_nometa`,
+  ENR_MOVED: `${RUN}_enr_moved_nometa`,
+  ENR_NU: `${RUN}_enr_nu_a`,
+};
+export const wsExportPeople = {
+  moved: { name: `Moved NoMeta ${RUN}`, email: `moved.nometa.${RUN}@example.com`, phone: '9888800001' },
+  nu: { name: `NU Alpha ${RUN}`, email: `${wsAddIds.NU_A}@example.com`, phone: '9999900001' },
+};
+
+export async function seedEnrolledExportCase(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const now = admin.firestore.Timestamp.now();
+  const dashRef = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const p = wsExportPeople.moved;
+  await Promise.all([
+    db.collection('new_user_data').doc(wsExportIds.MOVED).set({
+      docid: wsExportIds.MOVED, name: p.name, email: p.email, phonenumber: p.phone,
+      movedtoexist: true, movedon: now, created: now,
+    }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).set({
+      docid: wsExportIds.ENR_MOVED, profileid: wsExportIds.MOVED, status: 'enrolled', workshopref: dashRef, enrollmentdate: now,
+    }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU).set({
+      docid: wsExportIds.ENR_NU, profileid: wsAddIds.NU_A, status: 'enrolled', workshopref: dashRef, enrollmentdate: now,
+    }),
+  ]);
+}
+
+export async function clearEnrolledExportCase(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([
+    db.collection('new_user_data').doc(wsExportIds.MOVED).delete(),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).delete(),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU).delete(),
+  ]);
+}
+
+/** Minimal CSV reader for the dashboard exports (quoted fields, doubled quotes, CRLF). */
+export function readCsvRows(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [], cell = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
+  }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => c !== ''));
+}
+
+/**
+ * Hot Leads Today (WS-71, 2026-10-21): today's EiFlix viewing for three people. Hot means more than
+ * 3h in total (the dashboard default):
+ *   p0   4h   (participant metadata, journey JRN_BIG)  -> hot
+ *   NU_A 3.5h (new user)                               -> hot
+ *   p1   1h                                            -> NOT hot (negative control)
+ * Removed by id in clearHotLeads. PRECONDITION writes only.
+ */
+export const wsHotLeadLogIds = [1, 2, 3].map(n => `${RUN}_hl_log${n}`);
+
+export async function seedHotLeads(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const at = admin.firestore.Timestamp.fromDate(new Date(Date.now() - 60_000));   // today
+  const log = (id: string, profileid: string, type: string, seconds: number) =>
+    db.collection('content analytics').doc(id).set({
+      profileid, videoid: `${RUN}_hl_video`, type, logdate: at, totaltimespend: seconds, totalruntime: 18000,
+    });
+  await Promise.all([
+    log(wsHotLeadLogIds[0], wsProfileIds.p0, 'eiflix', 4 * 3600),
+    log(wsHotLeadLogIds[1], wsAddIds.NU_A, 'eiflixcontent', 3.5 * 3600),
+    log(wsHotLeadLogIds[2], wsProfileIds.p1, 'eiflix', 3600),
+  ]);
+}
+
+export async function clearHotLeads(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(wsHotLeadLogIds.map(id => db.collection('content analytics').doc(id).delete()));
+}
+
+// =================================================================================================
+// 2026-11-02 — Engagement dashboard v2 (/engagementdashboardv2): content engagement, month by month.
+// =================================================================================================
+
+/**
+ * A small world under two run-scoped journeys, so every journey row the spec asserts is its own:
+ *   activeEngaged    active,     activejourney ALPHA,                             viewed THIS month from
+ *                    'EiflixWorkshop' (5400 s) AND 'eiflixcontent' (1800 s) — 2h over two sources
+ *   nonActiveLast    non active, no activejourney, lastcompletedjourney ALPHA,     viewed THIS month from
+ *                    'eiflixworkshop' (600 s) — the same source as Asha's, spelt in lower case
+ *   activeLastMonth  active,     activejourney ALPHA,                             viewed LAST month only
+ *   expired          'expired',  activejourney ALPHA,                             viewed THIS month — NOT in the dashboard
+ *   activeBeta       active,     activejourney BETA,                              never viewed
+ *   farahFlip        non active, lastcompletedjourney GAMMA, completed journey ran 9 months ago .. the 15th of
+ *                    LAST month -> Non active now, but ACTIVE last month (past months use the dates)
+ *   gitaUndated      active,     activejourney GAMMA, no subscription dates -> counted now, left out of
+ *                    last month
+ * plus a view THIS month by a profile with no metadata at all (must be ignored).
+ * FREE USERS (`new_user_data`, doc id = profileid, 2026-11-03):
+ *   hari   signed up 2 months ago, viewed THIS month (900 s, eiflixcontent on eiflixapp) -> engaged free user
+ *   ivy    signed up on the 1st of THIS month, never viewed -> free now, not yet a user last month
+ *   jai    movedtoexist: true, viewed THIS month -> never a free user (negative control)
+ *   Asha   ALSO has a new_user_data doc (not moved) -> still counted once, as paid (negative control)
+ * Subscription dates (2026-11-03): Asha 2 months ago .. +10 months; Bala's completed journey ended on the 10th
+ * two months ago (Non active last month); Chitra 3 months ago .. +9; Esha started on the 1st of THIS month
+ * (not a customer last month -> BETA has no row last month).
+ * Expected ALPHA this month: 3 people, 2 engaged, 1 not engaged, 67%. Last month: 1 engaged (Chitra).
+ * From = eiflixcontent only: ALPHA 3 / 1 engaged (Asha) / 2 not engaged / 33%.
+ * Platforms: Asha's workshop view is on 'EiflixApp', her content view on 'eiflixweb'; everyone else is on
+ * 'eiflixapp'. Platform = eiflixweb only: ALPHA 3 / 1 (Asha) / 2 / 33%. From eiflixworkshop AND platform
+ * eiflixweb: no single view matches both -> ALPHA 3 / 0 / 3 / 0%.
+ */
+export const wsEd2 = {
+  JOURNEY_ALPHA: `${RUN}_J_ed2_alpha`,
+  JOURNEY_BETA: `${RUN}_J_ed2_beta`,
+  JOURNEY_GAMMA: `${RUN}_J_ed2_gamma`,
+  ALPHA_NAME: `ED2 Alpha ${RUN}`,
+  BETA_NAME: `ED2 Beta ${RUN}`,
+  GAMMA_NAME: `ED2 Gamma ${RUN}`,
+  people: {
+    activeEngaged: { id: `${RUN}_ed2_asha`, name: `ED2 Asha ${RUN}`, email: `ed2.asha.${RUN}@example.test` },
+    nonActiveLast: { id: `${RUN}_ed2_bala`, name: `ED2 Bala ${RUN}`, email: `ed2.bala.${RUN}@example.test` },
+    activeLastMonth: { id: `${RUN}_ed2_chitra`, name: `ED2 Chitra ${RUN}`, email: `ed2.chitra.${RUN}@example.test` },
+    expired: { id: `${RUN}_ed2_dev`, name: `ED2 Dev ${RUN}`, email: `ed2.dev.${RUN}@example.test` },
+    activeBeta: { id: `${RUN}_ed2_esha`, name: `ED2 Esha ${RUN}`, email: `ed2.esha.${RUN}@example.test` },
+    farahFlip: { id: `${RUN}_ed2_farah`, name: `ED2 Farah ${RUN}`, email: `ed2.farah.${RUN}@example.test` },
+    gitaUndated: { id: `${RUN}_ed2_gita`, name: `ED2 Gita ${RUN}`, email: `ed2.gita.${RUN}@example.test` },
+  },
+  STRAY: `${RUN}_ed2_stray`,
+  free: {
+    hari: { id: `${RUN}_ed2_hari`, name: `ED2 Hari ${RUN}`, email: `ed2.hari.${RUN}@example.test` },
+    ivy: { id: `${RUN}_ed2_ivy`, name: `ED2 Ivy ${RUN}`, email: `ed2.ivy.${RUN}@example.test` },
+    jai: { id: `${RUN}_ed2_jai`, name: `ED2 Jai ${RUN}`, email: `ed2.jai.${RUN}@example.test` },
+  },
+  LOGS: [`${RUN}_ed2_log_asha`, `${RUN}_ed2_log_bala`, `${RUN}_ed2_log_chitra`, `${RUN}_ed2_log_dev`, `${RUN}_ed2_log_stray`, `${RUN}_ed2_log_asha2`,
+    `${RUN}_ed2_log_hari`, `${RUN}_ed2_log_jai`],
+  ASHA_SECONDS: 7200,
+};
+
+/** PRECONDITION writes only: two journeys, five metadata docs, five content views. */
+export async function seedEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = new Date();
+  const thisMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth(), 1, 10, 0, 0));
+  const lastMonth = T.fromDate(new Date(now.getFullYear(), now.getMonth() - 1, 15, 10, 0, 0));
+  const P = wsEd2.people;
+  // A local date `months` from this month, on `day`, 10:00.
+  const at = (months: number, day: number) => T.fromDate(new Date(now.getFullYear(), now.getMonth() + months, day, 10, 0, 0));
+  const meta = (p: { id: string; name: string; email: string }, customerstatus: string, activejourney: string | null,
+    lastcompletedjourney: string | null, dates: Record<string, any> = {}) =>
+    db.collection('participant metadata').doc(p.id).set({
+      profileid: p.id, name: p.name, email: p.email, countrycode: '+91', phonenumber: '9000000000',
+      customerstatus, activejourney, lastcompletedjourney, ...dates, ...tag,
+    });
+  const view = (id: string, profileid: string, logdate: any, totaltimespend: number, from: string, platform_name: string) =>
+    db.collection('content analytics').doc(id).set({
+      docid: id, profileid, logdate, totaltimespend, from, platform_name, type: 'eiflixcontent',
+      videoid: `${RUN}_vid_ed2`, videoname: `TEST_VID_ED2_${RUN}`, ...tag,
+    });
+  const [lAsha, lBala, lChitra, lDev, lStray, lAsha2, lHari, lJai] = wsEd2.LOGS;
+  const F = wsEd2.free;
+  const nud = (p: { id: string; name: string; email: string }, created: any, extra: Record<string, any> = {}) =>
+    db.collection('new_user_data').doc(p.id).set({
+      name: p.name, email: p.email, countryCode: '+91', phonenumber: '9000000001', created, ...extra, ...tag,
+    });
+  await Promise.all([
+    db.collection('journey').doc(wsEd2.JOURNEY_ALPHA).set({ id: wsEd2.JOURNEY_ALPHA, journey: wsEd2.ALPHA_NAME, ...tag }),
+    db.collection('journey').doc(wsEd2.JOURNEY_BETA).set({ id: wsEd2.JOURNEY_BETA, journey: wsEd2.BETA_NAME, ...tag }),
+    db.collection('journey').doc(wsEd2.JOURNEY_GAMMA).set({ id: wsEd2.JOURNEY_GAMMA, journey: wsEd2.GAMMA_NAME, ...tag }),
+    meta(P.activeEngaged, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-2, 1), subscriptionend: at(10, 1) }),
+    meta(P.nonActiveLast, 'non active', null, wsEd2.JOURNEY_ALPHA, { lastsubscriptionstart: at(-8, 1), lastsubscriptionend: at(-2, 10) }),
+    meta(P.activeLastMonth, 'active', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.expired, 'expired', wsEd2.JOURNEY_ALPHA, null, { subscriptionstart: at(-3, 1), subscriptionend: at(9, 1) }),
+    meta(P.activeBeta, 'active', wsEd2.JOURNEY_BETA, null, { subscriptionstart: at(0, 1), subscriptionend: at(12, 1) }),
+    meta(P.farahFlip, 'non active', null, wsEd2.JOURNEY_GAMMA, { lastsubscriptionstart: at(-9, 1), lastsubscriptionend: at(-1, 15) }),
+    meta(P.gitaUndated, 'active', wsEd2.JOURNEY_GAMMA, null),
+    view(lAsha, P.activeEngaged.id, thisMonth, 5400, 'EiflixWorkshop', 'EiflixApp'),
+    view(lAsha2, P.activeEngaged.id, thisMonth, 1800, 'eiflixcontent', 'eiflixweb'),
+    view(lBala, P.nonActiveLast.id, thisMonth, 600, 'eiflixworkshop', 'eiflixapp'),
+    view(lChitra, P.activeLastMonth.id, lastMonth, 1200, 'eiflixcontent', 'eiflixapp'),
+    view(lDev, P.expired.id, thisMonth, 900, 'EiflixWorkshop', 'eiflixapp'),
+    view(lStray, wsEd2.STRAY, thisMonth, 300, 'eiflixcontent', 'eiflixweb'),
+    nud(F.hari, at(-2, 1)),
+    nud(F.ivy, at(0, 1)),
+    nud(F.jai, at(-2, 1), { movedtoexist: true }),
+    nud(P.activeEngaged, at(-2, 1)),
+    view(lHari, F.hari.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
+    view(lJai, F.jai.id, thisMonth, 900, 'eiflixcontent', 'eiflixapp'),
+  ]);
+}
+
+/** Undo seedEd2World, by id. */
+export async function clearEd2World(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all([
+    ...[wsEd2.JOURNEY_ALPHA, wsEd2.JOURNEY_BETA, wsEd2.JOURNEY_GAMMA].map(id => db.collection('journey').doc(id).delete().catch(() => undefined)),
+    ...Object.values(wsEd2.people).map(p => db.collection('participant metadata').doc(p.id).delete().catch(() => undefined)),
+    ...[...Object.values(wsEd2.free), wsEd2.people.activeEngaged].map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)),
+    ...wsEd2.LOGS.map(id => db.collection('content analytics').doc(id).delete().catch(() => undefined)),
+  ]);
+}
+
+/**
+ * INDEPENDENT oracle for the headline cards, straight from Firestore: everyone in `participant metadata`
+ * with customerstatus 'active' / 'non active' (optionally one of them), once per profile, and how many of
+ * them have a `content analytics` view dated inside the LOCAL calendar month of `when` — optionally only
+ * views whose `from` (and `platform_name`), trimmed and lower-cased, is one of `froms` (and `platforms`).
+ * For a PAST month the status comes from each person's one subscription period (subscriptionstart/end,
+ * else lastsubscriptionstart/end): ran on a day of the month = active, ended before it = non active, began
+ * after it = not yet (left out), no dates = undated (left out). The current month uses customerstatus.
+ * Free users: `new_user_data` docs with movedtoexist not true whose id is not in the paid population; in a
+ * past month one whose `created` is after the month is not yet a user (left out, counted in notYet).
+ * Its own code path — the spec never reads the app's numbers back into its expectation.
+ */
+export async function ed2Oracle(when: Date, status: 'all' | 'active' | 'non active' | 'free', froms: string[] = [], platforms: string[] = []):
+  Promise<{ total: number; engaged: number; active: number; nonActive: number; free: number; notYet: number; undated: number }> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const start = new Date(when.getFullYear(), when.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(when.getFullYear(), when.getMonth() + 1, 0, 23, 59, 59, 999);
+  const [metas, views, nuds] = await Promise.all([
+    db.collection('participant metadata').where('customerstatus', 'in', ['active', 'non active']).get(),
+    // Up to the last nanosecond of the month's final second — logdate is stored to the microsecond.
+    db.collection('content analytics').where('logdate', '>=', T.fromDate(start))
+      .where('logdate', '<=', new T(Math.floor(end.getTime() / 1000), 999_999_999)).get(),
+    db.collection('new_user_data').get(),
+  ]);
+  const fromOk = (d: any) => !froms.length || froms.includes(String(d.get('from') ?? '').trim().toLowerCase());
+  const platformOk = (d: any) => !platforms.length || platforms.includes(String(d.get('platform_name') ?? '').trim().toLowerCase());
+  const viewed = new Set(views.docs.filter(d => fromOk(d) && platformOk(d)).map(d => String(d.get('profileid') ?? '')));
+  const today = new Date();
+  const past = when.getFullYear() * 12 + when.getMonth() < today.getFullYear() * 12 + today.getMonth();
+  const asDate = (v: any): Date | null => (v && typeof v.toDate === 'function' ? v.toDate() : null);
+  const placed = (d: any): string => {
+    if (!past) return String(d.get('customerstatus'));
+    const s = asDate(d.get('subscriptionstart')), e = asDate(d.get('subscriptionend'));
+    const from = s || e ? s : asDate(d.get('lastsubscriptionstart'));
+    const to = s || e ? e : asDate(d.get('lastsubscriptionend'));
+    if (to && to.getTime() < start.getTime()) return 'non active';
+    if (from && from.getTime() > end.getTime()) return 'notyet';
+    return from && to ? 'active' : 'undated';
+  };
+  const byProfile = new Map<string, string>();
+  metas.docs.forEach(d => {
+    const pid = String(d.get('profileid') ?? d.id);
+    if (!byProfile.has(pid)) byProfile.set(pid, placed(d));
+  });
+  nuds.docs.forEach(d => {
+    if (d.get('movedtoexist') === true || byProfile.has(d.id)) return;
+    const created = asDate(d.get('created'));
+    byProfile.set(d.id, past && created && created.getTime() > end.getTime() ? 'notyet' : 'free');
+  });
+  let total = 0, engaged = 0, active = 0, nonActive = 0, free = 0, notYet = 0, undated = 0;
+  byProfile.forEach((s, pid) => {
+    if (s === 'notyet') { notYet++; return; }
+    if (s === 'undated') { undated++; return; }
+    if (s === 'active') active++; else if (s === 'free') free++; else nonActive++;
+    if (status !== 'all' && s !== status) return;
+    total++;
+    if (viewed.has(pid)) engaged++;
+  });
+  return { total, engaged, active, nonActive, free, notYet, undated };
+}
+
+// =================================================================================================
+// 2026-11-04 — /newusersprofile "Referred by": a referrer can be a NEW USER (new_user_data), not only a
+// participant. Four referred users, each pointing at a different kind of referrer (PRECONDITION writes only):
+//   byNew      refferedprofile = NU_A's id            (new_user_data only)    -> NU_A's name
+//   byNewRef   refferedprofile = DocumentReference to new_user_data/NU_B       -> NU_B's name
+//   byMeta     refferedprofile = p0                   (participant metadata)   -> p0's metadata name (wins)
+//   byUnknown  refferedprofile = an id nobody has                              -> the id itself
+// Created "now" so they are the newest rows (top of the table).
+// =================================================================================================
+export const wsReferred = {
+  byNew: { id: `${RUN}_nu_ref_new`, name: `Ref By New ${RUN}` },
+  byNewRef: { id: `${RUN}_nu_ref_newref`, name: `Ref By NewRef ${RUN}` },
+  byMeta: { id: `${RUN}_nu_ref_meta`, name: `Ref By Meta ${RUN}` },
+  byUnknown: { id: `${RUN}_nu_ref_unknown`, name: `Ref By Unknown ${RUN}` },
+  UNKNOWN_REFERRER: `${RUN}_nobody_refers`,
+};
+
+export async function seedReferredNewUsers(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const now = admin.firestore.Timestamp.now();
+  const tag = { testrunid: RUN, _testdata: true };
+  const put = (p: { id: string; name: string }, refferedprofile: any) => db.collection('new_user_data').doc(p.id).set({
+    docid: p.id, name: p.name, email: `${p.id}@example.com`, phonenumber: '9999900009', countryCode: '+91',
+    enable: true, created: now, tags: [], refferedby: 'E2EREF', refferedprofile, ...tag,
+  });
+  const R = wsReferred;
+  await Promise.all([
+    put(R.byNew, wsAddIds.NU_A),
+    put(R.byNewRef, db.collection('new_user_data').doc(wsAddIds.NU_B)),
+    put(R.byMeta, wsProfileIds.p0),
+    put(R.byUnknown, R.UNKNOWN_REFERRER),
+  ]);
+}
+
+export async function clearReferredNewUsers(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await Promise.all([wsReferred.byNew, wsReferred.byNewRef, wsReferred.byMeta, wsReferred.byUnknown]
+    .map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)));
 }

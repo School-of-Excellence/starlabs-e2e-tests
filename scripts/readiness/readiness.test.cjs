@@ -259,6 +259,43 @@ console.log('\nanalyzeElements (new vs pre-existing, against a base version)');
   eq('  and the hook shows as a missing test case', r[0].untestedNew, ['nobody-tests-this']);
 }
 
+// --- HUB-AHEAD RULE (D2, 2026-10-17): drift only if the BASE had the selector ------------------
+console.log('\nsplitByBase (hub-ahead rule — readiness half)');
+{
+  const raw = lib.findDriftedSelectors(hub, app, manifest, ['queue']); // drifted: qm-renamed
+  eq('findDriftedSelectors now returns an empty notLanded list', raw.notLanded, []);
+
+  const removed = lib.splitByBase(raw, (id) => id === 'qm-renamed'); // base HAD it → this diff removed it
+  eq('base had it → still DRIFT (blocks)', removed.drifted.map((d) => d.id), ['qm-renamed']);
+  eq('  …and nothing is "not landed"', removed.notLanded, []);
+
+  const ahead = lib.splitByBase(raw, () => false); // base NEVER had it → another branch's feature
+  eq('base never had it → NOT drift', ahead.drifted, []);
+  eq('  …reported as not landed', ahead.notLanded.map((d) => d.id), ['qm-renamed']);
+  eq('  …and the verdict does not block on it',
+    lib.verdictOf({ classified: { fenced: [], uncovered: [], covered: [{}] }, drift: ahead, newComponents: [] }), 'MATCHED');
+
+  const unreadable = lib.splitByBase(raw, null); // base could not be read → conservative
+  eq('base unreadable → stays DRIFT (conservative)', unreadable.drifted.map((d) => d.id), ['qm-renamed']);
+  eq('  …and still NEEDS_UPDATE',
+    lib.verdictOf({ classified: { fenced: [], uncovered: [], covered: [{}] }, drift: unreadable, newComponents: [] }), 'NEEDS_UPDATE');
+}
+
+console.log('\npartitionSpecsByLandedHooks (hub-ahead rule — run-time half)');
+{
+  fs.writeFileSync(path.join(hub, 'queue', 'landed.spec.ts'),
+    `await page.getByTestId('qm-present').click();\nawait page.locator('[data-testid="qm-bound"]').click();`);
+  fs.writeFileSync(path.join(hub, 'queue', 'ahead.spec.ts'),
+    `await page.getByTestId('qm-present').click();\nawait page.getByTestId('feature-x-btn').click();`);
+  fs.writeFileSync(path.join(hub, 'queue', 'nohooks.spec.ts'), `await page.goto('/');`);
+  const r = lib.partitionSpecsByLandedHooks(hub, app,
+    ['queue/landed.spec.ts', 'queue/ahead.spec.ts', 'queue/nohooks.spec.ts', 'queue/missing-file.spec.ts']);
+  eq('kept: specs whose hooks all exist (static + bound), hook-less specs, and unknown paths',
+    r.kept, ['queue/landed.spec.ts', 'queue/nohooks.spec.ts', 'queue/missing-file.spec.ts']);
+  eq('skipped: the spec waiting for a not-landed hook, with the hook it needs',
+    r.skipped, [{ spec: 'queue/ahead.spec.ts', missing: ['feature-x-btn'] }]);
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 
 console.log(`\n${pass} passed · ${fail} failed\n`);

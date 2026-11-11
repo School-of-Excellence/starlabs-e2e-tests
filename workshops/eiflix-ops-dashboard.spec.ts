@@ -25,13 +25,18 @@ import {
   seedPurchases, clearPurchases, countNewUserDataInWindow, countCapturedPayments,
   countWebUsersFromAnalytics,
   countNewUsersCard, countPaidCard, seedUsersRangePaid, clearUsersRangePaid, wsDateInputValue,
+  seedMasterclassPayments, clearMasterclassPayments, countCapturedForUsersRange, wsMasterclassAmounts,
+  sumCapturedForUsersRange, wsMasterclassJourney,
+  seedDeviceBreakdownPages, clearDeviceBreakdownPages, wsDbDayKey, wsDbPlatforms,
+  readXlsxRows,
   alignWorkshopMetadataNames,
   // NOTE: the NU display names live in wsAddNames, NOT wsNames — importing from the wrong export
   // object yields `undefined` silently (the hub has no tsc step).
   wsAddNames, seedUserTypeLoginLogs, clearUserTypeLoginLogs,
+  seedHotLeads, clearHotLeads, wsAddIds, readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { countWhere } from '../queue/support/firestore-admin';
+import { countWhere, getDoc, queryWhere, pollUntil, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -99,6 +104,45 @@ test.describe('Workshops — eiflix operations dashboard: EiFlix App Logs', () =
     await installWshopStubs(page);
   });
   test.afterEach(() => clearLoginLogs());
+
+  // WS-72 — From–To date range on the App Logs (2026-10-23). Seeded logins: today (p0, p1), 3 days
+  // ago (p0, version 2.2.9), 20 days ago (p2), 40 days ago (p0, 2.0.0).
+  test('WS-72 the App Logs From–To range shows only logins inside it, hints until both are picked, and Clear goes back to Today', async ({ page }) => {
+    const day = (ago: number) => { const d = new Date(); d.setDate(d.getDate() - ago); return d; };
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const section = page.getByTestId('eif-logs-section');
+    const rows = section.getByTestId('eif-logs-row');
+    const from = section.getByTestId('eif-logs-range-from');
+    const to = section.getByTestId('eif-logs-range-to');
+    await expect(rows.filter({ hasText: wsMetaNames.p0 }), 'WS-72: Today loads first').toHaveCount(1, { timeout: 60_000 });
+
+    // One date alone does nothing yet, and says so.
+    await from.fill(iso(day(25)));
+    await expect(page.getByText('Pick both dates to apply the range'), 'WS-72: half a range shows the hint').toBeVisible();
+    await expect(section.getByTestId('eif-logs-range-today')).toHaveAttribute('aria-pressed', 'true');
+
+    // 25 → 10 days ago: only p2's 20-day-old login.
+    await to.fill(iso(day(10)));
+    await expect(rows, 'WS-72: one login between 25 and 10 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText(wsMetaNames.p2);
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: no preset is active').toHaveAttribute('aria-pressed', 'false');
+    await expect(section.getByTestId('eif-logs-count'), 'WS-72: the count names the range').toContainText('for ');
+
+    // 5 → 1 days ago: only the 3-day-old login (version 2.2.9); today's and older ones stay out.
+    await from.fill(iso(day(5)));
+    await to.fill(iso(day(1)));
+    await expect(rows, 'WS-72: one login between 5 and 1 days ago').toHaveCount(1, { timeout: 60_000 });
+    await expect(rows.first()).toContainText('2.2.9');
+
+    // Clear: back to Today, pickers emptied.
+    await section.getByTestId('eif-logs-range-clear').click();
+    await expect(section.getByTestId('eif-logs-range-today'), 'WS-72: Clear returns to Today').toHaveAttribute('aria-pressed', 'true');
+    await expect(from).toHaveValue('');
+    await expect(to).toHaveValue('');
+    await expect(rows.filter({ hasText: wsMetaNames.p1 }), 'WS-72: today\'s logins are back').toHaveCount(1, { timeout: 60_000 });
+  });
 
   test('WS-31 the logs table honours the range, drops other apps, maps names, filters, sorts and pages', async ({ page }) => {
     await loginAsWshopAdmin(page);
@@ -798,5 +842,403 @@ test.describe('Workshops — eiflix operations dashboard: Users date range', () 
     await settles(newCard, todayNew, 'WS-58: Today narrows again');
     await page.getByTestId('eif-users-range-all').click();
     await settles(newCard, allNew, 'WS-58: All restores the unfiltered total');
+  });
+
+  // =================================================================================================
+  // WS-59 — Total B!G Participants moved out of Users into its own B!G section (2026-10-13)
+  //
+  // Both halves are asserted: the card is GONE from Users and PRESENT in B!G. Asserting only the new
+  // home would pass on a page that rendered the card twice.
+  // =================================================================================================
+  test('WS-59 the B!G card renders in its own section and no longer in Users', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+
+    const users = page.getByTestId('eif-users-section');
+    const big = page.getByTestId('eif-big-section');
+    await expect(users.locator('button.eod-card').filter({ hasText: 'Total New Users' }),
+      'WS-59: Users keeps Total New Users').toBeVisible({ timeout: 45_000 });
+    await expect(users.locator('button.eod-card').filter({ hasText: 'New Users to Paid' }),
+      'WS-59: Users keeps New Users to Paid').toBeVisible();
+
+    // [ASSERT] negative half first — the card must have LEFT Users.
+    await expect(users.locator('button.eod-card').filter({ hasText: 'B!G Participants' }),
+      'WS-59: B!G Participants must no longer render in Users').toHaveCount(0);
+    // Two user cards + Master Class Purchase (WS-60, 2026-10-13) — and no B!G.
+    await expect(users.locator('button.eod-card'), 'WS-59: Users holds exactly three cards').toHaveCount(3);
+
+    // ...and it arrived in the B!G section, as the only card there.
+    await expect(big.getByRole('heading', { name: 'B!G' }), 'WS-59: the B!G section has its heading').toBeVisible();
+    const bigCard = big.locator('button.eod-card').filter({ hasText: 'Total B!G Participants' });
+    await expect(bigCard, 'WS-59: B!G Participants renders in the B!G section').toHaveCount(1);
+    await expect(big.locator('button.eod-card'), 'WS-59: B!G holds just that one card').toHaveCount(1);
+
+    // [REAL-UI] the moved card still opens its details panel — it is the same card, only relocated.
+    await bigCard.click();
+    await expect(page.locator('.eod-panel, [role="dialog"]').filter({ hasText: 'Total B!G Participants' }).first(),
+      'WS-59: the moved card still opens its details panel').toBeVisible({ timeout: 15_000 });
+  });
+});
+
+// ===================================================================================================
+// WS-60 — Master Class Purchase card (Users section)
+//
+// Captured payments only, tagged New User when the payer is in new_user_data, labelled with the
+// workshop's detail-page title, narrowed by the Users range on `datetime`. NU_C's payment is FAILED
+// and NU_C pays for nothing else, so NU_C appearing anywhere means the status filter leaked.
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: Master Class Purchase', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedMasterclassPayments();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearMasterclassPayments();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-60 Master Class Purchase counts captured payments by datetime, tags new users and names the workshop', async ({ page }) => {
+    const all = await countCapturedForUsersRange(null);
+    const today = await countCapturedForUsersRange(0);
+    expect(today, `WS-60: the seed must hold captured payments outside today (all=${all}, today=${today})`).toBeLessThan(all);
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const card = page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'Master Class Purchase' });
+    await expect(card, 'WS-60: the card renders in the Users section').toBeVisible({ timeout: 45_000 });
+    const countOf = async () => Number((await card.locator('.eod-count').first().innerText().catch(() => '')).replace(/[^\d]/g, '')) || 0;
+
+    await expect.poll(countOf, { message: `WS-60: All counts every captured payment (${all})`, timeout: 60_000 }).toBe(all);
+    await page.getByTestId('eif-users-range-today').click();
+    await expect.poll(countOf, { message: `WS-60: Today narrows on datetime (${today})`, timeout: 30_000 }).toBe(today);
+    // The card highlights the rupee total (no "collected" wording) — summed by the TEST.
+    const todaySum = await sumCapturedForUsersRange(0);
+    await expect(card.getByTestId('eif-mc-card-amount'), `WS-60: the card highlights today's total (₹${todaySum})`)
+      .toHaveText('₹' + todaySum.toLocaleString('en-IN'), { timeout: 15_000 });
+    await expect(card, 'WS-60: the old "collected" wording is gone').not.toContainText('collected');
+
+    // [REAL-UI] open the card — the panel lists the people behind the number.
+    await card.click();
+    const panel = page.locator('.eod-panel').filter({ hasText: 'Master Class Purchase' });
+    await expect(panel, 'WS-60: the details panel opens').toBeVisible({ timeout: 15_000 });
+
+    // [ASSERT] negative control first: the FAILED payer must not be listed.
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }),
+      'WS-60: a failed payment must never appear').toHaveCount(0);
+    // ...nor the 40-day-old captured payer, under Today.
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuBravo }),
+      'WS-60: a captured payment outside the window must not appear under Today').toHaveCount(0);
+
+    const newRow = panel.locator('.eod-row').filter({ hasText: wsAddNames.nuAlpha });
+    await expect(newRow, 'WS-60: the new user\'s purchase is listed').toHaveCount(1);
+    await expect(newRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: payer in new_user_data is tagged New User').toHaveCount(1);
+    await expect(newRow.getByTestId('eif-mc-workshop'), 'WS-60: the row names the workshop by its detail-page title')
+      .toHaveText(`Dashboard Workshop ${RUN}`);
+    await expect(newRow.getByTestId('eif-mc-amount'), 'WS-60: the row shows the amount in rupees')
+      .toHaveText('₹' + wsMasterclassAmounts.capNew);
+
+    // The purchases hover card (2026-10-14) belongs to New Users to Paid only — a Master Class row never opens it.
+    await newRow.hover();
+    await expect(page.getByTestId('eif-plan-tip'), 'WS-60: no purchases card on a Master Class row').toHaveCount(0);
+
+    // [REAL-UI] Export carries the amount as a NUMBER (2026-10-13), read back from the downloaded file.
+    const [mcDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
+    const mcFile = test.info().outputPath('masterclass.xlsx');
+    await mcDownload.saveAs(mcFile);
+    const mcSheet = readXlsxRows(mcFile);
+    const amountCol = mcSheet[0].indexOf('Amount');
+    expect(amountCol, 'WS-60: the export has an Amount column').toBeGreaterThan(-1);
+    const mcRow = mcSheet.find((r) => r[0] === wsAddNames.nuAlpha);
+    expect(mcRow?.[amountCol], 'WS-60: the new user\'s amount is exported as a number').toBe(wsMasterclassAmounts.capNew);
+    // The export names the workshop each purchase was for (2026-10-17) — same title the row shows.
+    const workshopCol = mcSheet[0].indexOf('Workshop');
+    expect(workshopCol, 'WS-60: the export has a Workshop column').toBeGreaterThan(-1);
+    expect(mcRow?.[workshopCol], 'WS-60: the purchase\'s workshop title is exported').toBe(`Dashboard Workshop ${RUN}`);
+
+    const pmRow = panel.locator('.eod-row').filter({ has: page.getByTestId('eif-mc-amount').filter({ hasText: '₹1,500' }) });
+    await expect(pmRow, 'WS-60: the participant\'s purchase is listed').toHaveCount(1);
+    await expect(pmRow.locator('.eod-tag').filter({ hasText: 'New User' }), 'WS-60: a participant is NOT tagged New User').toHaveCount(0);
+
+    // Journey — participant-metadata payers only.
+    await expect(pmRow.locator('.eod-tag-journey'), 'WS-60: the participant row shows their journey')
+      .toHaveText(wsMasterclassJourney, { timeout: 15_000 });
+    await expect(newRow.locator('.eod-tag-journey'), 'WS-60: a new-user-only payer has no journey').toHaveCount(0);
+  });
+});
+
+// ===================================================================================================
+// WS-61 — Device Breakdown: From–To alongside 1M / 2M / 3M
+//
+// Two register pages under platform names nothing else writes: -20d (2h) and -50d (1h). Each step
+// asserts the platform that must be ABSENT before the one that must be present, so a window that
+// ignored a bound fails rather than passing on extra rows.
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: Device Breakdown range', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await seedDeviceBreakdownPages();
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearDeviceBreakdownPages();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test('WS-61 Device Breakdown narrows to a manual From–To and Clear returns to 1M', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const rowFor = (name: string) => page.locator('button.eod-db-row').filter({ hasText: new RegExp(name, 'i') });
+
+    // [1M default] -20d in, -50d out.
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: 1M includes the -20d page').toHaveCount(1, { timeout: 60_000 });
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: 1M excludes the -50d page').toHaveCount(0);
+
+    // [2M] widens to -50d.
+    await page.getByTestId('eif-set-db-range-21').click();
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: 2M includes the -50d page').toHaveCount(1, { timeout: 15_000 });
+
+    // [From–To] -50d .. -45d: only the older page. Negative half first.
+    await page.getByTestId('eif-db-range-from').fill(wsDbDayKey(-50));
+    await page.getByTestId('eif-db-range-to').fill(wsDbDayKey(-45));
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: the -20d page is outside -50d..-45d').toHaveCount(0, { timeout: 15_000 });
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: the -50d page is inside (the From day is inclusive)').toHaveCount(1);
+    await expect(rowFor(wsDbPlatforms.older).locator('.eod-db-hours'), 'WS-61: its hours come from that page alone')
+      .toHaveText('1h');
+
+    // [Clear] back to 1M.
+    await page.getByTestId('eif-db-range-clear').click();
+    await expect(rowFor(wsDbPlatforms.older), 'WS-61: Clear returns to 1M, which excludes -50d').toHaveCount(0, { timeout: 15_000 });
+    await expect(rowFor(wsDbPlatforms.recent), 'WS-61: and includes -20d again').toHaveCount(1);
+  });
+});
+
+// ===================================================================================================
+// WS-62 — New Users to Paid: Watson TOTAL AMOUNT, when the build has NO Watson config
+//
+// The emulator build sets `watson: null` on purpose — tests must never reach the finance project. That
+// makes this the one path CI can check, and it is the risky one: the lookup runs on every dashboard
+// load, so a missing config must leave the card and panel working and show NO total — never a wrong
+// "₹0" — without a console error. The arithmetic itself is unit-tested against Journey Support's
+// screenshot values (eiflixoperationsdashboard.logs.spec.ts).
+// ===================================================================================================
+test.describe('Workshops — eiflix operations dashboard: paid total amount (no Watson)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await seedUsersRangePaid();          // NU_C moved across today -> the paid card has a row
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    await clearUsersRangePaid();
+    assertNoFatal(guard, 'eiflixoperationsdashboard: no fatal console errors / pageerrors', [
+      /content analytics/i,
+      /eiflixdailywatchers/i,
+    ]);
+  });
+
+  test.fixme('WS-62 without Watson the paid card and panel still work and show no total amount', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const paid = page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'New Users to Paid' });
+    await expect(paid, 'WS-62: the paid card renders').toBeVisible({ timeout: 45_000 });
+    await expect.poll(async () => Number((await paid.locator('.eod-count').innerText()).replace(/[^\d]/g, '')) || 0,
+      { message: 'WS-62: the paid card still counts people', timeout: 60_000 }).toBeGreaterThan(0);
+    await expect(paid.getByTestId('eif-mc-card-amount'), 'WS-62: no Watson -> no total on the card (never a wrong ₹0)').toHaveCount(0);
+    // Captions (2026-10-13): "Purchased Journey" and "not yet purchased journey".
+    await expect(paid.locator('.eod-card-caption'), 'WS-62: paid card caption').toHaveText('Purchased Journey');
+    await expect(page.getByTestId('eif-users-section').locator('button.eod-card').filter({ hasText: 'Total New Users' }).locator('.eod-card-caption'),
+      'WS-62: Total New Users caption').toHaveText('Signed up · not yet purchased journey');
+
+    await paid.click();
+    const panel = page.locator('.eod-panel').filter({ hasText: 'New Users to Paid' });
+    await expect(panel.locator('.eod-row').filter({ hasText: wsAddNames.nuCharlie }), 'WS-62: the panel lists the moved person')
+      .toHaveCount(1, { timeout: 15_000 });
+    await expect(panel.getByTestId('eif-mc-amount'), 'WS-62: no Watson -> no per-person amount').toHaveCount(0);
+    // Hover card (2026-10-14): only rows carrying a Watson schedule open it — so none here.
+    // PARKED 2026-10-14: the payment-schedule hover hook is not on any app branch yet, so the rollout
+    // gate blocks on it. Restore this check (hover the nuCharlie row, expect the plan-tip hook count 0)
+    // and un-fixme WS-62 once the app change lands on development.
+
+    // Export without Watson: the people are there, the Total Amount column is not (never a column of blanks or zeros).
+    const [paidDownload] = await Promise.all([page.waitForEvent('download'), panel.getByTestId('eif-export-panel-34').click()]);
+    const paidFile = test.info().outputPath('paid.xlsx');
+    await paidDownload.saveAs(paidFile);
+    const paidSheet = readXlsxRows(paidFile);
+    expect(paidSheet.some((r) => r[0] === wsAddNames.nuCharlie), 'WS-62: the export lists the moved person').toBe(true);
+    expect(paidSheet[0], 'WS-62: no Watson -> no Total Amount column').not.toContain('Total Amount');
+  });
+});
+
+// =============================================================================================
+// WS-71 — Hot Leads Today: "Send to Slack" opens the shared People Send dialog (2026-10-21).
+// Hook prefix for the dialog: psd (New-Workshop/people-send-dialog). The dialog only SHOWS what the
+// panel passes (name, email, phone, journey); Send enables on a selection and has no action yet.
+// =============================================================================================
+test.describe('Workshops — eiflix operations dashboard: Hot Leads Send to Slack', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+    await seedHotLeads();
+  });
+  test.afterEach(async () => {
+    await clearHotLeads();
+    assertNoFatal(guard, 'eiflix ops dashboard (send to slack): no fatal console errors / pageerrors');
+  });
+
+  test('WS-71 Send to Slack lists the hot leads with search, sort, select, and Send enabling on a pick', async ({ page }) => {
+    // Oracles from Firestore: p0's stored name and journey name; NU_A is the seeded new user.
+    const p0: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const journey: any = p0?.activejourney ? await getDoc('journey', p0.activejourney) : null;
+    const p0Name = String(p0?.name || '');
+    const nuName = wsAddNames.nuAlpha;
+
+    await loginAsWshopAdmin(page);
+    await page.goto('/eiflixoperationsdashboard', { waitUntil: 'domcontentloaded' });
+    const hotCard = page.getByTestId('eif-hot-error-15');
+    await expect(hotCard.locator('.eod-hot-count'), 'WS-71: Hot Leads Today counts the two seeded hot leads')
+      .toHaveText('2', { timeout: 60_000 });
+    await hotCard.click();
+
+    const slack = page.getByTestId('eif-send-to-slack');
+    await expect(slack, 'WS-71: the hot leads panel has Send to Slack').toBeEnabled({ timeout: 30_000 });
+    await slack.click();
+
+    const dialog = page.locator('mat-dialog-container');
+    const rows = dialog.getByTestId('psd-row');
+    await expect(rows, 'WS-71: the dialog lists the two hot leads (1h viewer left out)').toHaveCount(2, { timeout: 30_000 });
+    await expect(dialog.getByTestId('psd-paginator'), 'WS-71: pagination is there').toBeVisible();
+
+    // What the panel passed: name, journey (p0's from Firestore; the new user has none).
+    const p0Row = rows.filter({ hasText: p0Name });
+    await expect(p0Row, 'WS-71: p0 is listed by name').toHaveCount(1);
+    if (journey?.journey) await expect(p0Row, 'WS-71: with their journey').toContainText(journey.journey);
+    const nuRow = rows.filter({ hasText: nuName });
+    await expect(nuRow, 'WS-71: the new user is listed').toHaveCount(1);
+    await expect(nuRow).toContainText(`${wsAddIds.NU_A}@example.com`);
+    // Country code with the phone (new_user_data stores countryCode, participant metadata countrycode),
+    // and the user type — the panel's own rule.
+    await expect(nuRow.getByTestId('psd-cell-phone'), 'WS-71: new user phone with code').toHaveText('+91 9999900001');
+    await expect(nuRow.getByTestId('psd-cell-usertype'), 'WS-71: new user type').toHaveText('New user');
+    await expect(p0Row.getByTestId('psd-cell-phone'), 'WS-71: participant phone with code').toHaveText(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+    await expect(p0Row.getByTestId('psd-cell-usertype'), 'WS-71: participant type').toHaveText('Existing');
+    await expect(dialog.getByTestId('psd-sort-usertype')).toBeVisible();
+
+    // Send needs a selection.
+    const send = dialog.getByTestId('psd-send');
+    await expect(send, 'WS-71: Send is off with nobody picked').toBeDisabled();
+    const exportBtn = dialog.getByTestId('psd-export');
+    await expect(exportBtn, 'WS-71: Export CSV is off with nobody picked').toBeDisabled();
+    await nuRow.getByTestId('psd-select-row').locator('input').check();
+    await expect(send, 'WS-71: one pick enables Send').toBeEnabled();
+    await expect(dialog.getByTestId('psd-count')).toContainText('1 selected');
+    // Export CSV (2026-10-22): only the selected people, from what the panel passed.
+    await expect(exportBtn, 'WS-71: one pick enables Export CSV').toBeEnabled();
+    const [csvDownload] = await Promise.all([page.waitForEvent('download'), exportBtn.click()]);
+    expect(csvDownload.suggestedFilename(), 'WS-71: named after the dialog title').toMatch(/^send-to-slack-\d{4}-\d{2}-\d{2}\.csv$/);
+    const csvFile = test.info().outputPath('send-to-slack.csv');
+    await csvDownload.saveAs(csvFile);
+    const csv = readCsvRows(readFileSync(csvFile, 'utf8').replace(/^\uFEFF/, ''));
+    expect(csv[0], 'WS-71: CSV header').toEqual(['Name', 'Email', 'Phone', 'User Type', 'Journey']);
+    expect(csv.length, 'WS-71: exactly the one selected person').toBe(2);
+    expect(csv[1][0]).toBe(nuName);
+    expect(csv[1][1]).toBe(`${wsAddIds.NU_A}@example.com`);
+    expect(csv[1][2], 'WS-71: phone carries the country code').toBe('+91 9999900001');
+    expect(csv[1][3], 'WS-71: user type exported').toBe('New user');
+    await dialog.getByTestId('psd-select-all').locator('input').check();
+    await expect(dialog.getByTestId('psd-count'), 'WS-71: the header box picks everyone shown').toContainText('2 selected');
+    await dialog.getByTestId('psd-select-all').locator('input').uncheck();
+    await expect(send, 'WS-71: clearing the picks turns Send off again').toBeDisabled();
+
+    // Search narrows; a miss shows the empty line.
+    const search = dialog.getByTestId('psd-search');
+    await search.fill(nuName);
+    await expect(rows).toHaveCount(1);
+    await search.fill('zz-no-such-person');
+    await expect(dialog.getByTestId('psd-empty'), 'WS-71: a miss says so').toBeVisible();
+    await search.fill('');
+    await expect(rows).toHaveCount(2);
+
+    // Sort by name, both ways.
+    const names = async () => (await dialog.getByTestId('psd-cell-name').allInnerTexts()).map((t) => t.trim());
+    const asc = [p0Name, nuName].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: Name sorts A→Z' }).toEqual(asc);
+    await dialog.getByTestId('psd-sort-name').click();
+    await expect.poll(names, { message: 'WS-71: and Z→A' }).toEqual([...asc].reverse());
+    // The other sortable headers are there.
+    await expect(dialog.getByTestId('psd-sort-email')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-phone')).toBeVisible();
+    await expect(dialog.getByTestId('psd-sort-journey')).toBeVisible();
+
+    // Send (2026-10-28): the app writes ONE eiflixtouchpoints doc and waits for the cloud function's
+    // verdict on it. The emulator runs the hub's copy of the functions, which may not have
+    // eiflixtouchpointslack yet, so the test writes the verdict itself and checks the dialog shows it.
+    const before = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+    const created: string[] = [];
+    try {
+      await dialog.getByTestId('psd-select-all').locator('input').check();
+      await send.click();
+      await expect(send, 'WS-71: Send shows it is working').toContainText('Sending');
+      const fresh = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: the app wrote one eiflixtouchpoints doc', timeoutMs: 30_000 },
+      );
+      created.push(fresh[0].id);
+      const tp: any = fresh[0];
+      expect(tp.webhookdoc, 'WS-71: names the Slack webhook doc').toBe('eiflixhotleads');
+      expect(tp.status, 'WS-71: waiting for the cloud function').toBe('pending');
+      expect(tp.count).toBe(2);
+      expect(tp.docid, 'WS-71: carries its own id').toBe(fresh[0].id);
+      // The Slack heading is the panel header the dialog was opened from — nothing fixed.
+      expect(tp.heading, 'WS-71: heading = the side panel title').toBe('Hot Leads Today');
+      expect(tp.subheading, 'WS-71: subheading = the side panel caption').toContain('Watched over 3h of EiFlix');
+      const byName = (n: string) => tp.people.find((x: any) => x.name === n);
+      expect(byName(nuName), 'WS-71: new user').toEqual({
+        name: nuName, email: `${wsAddIds.NU_A}@example.com`, phone: '+91 9999900001', journey: 'New user',
+      });
+      expect(byName(p0Name).journey, 'WS-71: existing user: their journey, else "No journey"').toBe(journey?.journey || 'No journey');
+      expect(byName(p0Name).phone).toBe(`${p0.countrycode || p0.countryCode} ${p0.phonenumber}`);
+
+      await db().collection('eiflixtouchpoints').doc(fresh[0].id).update({ status: 'sent', channel: '#eiflix-hot-leads' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: the result is shown')
+        .toContainText('Sent 2 people to #eiflix-hot-leads', { timeout: 30_000 });
+      await expect(dialog.getByTestId('psd-count'), 'WS-71: picks cleared after a send').toContainText('0 selected');
+
+      // A refusal is shown as such.
+      const before2 = new Set((await queryWhere('eiflixtouchpoints')).map((d) => d.id));
+      await nuRow.getByTestId('psd-select-row').locator('input').check();
+      await send.click();
+      const second = await pollUntil(
+        async () => (await queryWhere('eiflixtouchpoints')).filter((d) => !before2.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-71: second send wrote a doc', timeoutMs: 30_000 },
+      );
+      created.push(second[0].id);
+      await db().collection('eiflixtouchpoints').doc(second[0].id).update({ status: 'failed', error: 'invalid_token' });
+      await expect(dialog.getByTestId('psd-send-status'), 'WS-71: a failure is shown with the reason')
+        .toContainText('invalid_token', { timeout: 30_000 });
+    } finally {
+      await Promise.all(created.map((id) => db().collection('eiflixtouchpoints').doc(id).delete()));
+    }
+
+    await dialog.getByTestId('psd-close').click();
+    await expect(dialog, 'WS-71: Close shuts the dialog').toHaveCount(0);
+    await expect(slack, 'WS-71: the hot leads panel is still open underneath').toBeVisible();
   });
 });

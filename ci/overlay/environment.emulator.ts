@@ -15,6 +15,9 @@ export const environment = {
   emulators: {
     firestore: { host: 'localhost', port: 8080 },
     auth: { url: 'http://localhost:9099' },
+    // Storage emulator (added 2026-10-13 for the ATC suite's audio/image uploads): main.ts calls
+    // connectStorageEmulator when this key exists, so uploads stay local — no real bucket is touched.
+    storage: { host: 'localhost', port: 9199 },
   },
   firebase: {
     // projectId = starlabs-cicd (the sanctioned CICD test project) so Angular reads the SAME emulator

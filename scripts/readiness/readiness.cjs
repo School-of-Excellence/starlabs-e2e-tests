@@ -60,6 +60,30 @@ function changedFiles() {
   return lib.parseNameStatus(out);
 }
 
+/**
+ * Which of `ids` appear anywhere in the BASE ref's `src/` — one `git grep` for the whole set. Returns a
+ * `(id) => boolean`, or null when the base cannot be read (then every missing selector stays blocking).
+ * A substring hit (`x-1` inside `x-10`) counts as "the base has it" — the conservative, blocking side.
+ */
+function baseDeclares(ids) {
+  const tmp = path.join(require('os').tmpdir(), `readiness-ids-${process.pid}.txt`);
+  // Match WHOLE ids: each id inside its quotes ("id" / 'id'). A bare -F pattern also matches inside a longer id —
+  // `eif-logs-range-to` inside `eif-logs-range-today` — and wrongly reported a not-landed hook as dropped (drift).
+  fs.writeFileSync(tmp, ids.flatMap((id) => [`"${id}"`, `'${id}'`]).join('\n') + '\n');
+  try {
+    const out = execFileSync('git', ['grep', '-h', '-o', '-F', '-f', tmp, BASE, '--', 'src'], {
+      cwd: APP_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const found = new Set(out.split('\n').filter(Boolean).map((m) => m.slice(1, -1)));
+    return (id) => found.has(id);
+  } catch (err) {
+    if (err && err.status === 1) return () => false; // git grep: ran fine, no matches
+    return null;                                     // base unreadable → stay conservative
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+}
+
 function main() {
   if (!fs.existsSync(APP_ROOT)) {
     console.error(`app path not found: ${APP_ROOT} (pass --app or set APP_PATH)`);
@@ -79,9 +103,13 @@ function main() {
   const added = entries.filter((e) => e.status === 'A').map((e) => e.file);
 
   const classified = lib.classifyChanges(manifest, files);
-  const drift = classified.suites.length
+  // HUB-AHEAD RULE (lib.splitByBase): a missing selector is drift only if the BASE declared it.
+  const rawDrift = classified.suites.length
     ? lib.findDriftedSelectors(HUB_ROOT, APP_ROOT, manifest, classified.suites)
-    : { checked: 0, drifted: [] };
+    : { checked: 0, drifted: [], notLanded: [] };
+  const drift = rawDrift.drifted.length
+    ? lib.splitByBase(rawDrift, baseDeclares(rawDrift.drifted.map((d) => d.id)))
+    : rawDrift;
   const newComponents = added.length
     ? lib.findUntestedNewComponents(APP_ROOT, HUB_ROOT, manifest, added)
     : [];
@@ -124,6 +152,7 @@ function main() {
     crossCutting: classified.crossCutting,
     selectorsChecked: drift.checked,
     drift: drift.drifted,
+    notLanded: drift.notLanded || [],
     newComponents,
     elements,
     canProceed: lib.canProceed(verdict),
@@ -218,6 +247,12 @@ function render(r, md = false) {
     for (const d of r.drift) L.push(`- \`${d.id}\` — used by ${d.usedBy.map((f) => `\`${f}\``).join(', ')}`);
     L.push('');
     L.push('_Either the app dropped the hook, or the spec needs updating in the hub._');
+    L.push('');
+  }
+  if (r.notLanded && r.notLanded.length) {
+    const files = [...new Set(r.notLanded.flatMap((d) => d.usedBy))];
+    L.push(`**${r.notLanded.length} selector(s) not landed yet — not blocking:** the base never had them; their specs belong to a feature still on another branch, and are skipped in this branch's run.`);
+    for (const f of files) L.push(`- \`${f}\` (${r.notLanded.filter((d) => d.usedBy.includes(f)).length} selector(s))`);
     L.push('');
   }
   if (r.newComponents.length) {

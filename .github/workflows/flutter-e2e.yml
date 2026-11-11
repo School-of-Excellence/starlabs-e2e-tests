@@ -35,6 +35,15 @@ on:
         required: false
       STARLABS_CICD_SA:
         required: false
+      FIREBASE_TOKEN:
+        description: 'firebase login:ci token — generates lib/firebase_options.dart, which is gitignored'
+        required: false
+      CONSOLE_INGEST_URL:
+        description: 'Base URL of the console ingest functions (recordSuiteStatus / recordSuiteRun)'
+        required: false
+      CONSOLE_INGEST_TOKEN:
+        description: 'Shared bearer for the console ingest endpoints'
+        required: false
 
 jobs:
   flutter-e2e:
@@ -45,6 +54,40 @@ jobs:
     steps:
       - name: Checkout flutter app (caller)
         uses: actions/checkout@v4
+
+      # ── console: this gate IS stage 2 + stage 3 ───────────────────────────────────────────────────
+      # Every POST here is best-effort (`continue-on-error`): the gate's verdict is about the code, and
+      # must not turn red because the console was unreachable.
+      #
+      # Stage 2 reports NOT_APPLICABLE with zero suites, which is the honest state — `scripts/readiness`
+      # resolves Playwright suites from suites-manifest.json `appPaths`, and no flutter mapping exists
+      # yet (v3 plan D10, deferred to the native-suite work). It is informational only: approveRollout
+      # reads `run`, never `state` or `canProceed`.
+      - name: Console — stage 2 (suite check) + stage 3 start
+        continue-on-error: true
+        env:
+          REPO: ${{ github.event.repository.name }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Guarded in-script, not with `if: secrets.* != ''` — the secrets context is not dependably
+          # available in step conditions, and a silently-never-running step is worse than an explicit skip.
+          if [ -z "${{ secrets.CONSOLE_INGEST_URL }}" ]; then
+            echo "CONSOLE_INGEST_URL not set — skipping console reporting."; exit 0
+          fi
+          post () {
+            curl -sS -X POST "${{ secrets.CONSOLE_INGEST_URL }}/$1" \
+              -H "Authorization: Bearer ${{ secrets.CONSOLE_INGEST_TOKEN }}" \
+              -H 'Content-Type: application/json' -d "$2" || echo "ingest $1 failed (non-fatal)"
+          }
+          post recordSuiteStatus "$(jq -nc --arg r "$REPO" --arg b "$BRANCH" --arg s "$SHA" \
+            --arg ri '${{ github.run_id }}' --arg ru "$RUN_URL" \
+            '{repo:$r,branch:$b,state:"NOT_APPLICABLE",canProceed:true,sha:$s,runId:$ri,runUrl:$ru,
+               suites:["analyze","flutter test"]}')"
+          post recordSuiteRun "$(jq -nc --arg r "$REPO" --arg b "$BRANCH" --arg s "$SHA" \
+            --arg ri '${{ github.run_id }}' --arg ru "$RUN_URL" \
+            '{repo:$r,branch:$b,state:"RUNNING",sha:$s,reportRunId:$ri,runUrl:$ru}')"
 
       - uses: subosito/flutter-action@v2
         with:
@@ -63,15 +106,59 @@ jobs:
       - name: flutter pub get
         run: flutter pub get
 
-      - name: Analyze (advisory)
-        continue-on-error: true
-        run: flutter analyze || echo "analyze findings (advisory)"
+      # lib/firebase_options.dart is GITIGNORED (public repo, operator directive 2026-07-15) and
+      # main.dart, Services/BackgroundService.dart and two integration tests import it. A clean CI
+      # clone therefore has no such file and `flutter analyze` fails with 8 uri_does_not_exist /
+      # undefined_identifier errors — which is exactly what the first real run did (2026-10-19).
+      #
+      # Generate it, the same way branch-apks.yml does, so there is ONE mechanism rather than two.
+      # The project here is immaterial to analysis — the gate only needs the file to exist and declare
+      # DefaultFirebaseOptions — so it points at the non-production project. Android only: the gate
+      # never builds for iOS, and each extra platform costs time for nothing.
+      - name: Install FlutterFire CLI
+        run: |
+          dart pub global activate flutterfire_cli
+          npm install -g firebase-tools
+          echo "$HOME/.pub-cache/bin" >> "$GITHUB_PATH"
+
+      - name: Generate lib/firebase_options.dart
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+        run: |
+          if [ -z "$FIREBASE_TOKEN" ]; then
+            echo "::error::FIREBASE_TOKEN is not set. The gate cannot generate lib/firebase_options.dart,"
+            echo "::error::which main.dart imports — analyze would fail with 8 undefined-identifier errors."
+            echo "::error::Add FIREBASE_TOKEN to the calling repository's secrets (firebase login:ci)."
+            exit 1
+          fi
+          flutterfire configure \
+            --project=starlabs-test \
+            --platforms=android \
+            --android-package-name=com.soe.launchyourlegacy \
+            --out=lib/firebase_options.dart \
+            --yes
+          test -f lib/firebase_options.dart && echo "generated lib/firebase_options.dart"
+
+      # HARD GATE, errors only (2026-10-17). `flutter analyze` fails on ANY finding by default, which
+      # made it unusable here: the project reports ~1,850 issues, nearly all `info`-level lints. The two
+      # --no-fatal flags narrow the gate to `error` — "this does not compile" — which is 0 today and is
+      # the signal worth blocking on. It earned its keep immediately: it caught appointments_test.dart
+      # asserting on CalendarMonthCard, a class the redesigned Calendar screen no longer has.
+      #
+      # Depends on the `analyzer: exclude: packages/**` block in the app's analysis_options.yaml —
+      # without it the vendored flutter_icons_null_safety package contributes ~38,100 findings.
+      - name: Analyze (hard gate — errors only)
+        id: analyze
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Unit / widget tests (hard gate)
+        id: unit
         run: flutter test
 
-      - name: Build web (hard gate)
-        run: flutter build web --release
+      # `flutter build web --release` was REMOVED (2026-10-17). It existed as a whole-app compile check
+      # from when web was the intended integration-test host; it is not, and cannot be — the app depends
+      # on 7+ plugins with no web implementation. Compilation is proven instead by branch-apks.yml, which
+      # builds two real Android APKs on every push. Dropping it saves minutes per run.
 
       # ── OPT-IN: emulator-backed integration_test smoke on web ──────────────────────────────────────────
       - name: Set up Java (emulator JRE)
@@ -112,12 +199,42 @@ jobs:
             -d web-server --release || echo "integration smoke advisory result recorded"
 
       - name: Upload web build + any integration artifacts
-        if: always()
+        if: ${{ always() && inputs.run_integration }}
         uses: actions/upload-artifact@v4
         with:
           name: flutter-web-build
           path: build/web
           retention-days: 7
+
+      # PASSED only when BOTH hard gates passed. `!cancelled()` and not `always()`: a run cancelled by a
+      # newer push is superseded, not broken — reporting FAILED for it would paint a real failure on the
+      # card. `note` is surfaced in the console tooltip, so it says WHICH gate failed.
+      - name: Console — stage 3 outcome
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          REPO: ${{ github.event.repository.name }}
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "${{ secrets.CONSOLE_INGEST_URL }}" ]; then
+            echo "CONSOLE_INGEST_URL not set — skipping console reporting."; exit 0
+          fi
+          A='${{ steps.analyze.outcome }}'; U='${{ steps.unit.outcome }}'
+          if [ "$A" = success ] && [ "$U" = success ]; then
+            STATE=PASSED; NOTE='flutter analyze (errors) + flutter test'
+          else
+            STATE=FAILED
+            NOTE="analyze=$A test=$U"
+          fi
+          curl -sS -X POST "${{ secrets.CONSOLE_INGEST_URL }}/recordSuiteRun" \
+            -H "Authorization: Bearer ${{ secrets.CONSOLE_INGEST_TOKEN }}" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -nc --arg r "$REPO" --arg b "$BRANCH" --arg s "$SHA" --arg st "$STATE" \
+                  --arg n "$NOTE" --arg ri '${{ github.run_id }}' --arg ru "$RUN_URL" \
+                  '{repo:$r,branch:$b,state:$st,sha:$s,note:$n,reportRunId:$ri,runUrl:$ru}')" \
+            || echo "ingest recordSuiteRun failed (non-fatal)"
 
       - name: Record run in append-only history
         if: always()

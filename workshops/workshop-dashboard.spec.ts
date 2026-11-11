@@ -36,6 +36,10 @@ import {
   WS_EVERGREEN_DAYS_LEFT, clearEvergreenExtended, seedEvergreenExtended, wsEvergreenIds, wsMetaNames,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
+import { readFileSync } from 'fs';
+import {
+  seedEnrolledExportCase, clearEnrolledExportCase, wsExportPeople, readCsvRows,
+} from './support/wshop';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
@@ -428,5 +432,65 @@ test.describe('Workshop dashboard — evergreen Extended Participants: days rema
       .evaluate(el => getComputedStyle(el).backgroundColor);
     expect(activeBg, `WS-49: the two states are told apart visually. active=${activeBg} lapsed=${lapsedBg}`)
       .not.toBe(lapsedBg);
+  });
+});
+
+// =============================================================================================
+// WS-69 — Total Enrolled export (2026-10-21). In production the panel's Export threw
+// "Cannot read properties of undefined (reading 'email')" when an enrolled person had no
+// participant metadata doc (moved to existing, metadata not created yet). The export now falls
+// back to new_user_data, and the panel and the file both show that person's real name.
+// =============================================================================================
+test.describe('Workshop dashboard — Total Enrolled export', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+    await seedEnrolledExportCase();
+  });
+  test.afterEach(async () => {
+    await clearEnrolledExportCase();
+    assertNoFatal(guard, 'workshop dashboard export: no fatal console errors / pageerrors');
+  });
+
+  test('WS-69 Total Enrolled exports every enrolled person, including a new user and a moved one with no metadata', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    // p0 lives in participant metadata; other cases restamp its name, so read the stored values.
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    await loginAsWshopAdmin(page);
+    await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+
+    await page.getByTestId('wd-on-metric-click-6').click({ timeout: 45_000 });
+    await expect(page.getByTestId('wd-export-participants-62'), 'WS-69: the Total Enrolled panel opens with Export').toBeVisible({ timeout: 30_000 });
+    // The moved person shows by name, not "Unknown".
+    await expect(page.getByText(moved.name, { exact: true }), 'WS-69: the moved person is listed by name').toBeVisible({ timeout: 30_000 });
+
+    page.once('dialog', (d) => d.accept());   // "export participants as CSV?"
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 30_000 }),
+      page.getByTestId('wd-export-participants-62').click(),
+    ]);
+    const file = test.info().outputPath('total-enrolled.csv');
+    await download.saveAs(file);
+    const rows = readCsvRows(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
+    const [header, ...data] = rows;
+    const col = (h: string) => header.indexOf(h);
+    expect(col('Participant Name'), 'WS-69: Participant Name column').toBeGreaterThan(-1);
+    expect(col('Email'), 'WS-69: Email column').toBeGreaterThan(-1);
+    const rowOf = (name: string) => data.find((r) => r[col('Participant Name')] === name);
+
+    const movedRow = rowOf(moved.name);
+    expect(movedRow, 'WS-69: the moved person (no metadata) is exported by name').toBeTruthy();
+    expect(movedRow![col('Email')], 'WS-69: their email comes from new_user_data').toBe(moved.email);
+    expect(movedRow![col('Phone')]).toBe(moved.phone);
+
+    const nuRow = rowOf(nu.name);
+    expect(nuRow, 'WS-69: the new user is exported').toBeTruthy();
+    expect(nuRow![col('Email')]).toBe(nu.email);
+
+    const pmRow = data.find((r) => r[col('Email')] === p0Meta.email);
+    expect(pmRow, 'WS-69: a participant-metadata person is still exported with their email').toBeTruthy();
+    expect(pmRow![col('Participant Name')]).toBe(p0Meta.name);
+    expect(data.some((r) => r[col('Participant Name')] === 'Unknown'), 'WS-69: nobody exports as "Unknown"').toBe(false);
   });
 });

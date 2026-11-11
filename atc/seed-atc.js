@@ -1,0 +1,985 @@
+// @ts-nocheck
+/**
+ * seed-atc.js — stand up the ATC world (Prescribe / Edit / View Prescribed ATC) in the FIREBASE EMULATOR.
+ *
+ * OPERATOR RULE (2026-10-13, absolute): NEVER test ATC against the development or production databases.
+ * ATC data is seeded into the EMULATOR ONLY and never queried from a real database. This script therefore
+ * REFUSES TO RUN unless the Firestore + Auth + Storage emulator hosts are set (guard G1 below) — there is no
+ * cloud path, by design. It is the only seeder allowed to touch the `firestore-atc` named database, and only
+ * the emulator's copy of it. Plan: specs/plans/2026-10-13-atc-prescribe-edit-view.md.
+ *
+ * Two databases:
+ *   (default)      auth chain, dashboard grants, users_roles, bigactivity, procedures, procedure_recommend,
+ *                  classify/adjustment_awareness, `atc model`, products — everything tagged {testrunid}.
+ *   firestore-atc  atc_alpha / atc_to_validate (+ corrections/procedures sub-collections), atc_notes.
+ *
+ * WHY its own teardown (not seed.teardownCollections): that helper calls assertNoATC(), the CLOUD guard
+ * that refuses any collection whose name contains "atc" (incl. `atc model`). Here the stronger guard is
+ * G1 — the whole process is pinned to the emulator — so the ATC collections are cleared directly.
+ *
+ * Usage:  node atc/seed-atc.js --seed | --teardown   (only via the atc emulator globalSetup)
+ */
+'use strict';
+
+// ---- G1: emulator-only, fail closed ------------------------------------------------------------------
+const EMU_FS = process.env.FIRESTORE_EMULATOR_HOST;
+const EMU_AUTH = process.env.FIREBASE_AUTH_EMULATOR_HOST;
+const EMU_STORAGE = process.env.FIREBASE_STORAGE_EMULATOR_HOST;
+if (!EMU_FS || !EMU_AUTH || !EMU_STORAGE) {
+  console.error('🛑 seed-atc: REFUSING TO RUN — FIRESTORE_EMULATOR_HOST, FIREBASE_AUTH_EMULATOR_HOST and '
+    + 'FIREBASE_STORAGE_EMULATOR_HOST must all be set. ATC is seeded into the EMULATOR ONLY (never a real DB).');
+  process.exit(3);
+}
+if (!/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(EMU_FS) || !/^(localhost|127\.0\.0\.1|\[::1\]):\d+$/.test(EMU_STORAGE)) {
+  console.error(`🛑 seed-atc: emulator hosts must be local (got firestore=${EMU_FS}, storage=${EMU_STORAGE}).`);
+  process.exit(3);
+}
+
+const { seed, seedDashboardRoutes, TAG, initAdminAuto } = require('../lib/seed-common');
+const { getFirestore } = require('firebase-admin/firestore');
+
+const RUN = process.env.ATC_RUNID || 'atc';
+const ATC_DB_ID = 'firestore-atc';
+
+// ---- actors -------------------------------------------------------------------------------------------
+const P2_KEYS = ['vua', 'vpa', 'pva', 'vaa', 'rfa', 'pfm', 'ate', 'lrx', 'lrx2', 'tra', 'tra2', 'trv', 'trp', 'tre', 'eia', 'eia2'];
+// phase 3 (2026-10-22, prescribe templates): one participant per case — gating, EI appointment, EI no appointment,
+// bulk-on-new-procedure, live-queue draft
+const P3_KEYS = ['tpg', 'tpe', 'tpn', 'tpb', 'tpq',
+  // phase 4 (2026-10-23): Prescribe WiSH · Edit EI / legacy EI / WiSH / bulk · View + Preview
+  'tpw', 'tea', 'tel', 'tew', 'teb', 'tvv',
+  // phase 5 (2026-10-24): EI Solution Review log
+  'trl',
+  // phase 6 (2026-10-29): ATC forms — tfa read-only View cases, tfb Send/Revoke/Resend, tfc Fill form, tfd version/deleted
+  'tfa', 'tfb', 'tfc', 'tfd',
+  // 2026-10-29 (later): tfe — the all-widgets form through View ATC → Fill form
+  'tfe',
+  // 2026-10-30: tfm — the mobile scenario participant (web specialist ↔ Flutter app on the simulator)
+  'tfm',
+  // phase 7 (2026-11-01): tfp — delivery / queue forms on View ATC (two purchases of WiSH + a queue ATC)
+  'tfp',
+  // phase 8 (2026-11-02): sponsor forms — tsp the participant, tss the sponsor (an existing user)
+  'tsp', 'tss',
+  // phase 9 (2026-11-02): tnm / tnw — the near-miss model names (EI Starter Pack / W!SH must NOT get the
+  // templates). One participant per pick, as everywhere in phase 3: a leftover draft must not open another
+  // case's picker.
+  'tnm', 'tnw',
+  // phase 9 (2026-11-02): twp fills an ATC form in web from a copied link, tws is the sponsor who does the same
+  'twp', 'tws'];
+const PF = {
+  admin: `${RUN}_pf_admin`,       // roles {admin} — prescriber / editor / super-role viewer
+  eis: `${RUN}_pf_eis`,           // roles {eis}   — non-super viewer (sees only own-authored ATCs)
+  agent1: `${RUN}_pf_agent1`,     // roles {changeagent} — change agent #1
+  agent2: `${RUN}_pf_agent2`,     // roles {changeagent} — change agent #2
+  mentor: `${RUN}_pf_mentor`,     // roles {mentor} — validator candidate (prescribe validator list)
+  p0: `${RUN}_pf_p0`, p1: `${RUN}_pf_p1`, p2: `${RUN}_pf_p2`, p3: `${RUN}_pf_p3`, p4: `${RUN}_pf_p4`,
+  // p5..p7: one participant per Prescribe case so a case's leftover draft never opens another case's picker
+  p5: `${RUN}_pf_p5`, p6: `${RUN}_pf_p6`, p7: `${RUN}_pf_p7`, p8: `${RUN}_pf_p8`,
+  // phase 2 (2026-10-17): developer staff user (Add Triple drafts, EI AI View) + one participant per screen
+  dev: `${RUN}_pf_dev`,
+  emen: `${RUN}_pf_emen`,         // roles {eis, mentor} — an EIS who also mentors (sees Directives for Micro ATC)
+  ah: `${RUN}_pf_ah`,             // roles {ah} — super-role viewer; may write the View ATC review log + act on forms (2026-10-29)
+  ...Object.fromEntries(P2_KEYS.map((k) => [k, `${RUN}_pf_${k}`])),
+  ...Object.fromEntries(P3_KEYS.map((k) => [k, `${RUN}_pf_${k}`])),
+};
+const EMAIL = {
+  admin: `admin+${RUN}@example.com`, eis: `eis+${RUN}@example.com`,
+  agent1: `agent1+${RUN}@example.com`, agent2: `agent2+${RUN}@example.com`, mentor: `mentor+${RUN}@example.com`,
+  p0: `participant0+${RUN}@example.com`, p1: `participant1+${RUN}@example.com`, p2: `participant2+${RUN}@example.com`,
+  p3: `participant3+${RUN}@example.com`, p4: `participant4+${RUN}@example.com`,
+  p5: `participant5+${RUN}@example.com`, p6: `participant6+${RUN}@example.com`, p7: `participant7+${RUN}@example.com`,
+  p8: `participant8+${RUN}@example.com`,
+  dev: `dev+${RUN}@example.com`,
+  emen: `emen+${RUN}@example.com`,
+  ah: `ah+${RUN}@example.com`,
+  ...Object.fromEntries(P2_KEYS.map((k) => [k, `${k}+${RUN}@example.com`])),
+  ...Object.fromEntries(P3_KEYS.map((k) => [k, `${k}+${RUN}@example.com`])),
+};
+
+function roster() {
+  const mk = (key, roles, role) => ({ uid: `${RUN}_u_${key}`, profileid: PF[key], email: EMAIL[key], role: role || key, roles });
+  const staff = [
+    mk('admin', ['admin'], 'admin'),
+    mk('eis', ['eis'], 'eis'),
+    mk('agent1', ['changeagent'], 'changeagent'),
+    mk('agent2', ['changeagent'], 'changeagent'),
+    mk('mentor', ['mentor'], 'mentor'),
+    mk('dev', ['developer'], 'developer'),
+    mk('emen', ['eis', 'mentor'], 'eis'),   // 2026-10-23: prescriber + mentor (PTPL-07)
+    mk('ah', ['ah'], 'ah'),                 // 2026-10-29: View ATC forms / review log (VATCF-15)
+  ];
+  const participants = ['p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', ...P2_KEYS, ...P3_KEYS].map((k) => ({ uid: `${RUN}_u_${k}`, profileid: PF[k], email: EMAIL[k], role: 'participant' }));
+  return { staff, participants };
+}
+
+// ---- reference data (default DB) ------------------------------------------------------------------------
+const ACT = {
+  author: `${RUN}_act_author`, observer: `${RUN}_act_observer`, mentoring: `${RUN}_act_mentoring`,
+  ca: `${RUN}_act_ca`,         // assigned_to "Change Agent"  — sorts FIRST (legacy assigned_to maps here)
+  sa: `${RUN}_act_sa`,         // assigned_to "Support Agent"
+};
+const ACT_NAME = {
+  author: 'Author', observer: 'Observer', mentoring: 'Mentoring', ca: 'Change Agent', sa: 'Support Agent',
+};
+const PROC = { one: `${RUN}_proc_one`, two: `${RUN}_proc_two` };
+const PROC_NAME = { one: `ATC Proc One ${RUN}`, two: `ATC Proc Two ${RUN}` };
+const MODEL = { alpha: `ATC Model Alpha ${RUN}`, beta: `ATC Model Beta ${RUN}` };
+const MODEL_DIRECTIVE = { alpha: `Alpha directive ${RUN}`, beta: `Beta directive ${RUN}` };
+const AWARE = [{ aware: 'aware', value: 'Aware' }, { aware: 'unaware', value: 'Unaware' }];
+
+// ---- ATC docs (firestore-atc) ---------------------------------------------------------------------------
+const ATC = {
+  A1: `${RUN}_A1`,     // atc_alpha  p1 — view list / full ATC / Edit link (read-mostly)
+  V1: `${RUN}_V1`,     // atc_to_validate 'atc given' p1 — VATC-05a (pick validator)
+  V2: `${RUN}_V2`,     // atc_to_validate 'atc given' p1 — VATC-05b (close without validator)
+  B1: `${RUN}_B1`,     // atc_alpha  p1 — VATC-07 bulk Change Agent (4 procedure states + deleted adjustment)
+  EIS1: `${RUN}_EIS1`, // atc_alpha  p3 authored by the eis user — VATC-06 scoping
+  E1: `${RUN}_E1`, E2: `${RUN}_E2`, E3: `${RUN}_E3`, E4: `${RUN}_E4`, E5: `${RUN}_E5`, E6: `${RUN}_E6`, // atc_alpha p2 — EATC-*
+  E7: `${RUN}_E7`,     // atc_alpha p2 — EATC-09 (directive, edit/delete adjustment, procedure toggle, mandatory, notes, preview Close)
+  M1: `${RUN}_M1`,     // atc_alpha p1, mentoring + already 'validated' — VATC-08 (mentor filter, validated status)
+  Q1: `${RUN}_Q1`,     // atc_alpha p1, beta, inside the seeded queue window — VATC-08 (queue filter)
+  EV1: `${RUN}_EV1`,   // atc_to_validate 'atc given' p2 — EATC-04 (/validation route)
+  N1: `${RUN}_N1`,     // atc_notes for A1
+};
+// Phase 2 (plan specs/plans/2026-10-17-atc-live-screens.md). All dated 30+ days ago so they never fall inside the
+// phase-1 date / queue / mentor filter windows (VATC-02 day 5-6, VATC-08 queue day 19-21).
+const ATC2 = {
+  U_OLD: `${RUN}_U_old`, U_NEW: `${RUN}_U_new`,                        // VUA — version chain
+  VPA1: `${RUN}_VPA1`, VPA2: `${RUN}_VPA2`, VPA3: `${RUN}_VPA3`,        // VPA — participant history
+  PV_A: `${RUN}_PV_A`, PV_V: `${RUN}_PV_V`, PV_V2: `${RUN}_PV_V2`,     // PVA — preview (alpha / validation)
+  AS1: `${RUN}_AS1`,                                                    // VAA — change-agent work queue
+  RF_V: `${RUN}_RF_V`, RF_E: `${RUN}_RF_E`, RF_A: `${RUN}_RF_A`, RF_F1: `${RUN}_RF_F1`, RF_F2: `${RUN}_RF_F2`, RF_F3: `${RUN}_RF_F3`, // RFA
+  PF_A: `${RUN}_PF_A`, PF_V: `${RUN}_PF_V`, PF_V2: `${RUN}_PF_V2`, PF_M: `${RUN}_PF_M`, // PFM
+  ATE_A: `${RUN}_ATE_A`, ATE_V: `${RUN}_ATE_V`, ATE_C: `${RUN}_ATE_C`, ATE_U: `${RUN}_ATE_U`, // ATE (queue-scoped)
+  TV1: `${RUN}_TV1`, TP1: `${RUN}_TP1`, TP2: `${RUN}_TP2`, TE1: `${RUN}_TE1`, TE2: `${RUN}_TE2`, TE3: `${RUN}_TE3`, // triple atc
+};
+const PA = { rework: `${RUN}_pa_rework`, activity: `${RUN}_pa_activity`, validated: `${RUN}_pa_validated`,
+  trpValidate: `${RUN}_pa_trp_validate`, trpRework: `${RUN}_pa_trp_rework` };   // big participants assignments
+const PFM_M = `${RUN}_pfm_m`;                       // pick_for_mentoring doc already linked to PF_M
+const LRX_DRAFT = `${RUN}_lrx_draft`;               // temporary_ATC draft for the live-prescription link
+const TRA2_DRAFT = `${RUN}_tra2_draft`;             // temporary_tripleatc draft for the Add Triple picker
+const EIA = { S1v1: `${RUN}_eia_s1v1`, S1v2: `${RUN}_eia_s1v2`, S2: `${RUN}_eia_s2`, S3: `${RUN}_eia_s3` };
+const ATE_QUEUE = `${RUN}_ate_queue`;
+const ATE_QUEUE_NAME = `ATC Education Queue ${RUN}`;
+const TRIPLE_QUEUE = `${RUN}_triple_queue`;
+const TRIPLE_QUEUE_NAME = `Triple Queue ${RUN}`;
+const AI_ADJ = `AI adjustment ${RUN}`;
+const ATC_COLLECTIONS = ['atc_alpha', 'atc_to_validate', 'atc_notes', 'temporary_ATC', 'temporary_edit_ATC', 'ai_generated_atc_summary',
+  'triple atc', 'temporary_tripleatc', 'temporary_edit_tripleATC', 'atc_form_requests'];
+
+const ROUTES = [
+  { route: '/prescribeATC', label: 'Prescribe ATC' },
+  { route: '/editATC', label: 'Edit ATC' },
+  { route: '/viewprescribedATC', label: 'View Prescribed ATC' },
+  // phase 2
+  { route: '/previewATC', label: 'Preview ATC' }, { route: '/viewUpgradedATC', label: 'Upgraded ATC' },
+  { route: '/view-participant-atc', label: 'View Participant ATC' }, { route: '/viewassignedATC', label: 'View Assigned ATC' },
+  { route: '/reviewflagATC', label: 'ATC - Review/Flag' }, { route: '/pickformentoring', label: 'Pick ATC for Mentoring' },
+  { route: '/atctrajectory', label: 'ATC Education' }, { route: '/liveprescription', label: 'Live Prescription' },
+  { route: '/addtripleATC', label: 'Add Triple ATC' }, { route: '/viewtripleATC', label: 'View Triple ATC' },
+  { route: '/previewtripleATC', label: 'Preview Triple ATC' }, { route: '/edittripleATC', label: 'Edit Triple ATC' },
+  { route: '/viewaigeneratedatc', label: 'EI AI' },
+  // phase 6 (2026-10-29): View ATC → Fill form opens the form screen
+  // phase 9 (2026-11-02): a participant / sponsor opens the SAME screen from a copied link, so the route
+  // grants the entry-level `participant` role as production does.
+  { route: '/formtemplate', label: 'Form Template', participant: true },
+];
+
+// Default-DB collections this seed owns (testrunid-tagged; teardown sweeps by tag).
+const DEFAULT_SEEDED = ['user_data', 'profile_data', 'users_roles', 'dashboard', 'bigactivity', 'procedures',
+  'procedure_recommend', 'atc model', 'products', 'participant metadata', 'queue generation', 'arena events',
+  'big participants assignments', 'pick_for_mentoring',
+  // phase 3 (prescribe templates)
+  'eisroles', 'appointmenttype', 'AppointmentType-To-Roles', 'appointments', 'live assignment', 'queue stage log',
+  // phase 6 (ATC forms)
+  'delivery forms',
+  // phase 7 (delivery / queue forms)
+  'deliverables', 'static meta data'];
+
+// ---- phase 6: ATC forms (2026-10-29, plan specs/plans/2026-10-29-atc-forms-step1.md in the app repo) ---------
+// One model with a forms config of 8: specialist (clarity, review, oldSub) and participant (life, sleep, diet, old,
+// gone). `old` / `oldSub` are soft-deleted delivery forms (delete:true); `gone` has no delivery forms doc at all.
+const FORMS_DB_ID = 'firestore-forms';
+const FORMS_MODEL = `ATC Model Forms ${RUN}`;
+const DF = {
+  clarity: `${RUN}_df_clarity`, review: `${RUN}_df_review`, oldSub: `${RUN}_df_oldsub`,
+  life: `${RUN}_df_life`, sleep: `${RUN}_df_sleep`, diet: `${RUN}_df_diet`, old: `${RUN}_df_old`, gone: `${RUN}_df_gone`,
+};
+const DF_NAME = {
+  clarity: `Clarity Call ${RUN}`, review: `Review Notes ${RUN}`, oldSub: `Old Submitted ${RUN}`,
+  life: `Life Report ${RUN}`, sleep: `Sleep Diary ${RUN}`, diet: `Diet Log ${RUN}`, old: `Old Form ${RUN}`,
+};
+const DF_QUESTION = `Forms question ${RUN}`;
+const FORMS_CONFIG = [
+  { formid: DF.clarity, filledby: 'specialist' }, { formid: DF.review, filledby: 'specialist' },
+  { formid: DF.oldSub, filledby: 'specialist' }, { formid: DF.life, filledby: 'participant' },
+  { formid: DF.sleep, filledby: 'participant' }, { formid: DF.diet, filledby: 'participant' },
+  { formid: DF.old, filledby: 'participant' }, { formid: DF.gone, filledby: 'participant' },
+];
+const FATC = {
+  V0: `${RUN}_F_V0`,       // tfa: V1's previous version (upgraded, isdelete) — holds the Resent request for life
+  V1: `${RUN}_F_V1`,       // tfa: validated, 4 answers, editedfrom → V0 — the read-only row matrix
+  OTHER: `${RUN}_F_OTHER`, // tfa: validated, no answers — its request for sleep must NOT show on V1 (negative control)
+  UNV: `${RUN}_F_UNV`,     // tfa: atc_to_validate 'atc given' — no count, no Forms card
+  ACT: `${RUN}_F_ACT`,     // tfb: Send / Revoke / Resend
+  FILL: `${RUN}_F_FILL`,   // tfc: Fill form → record → View
+  UP1: `${RUN}_F_UP1`,     // tfd: Fill form opened, then the ATC is edited → answer lands on UP2
+  UP2: `${RUN}_F_UP2`,
+  DEL: `${RUN}_F_DEL`,     // tfd: Fill form opened, then the ATC is deleted → nothing saved
+  ALL: `${RUN}_F_ALL`,     // tfe: the all-widgets form (model ALL_MODEL) → Fill form → draft + submit + View
+  EDIT: `${RUN}_F_EDIT`,   // tfe: clarity already answered → Edit → update the same answer (VATCF-14)
+  WEDIT: `${RUN}_F_WEDIT`, // tfe: a WiSH ATC for Edit ATC — a newly picked procedure is mandatory (EATT-05)
+  PEDIT: `${RUN}_F_PEDIT`, // tfe: a plain (alpha) ATC for Edit ATC — the negative control (EATT-05)
+  RV0: `${RUN}_F_RV0`,     // tfb: RV1's previous version — holds the requests (one per ATC + form, VATCF-17)
+  RV1: `${RUN}_F_RV1`,     // tfb: edited ATC — Resend must rewrite RV0's request, not create one for RV1
+  // mobile scenario (atc/scenario-atc-forms.spec.ts + Flutter integration_test/features/atc_forms_scenario_test.dart)
+  M1: `${RUN}_F_M1`,       // tfm: web sends life / sleep / diet; the app submits / resubmits; soft-deleted `old` already sent
+  M2: `${RUN}_F_M2`,       // tfm: same model, pending life → two "Life Report" cards
+  M3: `${RUN}_F_M3`,       // tfm: pending sleep; the ATC is deleted before the app submits → nothing saved
+  M5: `${RUN}_F_M5`,       // tfm: web sends diet, then the ATC is edited (M5 → M5B) → the answer lands on M5B
+  M5B: `${RUN}_F_M5B`,
+  // sponsor forms (phase 8, atc/view-prescribed-atc-sponsor.spec.ts)
+  SPN: `${RUN}_F_SPN`,     // tsp: no sponsor yet → Send asks for one, then it locks
+  SP0: `${RUN}_F_SP0`,     // tsp: SP1's previous version — holds the sponsor's answer and request
+  SP1: `${RUN}_F_SP1`,     // tsp: sponsor tss locked; participant / sponsor answers; a delivery answer of its purchase
+  SPX: `${RUN}_F_SPX`,     // tss's OWN ATC (tss as participant) — tss's answer here must NOT show on SP1
+  COR: `${RUN}_F_COR`,     // tsp: Fill form opened, then the version chain loops → "corrupted", nothing saved
+};
+const FANS = { clarity: `${RUN}_ans_clarity`, life: `${RUN}_ans_life`, sleep: `${RUN}_ans_sleep`, oldSub: `${RUN}_ans_oldsub`, actSleep: `${RUN}_ans_act_sleep`,
+  editClarity: `${RUN}_ans_edit_clarity`, rvSleep: `${RUN}_ans_rv_sleep` };
+const FANSWER_TEXT = (k) => `Seeded answer ${k} ${RUN}`;
+
+// ---- phase 7: delivery / queue forms on View ATC (2026-11-01, plan specs/plans/2026-11-01-atc-delivery-queue-forms.md)
+// tfp did WiSH twice (purchases a / b) and has a queue ATC. Answers in formsByClient carry participantproductid (delivery)
+// or queueref (queue); the negative controls must NOT show: another participant's answer of purchase a, tfp's answer
+// with no purchase id, tfp's answer in another queue, another participant's answer in tfp's queue.
+const DQ = {
+  ppA: `${RUN}_pp_tfp_a`, ppB: `${RUN}_pp_tfp_b`,
+  queue: `${RUN}_dq_queue`, otherQueue: `${RUN}_dq_queue_other`,
+  ATC_A: `${RUN}_F_DQA`, ATC_B: `${RUN}_F_DQB`, ATC_Q: `${RUN}_F_DQQ`,
+  // the app's FILL button (Flutter integration test): tfm's form step of purchase app; the app's "active" purchase differs
+  appStep: `${RUN}_dl_tfm_form`, ppApp: `${RUN}_pp_tfm_app`,
+  form: `${RUN}_df_dq`,
+};
+const DQ_TEXT = (id) => `Activity answer ${id}`;
+const DQ_QUEUE_NAME = `Forms Queue ${RUN}`;
+const DQ_STAGE = `Consultation ${RUN}`;
+const DQ_FORM = { intake: `Intake Form ${RUN}`, life: `Life Check ${RUN}`, reflect: `Reflection ${RUN}`, stage: `Stage Check-in ${RUN}`,
+  otherPp: `Other Participant Form ${RUN}`, noPp: `No Purchase Form ${RUN}`, otherQ: `Other Queue Form ${RUN}`, otherQp: `Other Person Queue Form ${RUN}` };
+const DQ_ANS = { a1: `${RUN}_dqa_intake`, a2: `${RUN}_dqa_life1`, a3: `${RUN}_dqa_life2`, b1: `${RUN}_dqb_reflect`, q1: `${RUN}_dqq_stage`,
+  xPp: `${RUN}_dqx_otherpp`, xNoPp: `${RUN}_dqx_nopp`, xQ: `${RUN}_dqx_otherq`, xQp: `${RUN}_dqx_otherqp` };
+
+// ---- phase 8: sponsor forms (2026-11-02, plan specs/plans/2026-11-02-atc-sponsor-forms.md)
+// The sponsor model has one participant form (life) and two sponsor forms. One forms query per ATC: atcid in versions
+// OR participantproductid OR queueref; who filled = the answer's profileid. Negative controls: tss's own answer on
+// SPX (tss as participant) and another participant's answer of a sponsor form on another ATC.
+const SP_MODEL = `ATC Model Sponsor ${RUN}`;
+const SPF = { support: `${RUN}_df_sp_support`, feedback: `${RUN}_df_sp_feedback` };
+const SPF_NAME = { support: `Family Support ${RUN}`, feedback: `Sponsor Feedback ${RUN}` };
+const SP_PP = `${RUN}_pp_tsp`;
+const SP_ANS = { support: `${RUN}_spa_support`, life: `${RUN}_spa_life`, delivery: `${RUN}_spa_delivery`,
+  xSponsor: `${RUN}_spx_sponsor`, xOther: `${RUN}_spx_other` };
+const SP_DELIVERY_NAME = `Sponsor World Delivery ${RUN}`;
+
+// ---- phase 9 (2026-11-02): the ATC form web link ---------------------------------------------------------
+// twp is the participant, tws the sponsor. One model with a participant form, a sponsor form and a form that
+// is already answered (the "Ask to update" case). Four ATCs, one per request state.
+const WL_MODEL = `ATC Model WebLink ${RUN}`;
+const WLF = { part: `${RUN}_df_wl_part`, spon: `${RUN}_df_wl_spon`, edit: `${RUN}_df_wl_edit` };
+const WLF_NAME = { part: `Web Participant Form ${RUN}`, spon: `Web Sponsor Form ${RUN}`, edit: `Web Update Form ${RUN}` };
+// One ATC per case: the cases run in order in one worker, so a request consumed by one must not be the
+// request another depends on.
+const WLATC = {
+  NEW:   `${RUN}_F_WL_NEW`,    // twp: request 'sent', no answerid → consumed by the new-submit case
+  EDIT:  `${RUN}_F_WL_EDIT`,   // twp: request 'sent' WITH answerid → consumed by the edit case
+  SPON:  `${RUN}_F_WL_SPON`,   // tws: sponsor request 'sent' → consumed by the sponsor case
+  DONE:  `${RUN}_F_WL_DONE`,   // twp: request already 'submitted' → the link must refuse
+  OTHER: `${RUN}_F_WL_OTHER`,  // twp: request 'sent', never submitted — the Copy button + wrong-login cases read it
+  DRAFT: `${RUN}_F_WL_DRAFT`,  // twp: request 'sent', never submitted — the draft case types into it
+};
+const WL_ANS = { edit: `${RUN}_wla_edit` };
+const WL_TEXT = (id) => `Web link answer ${id}`;
+const SP_TEXT = (id) => `Sponsor world answer ${id}`;
+// Every field type the form screen renders (formtemplate.component.html), incl. video/audio — the shape that broke
+// draft + submit (SafeResourceUrl written to Firestore). Media URLs are local assets: a real Storage URL would be
+// aborted by the G2 guard.
+const DF_ALL = `${RUN}_df_all`;
+const DF_ALL_NAME = `All Widgets ${RUN}`;
+const ALL_MODEL = `ATC Model All Widgets ${RUN}`;
+const W = {
+  label: `AW Section ${RUN}`, video: `AW Video ${RUN}`, audio: `AW Audio ${RUN}`, text: `AW Text ${RUN}`,
+  number: `AW Number ${RUN}`, email: `AW Email ${RUN}`, time: `AW Time ${RUN}`, date: `AW Date ${RUN}`,
+  dropdown: `AW DropDown ${RUN}`, multiselect: `AW MultiSelect ${RUN}`, paragraph: `AW Paragraph ${RUN}`,
+  checkbox: `AW Checkbox ${RUN}`, slider: `AW Slider ${RUN}`, multicheckbox: `AW MultiCheckbox ${RUN}`,
+  flipping: `AW Flipping ${RUN}`, radio: `AW Radio ${RUN}`, array: `AW Array ${RUN}`,
+  aText: `AW Item Text ${RUN}`, aNumber: `AW Item Number ${RUN}`, aDate: `AW Item Date ${RUN}`, aDropdown: `AW Item DropDown ${RUN}`,
+  aParagraph: `AW Item Paragraph ${RUN}`, aCheckbox: `AW Item Checkbox ${RUN}`, aRadio: `AW Item Radio ${RUN}`,
+};
+const MEDIA = { video: '/assets/Back_Arrow.png', audio: '/assets/Back_Arrow.png' };
+const ALL_FORMARRAY = [
+  { type: 'label', fieldname: W.label, fielddescription: 'all widgets' },
+  { type: 'video', fieldname: W.video, fielddescription: 'video', options: [MEDIA.video] },
+  { type: 'audio', fieldname: W.audio, fielddescription: 'audio', options: [MEDIA.audio] },
+  { type: 'Text', fieldname: W.text, required: true },
+  { type: 'number', fieldname: W.number },
+  { type: 'email', fieldname: W.email },
+  { type: 'time', fieldname: W.time },
+  { type: 'date', fieldname: W.date },
+  { type: 'DropDown', fieldname: W.dropdown, options: ['Drop A', 'Drop B', 'Drop C'] },
+  { type: 'MultiSelect', fieldname: W.multiselect, options: ['Multi A', 'Multi B', 'Multi C'], maxcount: 2 },
+  { type: 'Paragraph', fieldname: W.paragraph },
+  { type: 'Checkbox', fieldname: W.checkbox },
+  { type: 'slider', fieldname: W.slider, options: ['Low', 'Mid', 'High'] },
+  { type: 'multicheckbox', fieldname: W.multicheckbox, options: ['Box A', 'Box B', 'Box C'], mincount: 1,
+    flipping: true, flippingquestion: { fieldname: W.flipping, type: 'slider', options: ['1', '10'] } },
+  { type: 'radio', fieldname: W.radio, options: ['Yes', 'No'] },
+  { type: 'array', fieldname: W.array, array: [
+    { type: 'Text', fieldname: W.aText }, { type: 'number', fieldname: W.aNumber }, { type: 'date', fieldname: W.aDate },
+    { type: 'DropDown', fieldname: W.aDropdown, options: ['Item A', 'Item B'] }, { type: 'Paragraph', fieldname: W.aParagraph },
+    { type: 'Checkbox', fieldname: W.aCheckbox }, { type: 'radio', fieldname: W.aRadio, options: ['On', 'Off'] },
+  ] },
+];
+
+// ---- phase 3: prescribe templates (2026-10-22) ------------------------------------------------------------
+// EI Solution / WiSH are matched by NAME in the app — by substring since 2026-11-02 (starlabs-angular
+// src/app/ATC/shared/atc-product.ts), because the real `atc model` records say "EI Solutions" (plural).
+// `ei` therefore carries the PRODUCTION spelling on purpose: it is what makes every EI case below a
+// regression test for that fix. Do NOT 'correct' it back to the singular prototype name.
+const TPL_MODEL = { ei: 'EI Solutions', wish: 'WiSH' };
+const TPL_DIRECTIVE = { ei: `EI directive ${RUN}`, wish: `WiSH directive ${RUN}` };
+// Near misses for the substring match (PTPL-08): names that share a prefix or a shape with the two template
+// models and must NOT get their sections. 'EI Starter Pack' is the live product the match has always had to
+// exclude; 'W!SH' is the other spelling the app deliberately does not match.
+const TPL_NEAR_MISS = { starter: 'EI Starter Pack', bang: 'W!SH' };
+const TPL_NEAR_MISS_DIRECTIVE = { starter: `Starter directive ${RUN}`, bang: `Bang directive ${RUN}` };
+const TPL = {
+  roleDiag: `${RUN}_role_diag`, roleShadow: `${RUN}_role_shadow`,
+  atEi: `${RUN}_at_ei`, atOther: `${RUN}_at_other`, atrEi: `${RUN}_atr_ei`, atrOther: `${RUN}_atr_other`,
+  // tpe's appointments: ONLY apPast may be picked (closest PAST, not cancelled, admin hosts it, EI type)
+  apPast: `${RUN}_ap_ei_past`,         // 1 day ago  — diag: admin, shadow: agent2   ← the one
+  apOlder: `${RUN}_ap_ei_older`,       // 5 days ago — shadow: agent1 (older)
+  apCancelled: `${RUN}_ap_ei_cancelled`, // 2 h ago   — shadow: mentor (cancelled)
+  apFuture: `${RUN}_ap_ei_future`,     // tomorrow   — shadow: eis (future)
+  apNotMine: `${RUN}_ap_ei_notmine`,   // 3 h ago    — admin is NOT a host
+  apOtherType: `${RUN}_ap_other_type`, // 1 h ago    — a non-ATC appointment type
+  // 2026-11-01: the delivery steps holding apPast / apOlder → their purchases (Prescribe saves apPast's purchase)
+  dlPast: `${RUN}_dl_ap_past`, dlOlder: `${RUN}_dl_ap_older`, ppPast: `${RUN}_pp_tpe_now`, ppOlder: `${RUN}_pp_tpe_before`,
+  liveQueue: `${RUN}_live_queue`, liveAssignment: `${RUN}_live_la`, liveLog: `${RUN}_live_log`,
+  tpqBetaDraft: `${RUN}_tpq_beta_draft`, // tpq's older NON-queue draft (beta) — "open another draft" must leave queue mode
+  // phase 4 (2026-10-23) — Edit / View with the template sections
+  eEI: `${RUN}_e_ei`,             // tea: EI Solution ATC with two asks
+  eLegacy: `${RUN}_e_legacy`,     // tel: EI Solution ATC from before Ask — no ask, no directive
+  eWishV1: `${RUN}_e_wish_v1`,    // tew: the WiSH ATC's previous version (retired)
+  eWish: `${RUN}_e_wish`,         // tew: WiSH ATC with two outcomes, editedfrom → eWishV1, AI areas only (no summary)
+  eBulk: `${RUN}_e_bulk`,         // teb: plain (alpha) ATC for the new-adjustment change-agent inheritance
+  vEI: `${RUN}_v_ei`,             // tvv: EI ATC shown in View Prescribed + Preview
+  vWish: `${RUN}_v_wish`,         // tvv: WiSH ATC shown in View Prescribed + Preview
+  vPlain: `${RUN}_v_plain`,       // tvv: a plain ATC (no ask / outcomes) — the negative control
+  // phase 5 (2026-10-24) — Review log (all EI Solution, participant trl, dated far back)
+  rEI: `${RUN}_r_ei`,             // admin author; one active review (agent2) + one deleted (admin) — View add/delete
+  rEIS: `${RUN}_r_eis`,           // eis is the AUTHOR → eis may add (author path) in View
+  rImpl: `${RUN}_r_impl`,         // admin author; eis is the adjustment's IMPLEMENTATION AGENT → eis may add in Edit
+  rNot: `${RUN}_r_not`,           // admin author + admin agent → eis is NOT involved → may still add in Edit (no role check)
+  rLive: `${RUN}_r_live`,         // Edit shows a review added elsewhere, live
+  rCarry: `${RUN}_r_carry`,       // a review added while Edit is open is on the saved new version
+  rUp: `${RUN}_r_up`,             // saved elsewhere while open → banner + Open latest version
+  rDel: `${RUN}_r_del`,           // deleted while open → banner
+};
+const REVIEW = { active: `Shadow call went well ${RUN}`, deleted: `Duplicate note ${RUN}` };
+// what the phase-4 ATCs hold (specs compare the screens against these)
+const TPL_ASKS = [{ askedby: 'self', askedfor: `Sleep better ${RUN}` }, { askedby: 'spouse', askedfor: `Calmer evenings ${RUN}` }];
+const TPL_OUTCOMES = [{ outcomearea: `Wish Super Fitness ${RUN}`, outcomeexpected: 'Run 5K by March' },
+  { outcomearea: `Wish Super Career ${RUN}`, outcomeexpected: 'Lead the team by June' }];
+const LIVE_QUEUE_NAME = `Live Queue ${RUN}`;
+const LIVE_STAGE = `Live Stage ${RUN}`;
+const QUEUE_NAME = `ATC Queue ${RUN}`;
+
+function atcDb(admin) { return getFirestore(admin.app(), ATC_DB_ID); }
+
+async function seedATC() {
+  const admin = initAdminAuto();
+  const db = admin.firestore();
+  const adb = atcDb(admin);
+  const auth = admin.auth();
+  const T = admin.firestore.Timestamp;
+  const tag = TAG(RUN);
+  const daysAgo = (d) => T.fromMillis(Date.now() - d * 86400e3);
+  const { staff, participants } = roster();
+
+  // 1) auth chain (user_data <- profile_data.user_ref; profile_data.role_ref -> users_roles) + route grants
+  await seed.seedAuthChain(db, auth, RUN, { staff, participants });
+  await seedDashboardRoutes(db, RUN, ROUTES, {
+    staffProfileIds: staff.map((s) => s.profileid),
+    allRoles: ['admin', 'eis', 'changeagent', 'mentor', 'developer', 'ah'],
+  });
+
+  // 2) reference data the three screens read
+  for (const k of Object.keys(ACT)) {
+    const atcproperty = { author: 'author', observer: 'observer', mentoring: 'mentoring', ca: 'assigned_to', sa: 'assigned_to' }[k];
+    await db.collection('bigactivity').doc(ACT[k]).set({ docid: ACT[k], activity: ACT_NAME[k], atcproperty, ...tag });
+  }
+  for (const k of Object.keys(PROC)) await db.collection('procedures').doc(PROC[k]).set({ name: PROC_NAME[k], ...tag });
+  await db.collection('procedure_recommend').doc(`${RUN}_rec_1`).set({ name: `Recommend Self ${RUN}`, ...tag });
+  await db.collection('classify').doc('adjustment_awareness').set({
+    label: 'Awareness', potentialyearlabel: 'Potential Years', awarenesslist: AWARE, ...tag,
+  });
+  for (const k of Object.keys(MODEL)) {
+    await db.collection('atc model').doc(`${RUN}_model_${k}`).set({ atcmodel: MODEL[k], directive: MODEL_DIRECTIVE[k], ...tag });
+    await db.collection('products').doc(`${RUN}_product_${k}`).set({ atcmodel: MODEL[k], directive: MODEL_DIRECTIVE[k], ...tag });
+  }
+
+  // 3) ATC docs — firestore-atc (EMULATOR). Refs that the app compares against doc(firestoreATC, …) MUST be
+  //    created on the ATC database instance (a reference value carries its database id).
+  const pref = (pid) => adb.doc(`profile_data/${pid}`);
+  const procRef = (k) => adb.doc(`procedures/${PROC[k]}`);
+
+  async function writeATC(coll, id, data, adjustments) {
+    const ref = adb.collection(coll).doc(id);
+    await ref.set({
+      atcid: id, isdelete: false, type: 'online', notesid: null, mentoringid: null, mentorref: [], mentee: [],
+      observer: null, validator: null, prescription_image: null, ...data, ...tag,
+    });
+    for (let a = 0; a < adjustments.length; a++) {
+      const adj = adjustments[a];
+      const adjId = `adjustment ${String(a + 1).padStart(2, '0')}`;
+      const adjRef = ref.collection('corrections').doc(adjId);
+      await adjRef.set({
+        name: adj.name, awareness: adj.awareness === undefined ? 'aware' : adj.awareness,
+        awarenessdetail: adj.awarenessdetail === undefined ? 'Aware' : adj.awarenessdetail,
+        potentialyears: adj.potentialyears === undefined ? 2 : adj.potentialyears,
+        isdelete: !!adj.isdelete, implementationagent: [PF.admin], created: daysAgo(3), ...(adj.extra || {}), ...tag,
+      });
+      for (let p = 0; p < adj.procedures.length; p++) {
+        const pr = adj.procedures[p];
+        const doc = {
+          name: procRef(pr.proc || 'one'), recommended_to: null, level: {}, mandatory: !!pr.mandatory,
+          status: pr.status || 'yet to start', cancelled: false, isdelete: !!pr.isdelete, autogeneralized: false,
+          product: data.product, created: daysAgo(3), ...tag,
+        };
+        if (pr.bigactivity !== undefined) doc.bigactivity = pr.bigactivity;
+        Object.assign(doc, pr.extra || {});
+        doc.assigned_to = (pr.assigned || []).map(pref);
+        await adjRef.collection('procedures').doc(`${adjId} - ${p + 1}`).set(doc);
+      }
+    }
+    return ref;
+  }
+
+  const base = (pid, author, product, d) => ({
+    profileid: pid, product, directive: `Seed directive ${product}`, prescription_date: daysAgo(d),
+    author: [pref(author)], bigactivity: { [ACT.author]: [author] },
+  });
+  const simpleAdj = (name) => [{ name, procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] }] }];
+
+  await writeATC('atc_alpha', ATC.A1, { ...base(PF.p1, PF.admin, MODEL.alpha, 2), notesid: ATC.N1, totaladjustment: 1, totalprocedure: 2 }, [
+    { name: `A1 adjustment one ${RUN}`, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+      { proc: 'two', status: 'completed', bigactivity: { [ACT.ca]: [PF.agent2] }, assigned: [PF.agent2] },
+    ] },
+  ]);
+  await adb.collection('atc_notes').doc(ATC.N1).set({
+    atcid: ATC.A1, consultationpoint: `A1 consultation point ${RUN}`, consultationsummary: `A1 summary ${RUN}`,
+    notes: `A1 case notes ${RUN}`, changeworkbrief: [], imagenotes: [], from: 'alpha', created: daysAgo(2), ...tag,
+  });
+  await writeATC('atc_to_validate', ATC.V1, { ...base(PF.p1, PF.admin, MODEL.beta, 4), status: 'atc given' }, simpleAdj(`V1 adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC.V2, { ...base(PF.p1, PF.admin, MODEL.beta, 5), status: 'atc given' }, simpleAdj(`V2 adjustment ${RUN}`));
+
+  // B1 — the bulk Change Agent target. Adjustment 01 carries the four procedure states VATC-07 asserts on;
+  // adjustment 02 is DELETED and holds an otherwise-open procedure that bulk must also skip.
+  await writeATC('atc_alpha', ATC.B1, base(PF.p1, PF.admin, MODEL.alpha, 6), [
+    { name: `B1 adjustment one ${RUN}`, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },                         // 1 open (CA only)
+      { proc: 'two', bigactivity: { [ACT.ca]: [PF.agent1], [ACT.sa]: [PF.agent2] }, assigned: [PF.agent1, PF.agent2] }, // 2 open (CA + SA)
+      { proc: 'one', status: 'completed', bigactivity: { [ACT.ca]: [PF.agent2] }, assigned: [PF.agent2] },   // 3 completed
+      { proc: 'two', isdelete: true, bigactivity: { [ACT.ca]: [PF.agent2] }, assigned: [PF.agent2] },        // 4 deleted
+      { proc: 'one', assigned: [PF.agent2] },                                                                // 5 legacy (assigned_to only)
+    ] },
+    { name: `B1 adjustment two (deleted) ${RUN}`, isdelete: true, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent2] }, assigned: [PF.agent2] },
+    ] },
+  ]);
+
+  await writeATC('atc_alpha', ATC.EIS1, base(PF.p3, PF.eis, MODEL.alpha, 3), simpleAdj(`EIS1 adjustment ${RUN}`));
+
+  // M1 — mentored + already validated (VATC-08: mentor filter, 'validated' status text, summary totals)
+  await writeATC('atc_alpha', ATC.M1, {
+    ...base(PF.p1, PF.admin, MODEL.alpha, 15), status: 'validated', validator: [pref(PF.mentor)],
+    bigactivity: { [ACT.author]: [PF.admin], [ACT.mentoring]: [PF.mentor] }, totaladjustment: 3, totalprocedure: 4,
+  }, simpleAdj(`M1 adjustment ${RUN}`));
+  // Q1 — beta model, 20 days ago: the ONLY listed ATC inside the seeded queue window + its product (VATC-08)
+  await writeATC('atc_alpha', ATC.Q1, base(PF.p1, PF.admin, MODEL.beta, 20), simpleAdj(`Q1 adjustment ${RUN}`));
+  await db.collection('queue generation').doc(`${RUN}_queue`).set({
+    queuename: QUEUE_NAME, docid: `${RUN}_queue`, queuestartdate: daysAgo(21), queueenddate: daysAgo(19), ...tag,
+  });
+  await db.collection('arena events').doc(`${RUN}_event`).set({
+    eventname: QUEUE_NAME, delete: false, productref: db.doc(`products/${RUN}_product_beta`), ...tag,
+  });
+  // E7 — two adjustments; adjustment 01 has two procedures (EATC-09)
+  await writeATC('atc_alpha', ATC.E7, base(PF.p2, PF.admin, MODEL.alpha, 14), [
+    { name: `E7 adjustment one ${RUN}`, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+      { proc: 'two', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+    ] },
+    { name: `E7 adjustment two ${RUN}`, procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] }] },
+  ]);
+
+  for (const [i, id] of [ATC.E1, ATC.E2, ATC.E3, ATC.E4, ATC.E5].entries()) {
+    await writeATC('atc_alpha', id, base(PF.p2, PF.admin, MODEL.alpha, 7 + i), simpleAdj(`${id} adjustment ${RUN}`));
+  }
+  // E6 — existing adjustment with NO awareness: the edit screen must refuse to save it (EATC-05).
+  await writeATC('atc_alpha', ATC.E6, base(PF.p2, PF.admin, MODEL.alpha, 12), [
+    { name: `E6 adjustment ${RUN}`, awareness: null, awarenessdetail: null, potentialyears: null,
+      procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] }] },
+  ]);
+  await writeATC('atc_to_validate', ATC.EV1, { ...base(PF.p2, PF.admin, MODEL.beta, 13), status: 'atc given' }, simpleAdj(`EV1 adjustment ${RUN}`));
+
+  await seedPhase2({ db, adb, T, tag, daysAgo, pref, procRef, writeATC, base, simpleAdj });
+  await seedPhase3({ db, adb, T, tag, daysAgo });
+  await seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase5({ daysAgo, writeATC, base });
+  await seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
+  await seedPhase9({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj });
+
+  console.log(`[seed-atc] seeded run '${RUN}' — default-DB reference data + ${Object.keys(ATC).length} ATC docs in ${ATC_DB_ID} (EMULATOR ${EMU_FS})`);
+}
+
+async function seedPhase2({ db, adb, tag, daysAgo, pref, writeATC, base, simpleAdj }) {
+  // VUA — an upgraded chain: U_NEW (listed) editedfrom → U_OLD (retired version, opened via the version button)
+  await writeATC('atc_alpha', ATC2.U_OLD, { ...base(PF.vua, PF.admin, MODEL.alpha, 31), status: 'upgraded', isdelete: true,
+    validator: [pref(PF.mentor)] }, simpleAdj(`U_OLD adjustment ${RUN}`));
+  await writeATC('atc_alpha', ATC2.U_NEW, { ...base(PF.vua, PF.admin, MODEL.alpha, 30),
+    editedfrom: adb.doc(`atc_alpha/${ATC2.U_OLD}`), lasteditedon: daysAgo(30) }, simpleAdj(`U_NEW adjustment ${RUN}`));
+  await adb.doc(`atc_alpha/${ATC2.U_OLD}`).update({ upgradedto: adb.doc(`atc_alpha/${ATC2.U_NEW}`) });
+
+  // VPA — one participant's history: alpha, alpha (same product, consecutive) then a pending beta
+  await writeATC('atc_alpha', ATC2.VPA1, { ...base(PF.vpa, PF.admin, MODEL.alpha, 32), status: 'validated' }, simpleAdj(`VPA1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', ATC2.VPA2, { ...base(PF.vpa, PF.admin, MODEL.alpha, 33), status: 'validated' }, simpleAdj(`VPA2 adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC2.VPA3, { ...base(PF.vpa, PF.admin, MODEL.beta, 34), status: 'atc given' }, simpleAdj(`VPA3 adjustment ${RUN}`));
+
+  // PVA — ATCs + the BIG participant assignments the preview closes
+  await writeATC('atc_alpha', ATC2.PV_A, { ...base(PF.pva, PF.admin, MODEL.alpha, 35), notesid: `${RUN}_N_PVA` }, simpleAdj(`PV_A adjustment ${RUN}`));
+  await adb.collection('atc_notes').doc(`${RUN}_N_PVA`).set({ atcid: ATC2.PV_A, consultationpoint: `PV_A consultation point ${RUN}`,
+    consultationsummary: null, notes: `PV_A case notes ${RUN}`, changeworkbrief: [], imagenotes: [], from: 'alpha', ...tag });
+  await writeATC('atc_to_validate', ATC2.PV_V, { ...base(PF.pva, PF.admin, MODEL.beta, 36), status: 'atc given' }, simpleAdj(`PV_V adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC2.PV_V2, { ...base(PF.pva, PF.admin, MODEL.beta, 37), status: 'atc given' }, simpleAdj(`PV_V2 adjustment ${RUN}`));
+  for (const k of Object.keys(PA)) {
+    await db.collection('big participants assignments').doc(PA[k]).set({ docid: PA[k], status: 'review', activitylog: [], ...tag });
+  }
+
+  // VAA — one ATC assigned to agent1 at every level, three procedures (to complete / auto-generalize / undo)
+  await writeATC('atc_alpha', ATC2.AS1, { ...base(PF.vaa, PF.admin, MODEL.alpha, 38), implementationagent: [PF.agent1] }, [
+    { name: `AS1 adjustment ${RUN}`, extra: { implementationagent: [PF.agent1] }, procedures: [
+      { proc: 'one', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+      { proc: 'two', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1] },
+      { proc: 'one', status: 'completed', bigactivity: { [ACT.ca]: [PF.agent1] }, assigned: [PF.agent1],
+        extra: { last_activity: daysAgo(2) } },
+    ] },
+  ]);
+
+  // RFA — one per tab action
+  await writeATC('atc_to_validate', ATC2.RF_V, { ...base(PF.rfa, PF.admin, MODEL.beta, 40), status: 'atc given' }, simpleAdj(`RF_V adjustment ${RUN}`));
+  // RF_E — Edit link only (RFA-05); RF_V is validated by RFA-02 and leaves the Yet to Validate tab
+  await writeATC('atc_to_validate', ATC2.RF_E, { ...base(PF.rfa, PF.admin, MODEL.beta, 40), status: 'atc given' }, simpleAdj(`RF_E adjustment ${RUN}`));
+  for (const id of [ATC2.RF_A, ATC2.RF_F1, ATC2.RF_F2, ATC2.RF_F3]) {
+    await writeATC('atc_alpha', id, base(PF.rfa, PF.admin, MODEL.alpha, 41), simpleAdj(`${id} adjustment ${RUN}`));
+  }
+
+  // PFM — pick from each tab, validate, and add a note to an already-picked ATC
+  await writeATC('atc_alpha', ATC2.PF_A, base(PF.pfm, PF.admin, MODEL.alpha, 42), simpleAdj(`PF_A adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC2.PF_V, { ...base(PF.pfm, PF.admin, MODEL.beta, 43), status: 'atc given' }, simpleAdj(`PF_V adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC2.PF_V2, { ...base(PF.pfm, PF.admin, MODEL.beta, 44), status: 'atc given' }, simpleAdj(`PF_V2 adjustment ${RUN}`));
+  await writeATC('atc_alpha', ATC2.PF_M, { ...base(PF.pfm, PF.admin, MODEL.alpha, 45), mentoringid: PFM_M }, simpleAdj(`PF_M adjustment ${RUN}`));
+  await db.collection('pick_for_mentoring').doc(PFM_M).set({ atcid: ATC2.PF_M, profileid: PF.pfm, from: 'alpha',
+    mentoringnote: `Seed mentoring note ${RUN}`, mentorperson: PF.mentor, created: daysAgo(45), lastupdated: daysAgo(45), ...tag });
+
+  // ATE — a (past) queue and its ATCs
+  await db.collection('queue generation').doc(ATE_QUEUE).set({ docid: ATE_QUEUE, queuename: ATE_QUEUE_NAME,
+    queuestartdate: daysAgo(52), queueenddate: daysAgo(50), changeworkperson: [], ...tag });
+  const ateBase = (d) => ({ ...base(PF.ate, PF.admin, MODEL.alpha, d), queueid: ATE_QUEUE, stagename: `Stage ${RUN}` });
+  await writeATC('atc_alpha', ATC2.ATE_A, { ...ateBase(50), status: 'validated' }, simpleAdj(`ATE_A adjustment ${RUN}`));
+  await writeATC('atc_to_validate', ATC2.ATE_V, { ...ateBase(50), status: 'atc given' }, simpleAdj(`ATE_V adjustment ${RUN}`));
+  await writeATC('atc_alpha', ATC2.ATE_C, { ...ateBase(51), status: 'validated' }, simpleAdj(`ATE_C adjustment ${RUN}`));
+  await writeATC('atc_alpha', ATC2.ATE_U, { ...ateBase(51), status: 'validated' }, simpleAdj(`ATE_U adjustment ${RUN}`));
+
+  // LRX — an in-progress Prescribe draft (temporary_ATC, the shape prescribe-atc autosaves)
+  await adb.collection('temporary_ATC').doc(LRX_DRAFT).set({
+    date: '2026-10-01', product: MODEL.alpha, atcdirective: MODEL_DIRECTIVE.alpha, profileid: PF.lrx,
+    author: { [ACT.author]: [`profile_data/${PF.admin}`] }, observer: {}, mentor: {}, additionalactivity: [],
+    transcript: [{ adjustment: `LRX adjustment ${RUN}`, awareness: null, potentialyears: null,
+      procedure: [{ name: `procedures/${PROC.one}`, mandatory: true, completed: false, recommended_to: null,
+        assignedMap: { [ACT.ca]: [`profile_data/${PF.agent1}`] } }] }],
+    consultationsummary: `LRX summary ${RUN}`, consultationpoint: `LRX points ${RUN}`, notes: `LRX case notes ${RUN}`,
+    mentornotes: null, delete: false, authorprofileid: [PF.admin], accountpid: PF.admin, ...tag,
+  });
+
+  // Triple ATC — a queue to pick, a draft for the picker, and triple atc docs for view / preview / edit
+  await db.collection('queue generation').doc(TRIPLE_QUEUE).set({ docid: TRIPLE_QUEUE, queuename: TRIPLE_QUEUE_NAME,
+    queuestartdate: daysAgo(62), queueenddate: daysAgo(60), changeworkperson: [], ...tag });
+  await adb.collection('temporary_tripleatc').doc(TRA2_DRAFT).set({
+    date: '2026-10-01', product: MODEL.alpha, atcdirective: MODEL_DIRECTIVE.alpha, profileid: PF.tra2,
+    author: [`profile_data/${PF.admin}`], selectedqueueid: TRIPLE_QUEUE, accountuid: `${RUN}_u_dev`, accountpid: PF.dev,
+    tripleatc: [1, 2, 3].map((n) => ({ position: `TRA2 draft position ${n} ${RUN}`,
+      atc: [{ adjustment: `TRA2 draft adjustment ${n} ${RUN}`, procedure: [{ name: `procedures/${PROC.one}`,
+        recommended_to: null, assigned_to: [], mandatory: false, completed: false }] }] })),
+    delete: false, ...tag,
+  });
+  const triple = async (id, pid, d, extra = {}) => {
+    const positions = [1, 2, 3].map((n) => `${id} position ${n} ${RUN}`);
+    await writeATC('triple atc', id, { ...base(pid, PF.admin, MODEL.alpha, d), status: 'atc given', tripleatc: true,
+      perceptualposition: positions, queueid: TRIPLE_QUEUE, ...extra },
+    positions.map((p, i) => ({ name: `${id} adjustment ${i + 1} ${RUN}`, extra: { perceptualposition: p },
+      procedures: [{ proc: i % 2 ? 'two' : 'one', assigned: [] }, { proc: 'two', assigned: [] }] })));
+  };
+  await triple(ATC2.TV1, PF.trv, 60);
+  await triple(ATC2.TP1, PF.trp, 61);
+  await triple(ATC2.TP2, PF.trp, 62);
+  await triple(ATC2.TE1, PF.tre, 63);
+  await triple(ATC2.TE2, PF.tre, 64);
+  await triple(ATC2.TE3, PF.tre, 65);
+
+  // EIA — AI summaries (two versions for one participant; one already turned into an ATC; one with no forms)
+  const aiOutput = `AI summary for ${RUN}\n` + JSON.stringify({ ATC_Report: {
+    Adjustments: [{ Adjustment: AI_ADJ, Outcome: 'Calmer', Procedures: [PROC_NAME.one] }],
+    Areas_that_need_to_be_explored_more: ['Sleep'] } });
+  await adb.collection('ai_generated_atc_summary').doc(EIA.S1v1).set({ profileid: PF.eia, version: 1, formdocids: [], output: aiOutput, ...tag });
+  await adb.collection('ai_generated_atc_summary').doc(EIA.S1v2).set({ profileid: PF.eia, version: 2, formdocids: [], output: aiOutput, ...tag });
+  await adb.collection('ai_generated_atc_summary').doc(EIA.S2).set({ profileid: PF.eia2, version: 1, formdocids: [],
+    output: aiOutput, atcalpharef: adb.doc(`atc_alpha/${ATC.A1}`), atcsubmittedat: daysAgo(10), ...tag });
+}
+
+async function seedPhase3({ db, adb, T, tag, daysAgo }) {
+  const ref = (path) => db.doc(path);
+  const pfRef = (pid) => ref(`profile_data/${pid}`);
+  const hoursFromNow = (h) => T.fromMillis(Date.now() + h * 3600e3);
+  for (const k of Object.keys(TPL_MODEL)) {
+    await db.collection('atc model').doc(`${RUN}_model_${k}`).set({ atcmodel: TPL_MODEL[k], directive: TPL_DIRECTIVE[k], ...tag });
+  }
+  for (const k of Object.keys(TPL_NEAR_MISS)) {
+    await db.collection('atc model').doc(`${RUN}_model_nm_${k}`).set({ atcmodel: TPL_NEAR_MISS[k], directive: TPL_NEAR_MISS_DIRECTIVE[k], ...tag });
+  }
+  // roles + types + the ATC mapping (role → bigactivity ids; ACT.ca is assigned_to → Prescribe must skip it)
+  await db.collection('eisroles').doc(TPL.roleDiag).set({ docid: TPL.roleDiag, id: TPL.roleDiag, role: `EI Diagnostics Specialist ${RUN}`, ...tag });
+  await db.collection('eisroles').doc(TPL.roleShadow).set({ docid: TPL.roleShadow, id: TPL.roleShadow, role: `EI Shadow ${RUN}`, ...tag });
+  await db.collection('appointmenttype').doc(TPL.atEi).set({ docid: TPL.atEi, id: TPL.atEi, appointmenttype: `EI Solution Session ${RUN}`, ...tag });
+  await db.collection('appointmenttype').doc(TPL.atOther).set({ docid: TPL.atOther, id: TPL.atOther, appointmenttype: `Other Session ${RUN}`, ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(TPL.atrEi).set({
+    id: TPL.atrEi, assigned_appttype_ref: ref(`appointmenttype/${TPL.atEi}`),
+    required_role: [ref(`eisroles/${TPL.roleDiag}`), ref(`eisroles/${TPL.roleShadow}`)], additional_role: [],
+    atcrequired: true, atcmodel: TPL_MODEL.ei,
+    atcrolemap: { [TPL.roleDiag]: [ACT.author], [TPL.roleShadow]: [ACT.observer, ACT.ca] }, ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(TPL.atrOther).set({
+    id: TPL.atrOther, assigned_appttype_ref: ref(`appointmenttype/${TPL.atOther}`),
+    required_role: [ref(`eisroles/${TPL.roleDiag}`)], additional_role: [], atcrequired: false, atcmodel: null, atcrolemap: {}, ...tag });
+
+  const appt = async (id, { type = TPL.atEi, start, cancelled = false, hosts, diag, shadow }) => {
+    await db.collection('appointments').doc(id).set({
+      appointment: ref(`appointmenttype/${type}`), bookedby: pfRef(PF.tpe), starttime: start, endtime: start,
+      cancelled, attended: true, hosts: hosts.map(pfRef),
+      hostRole: { [`eisroles/${TPL.roleDiag}`]: [pfRef(diag)], [`eisroles/${TPL.roleShadow}`]: [pfRef(shadow)] }, ...tag });
+  };
+  await appt(TPL.apPast, { start: daysAgo(1), hosts: [PF.admin, PF.agent2], diag: PF.admin, shadow: PF.agent2 });
+  await appt(TPL.apOlder, { start: daysAgo(5), hosts: [PF.admin, PF.agent1], diag: PF.admin, shadow: PF.agent1 });
+  await appt(TPL.apCancelled, { start: hoursFromNow(-2), cancelled: true, hosts: [PF.admin, PF.mentor], diag: PF.admin, shadow: PF.mentor });
+  await appt(TPL.apFuture, { start: hoursFromNow(24), hosts: [PF.admin, PF.eis], diag: PF.admin, shadow: PF.eis });
+  await appt(TPL.apNotMine, { start: hoursFromNow(-3), hosts: [PF.eis, PF.agent1], diag: PF.eis, shadow: PF.agent1 });
+  await appt(TPL.apOtherType, { type: TPL.atOther, start: hoursFromNow(-1), hosts: [PF.admin, PF.agent1], diag: PF.admin, shadow: PF.agent1 });
+  // delivery steps (2026-11-01): each appointment sits in a different purchase's sequence
+  const step = (id, apId, pp) => db.collection('deliverables').doc(id).set({ deliveryref: ref(`appointmenttype/${TPL.atEi}`),
+    fileref: [ref(`appointments/${apId}`)], participantproductid: pp, profileid: PF.tpe, status: 'completed', type: 'appointment', ...tag });
+  await step(TPL.dlPast, TPL.apPast, TPL.ppPast);
+  await step(TPL.dlOlder, TPL.apOlder, TPL.ppOlder);
+
+  // live queue session for tpq (non-WiSH/EI model → the existing live-queue flow): ongoing queue, a live
+  // assignment pairing admin with tpq (agent1 filled the author activity), and the queue token → product alpha
+  await db.collection('queue generation').doc(TPL.liveQueue).set({ docid: TPL.liveQueue, queuename: LIVE_QUEUE_NAME,
+    queuestartdate: hoursFromNow(-24), queueenddate: hoursFromNow(24), changeworkperson: [], ...tag });
+  await db.collection('live assignment').doc(TPL.liveAssignment).set({
+    queueid: TPL.liveQueue, participantid: PF.tpq, pairing: [PF.admin], status: 'live', created: T.now(),
+    stagename: LIVE_STAGE, queuename: LIVE_QUEUE_NAME, participantsactivity: { [PF.agent1]: ACT.author }, ...tag });
+  await db.collection('queue stage log').doc(TPL.liveLog).set({
+    liveassignmentid: TPL.liveAssignment, productref: ref(`products/${RUN}_product_alpha`), currentstage: LIVE_STAGE, ...tag });
+  // tpq's older non-queue draft (beta)
+  await adb.collection('temporary_ATC').doc(TPL.tpqBetaDraft).set({
+    date: '2026-10-01', product: MODEL.beta, atcdirective: MODEL_DIRECTIVE.beta, profileid: PF.tpq,
+    author: { [ACT.author]: [`profile_data/${PF.admin}`] }, observer: {}, mentor: {}, additionalactivity: [],
+    transcript: [{ adjustment: `TPQ beta draft ${RUN}`, awareness: null, potentialyears: null,
+      procedure: [{ name: null, recommended_to: null, assignedMap: {}, mandatory: false, completed: false }] }],
+    consultationsummary: null, consultationpoint: null, notes: null, mentornotes: null, delete: false,
+    authorprofileid: [PF.admin], accountpid: PF.admin, lastupdated: daysAgo(3), ...tag,
+  });
+}
+
+// Phase 4 (2026-10-23): saved ATCs carrying the template sections, for Edit + View + Preview.
+async function seedPhase4({ adb, daysAgo, writeATC, base, simpleAdj }) {
+  const tpl = (pid, model, d, extra = {}) => ({ ...base(pid, PF.admin, TPL_MODEL[model], d), directive: TPL_DIRECTIVE[model], ...extra });
+  await writeATC('atc_alpha', TPL.eEI, tpl(PF.tea, 'ei', 400, { ask: TPL_ASKS }), simpleAdj(`eEI adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eLegacy, tpl(PF.tel, 'ei', 401, { directive: null }), simpleAdj(`eLegacy adjustment ${RUN}`));
+  const v1 = await writeATC('atc_alpha', TPL.eWishV1, tpl(PF.tew, 'wish', 403, { outcomes: TPL_OUTCOMES, status: 'upgraded', isdelete: true }),
+    simpleAdj(`eWish v1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eWish, tpl(PF.tew, 'wish', 402, { outcomes: TPL_OUTCOMES, editedfrom: v1, lasteditedon: daysAgo(402),
+    areastoexplore: ['Sleep'], aiatcsummary: '' }), simpleAdj(`eWish adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.eBulk, base(PF.teb, PF.admin, MODEL.alpha, 404), simpleAdj(`eBulk adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.vEI, tpl(PF.tvv, 'ei', 405, { ask: TPL_ASKS }), simpleAdj(`vEI adjustment ${RUN}`));
+  // dated well in the past so they sort to the END of View Prescribed (25 per page) and never push another
+  // spec's ATC off page 1; the view specs filter by participant instead
+  await writeATC('atc_alpha', TPL.vPlain, base(PF.tvv, PF.admin, MODEL.alpha, 407), simpleAdj(`vPlain adjustment ${RUN}`));
+  await writeATC('atc_alpha', TPL.vWish, tpl(PF.tvv, 'wish', 406, { outcomes: TPL_OUTCOMES }), simpleAdj(`vWish adjustment ${RUN}`));
+}
+
+// Phase 5 (2026-10-24): EI Solution Review log — `reviewlog` on the ATC doc.
+async function seedPhase5({ daysAgo, writeATC, base }) {
+  const ei = (author, d, extra = {}) => ({ ...base(PF.trl, author, TPL_MODEL.ei, d), directive: TPL_DIRECTIVE.ei, ask: TPL_ASKS, ...extra });
+  const adj = (name, agent) => [{ name, extra: { implementationagent: [agent] },
+    procedures: [{ proc: 'one', bigactivity: { [ACT.ca]: [agent] }, assigned: [agent] }] }];
+  const r = (id, note, by, d, deleted = false) => ({ id, note, createdby: by, createdon: daysAgo(d), isdelete: deleted,
+    deletedby: deleted ? by : null, deletedon: deleted ? daysAgo(d) : null });
+  await writeATC('atc_alpha', TPL.rEI, ei(PF.admin, 410, { reviewlog: [
+    r(`${RUN}_rv1`, REVIEW.active, PF.agent2, 5), r(`${RUN}_rv2`, REVIEW.deleted, PF.admin, 4, true)] }), adj(`rEI adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rEIS, ei(PF.eis, 411), adj(`rEIS adjustment ${RUN}`, PF.agent1));
+  await writeATC('atc_alpha', TPL.rImpl, ei(PF.admin, 412), adj(`rImpl adjustment ${RUN}`, PF.eis));
+  await writeATC('atc_alpha', TPL.rNot, ei(PF.admin, 413), adj(`rNot adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rLive, ei(PF.admin, 414), adj(`rLive adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rCarry, ei(PF.admin, 415), adj(`rCarry adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rUp, ei(PF.admin, 416), adj(`rUp adjustment ${RUN}`, PF.admin));
+  await writeATC('atc_alpha', TPL.rDel, ei(PF.admin, 417), adj(`rDel adjustment ${RUN}`, PF.admin));
+}
+
+// Phase 6 (2026-10-29): ATC forms.
+async function seedPhase6({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  const formarray = [
+    { type: 'label', fieldname: `Forms section ${RUN}`, fielddescription: 'seeded section' },
+    { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false },
+  ];
+  for (const k of Object.keys(DF_NAME)) {
+    await db.collection('delivery forms').doc(DF[k]).set({
+      docid: DF[k], formname: DF_NAME[k], formdescription: `ATC forms seed ${RUN}`, formarray,
+      ...(k === 'old' || k === 'oldSub' ? { delete: true } : {}), ...tag,
+    });
+  }
+  await db.collection('delivery forms').doc(DF_ALL).set({ docid: DF_ALL, formname: DF_ALL_NAME, formdescription: `All widgets ${RUN}`, formarray: ALL_FORMARRAY, ...tag });
+  await db.collection('atc model').doc(`${RUN}_model_all`).set({ atcmodel: ALL_MODEL, directive: `All directive ${RUN}`, forms: [{ formid: DF_ALL, filledby: 'specialist' }], ...tag });
+  await db.collection('atc model').doc(`${RUN}_model_forms`).set({ atcmodel: FORMS_MODEL, directive: `Forms directive ${RUN}`, forms: FORMS_CONFIG, ...tag });
+  await db.collection('products').doc(`${RUN}_product_forms`).set({ atcmodel: FORMS_MODEL, directive: `Forms directive ${RUN}`, ...tag });
+
+  // answers (firestore-forms · formsByClient) the View overlay reads back
+  const answer = async (id, formKey, pid, atcid) => fdb.collection('formsByClient').doc(id).set({
+    docid: id, formid: DF[formKey], formname: DF_NAME[formKey], profileid: pid, atcid, date: daysAgo(1),
+    formarray: [formarray[0], { ...formarray[1], value: FANSWER_TEXT(formKey) }], ...tag,
+  });
+  // specialist forms (clarity / oldSub) are answered by the specialist: their profile id (plan 2026-11-02)
+  await answer(FANS.clarity, 'clarity', PF.admin, FATC.V1);
+  await answer(FANS.life, 'life', PF.tfa, FATC.V0);
+  await answer(FANS.sleep, 'sleep', PF.tfa, FATC.V1);
+  await answer(FANS.oldSub, 'oldSub', PF.admin, FATC.V1);
+  await answer(FANS.actSleep, 'sleep', PF.tfb, FATC.ACT);
+  await answer(FANS.editClarity, 'clarity', PF.admin, FATC.EDIT);
+  await answer(FANS.rvSleep, 'sleep', PF.tfb, FATC.RV0);
+
+  const forms = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, FORMS_MODEL, d), status: 'validated', ...extra });
+  await writeATC('atc_alpha', FATC.V0, forms(PF.tfa, 431, { status: 'upgraded', isdelete: true, upgradedto: adb.doc(`atc_alpha/${FATC.V1}`) }), simpleAdj(`F_V0 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.V1, forms(PF.tfa, 430, { editedfrom: adb.doc(`atc_alpha/${FATC.V0}`),
+    formsubmitted: { [DF.clarity]: FANS.clarity, [DF.life]: FANS.life, [DF.sleep]: FANS.sleep, [DF.oldSub]: FANS.oldSub } }), simpleAdj(`F_V1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.OTHER, forms(PF.tfa, 432), simpleAdj(`F_OTHER adjustment ${RUN}`));
+  await writeATC('atc_to_validate', FATC.UNV, forms(PF.tfa, 433, { status: 'atc given' }), simpleAdj(`F_UNV adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.ACT, forms(PF.tfb, 434, { formsubmitted: { [DF.sleep]: FANS.actSleep } }), simpleAdj(`F_ACT adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.FILL, forms(PF.tfc, 435), simpleAdj(`F_FILL adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.UP1, forms(PF.tfd, 436), simpleAdj(`F_UP1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.DEL, forms(PF.tfd, 437), simpleAdj(`F_DEL adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.ALL, { ...base(PF.tfe, PF.admin, ALL_MODEL, 438), status: 'validated' }, simpleAdj(`F_ALL adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.EDIT, forms(PF.tfe, 439, { formsubmitted: { [DF.clarity]: FANS.editClarity } }), simpleAdj(`F_EDIT adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.WEDIT, { ...base(PF.tfe, PF.admin, TPL_MODEL.wish, 440), directive: TPL_DIRECTIVE.wish, outcomes: TPL_OUTCOMES }, simpleAdj(`F_WEDIT adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.PEDIT, base(PF.tfe, PF.admin, MODEL.alpha, 441), simpleAdj(`F_PEDIT adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.RV0, forms(PF.tfb, 443, { status: 'upgraded', isdelete: true, upgradedto: adb.doc(`atc_alpha/${FATC.RV1}`),
+    formsubmitted: { [DF.sleep]: FANS.rvSleep } }), simpleAdj(`F_RV0 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.M1, forms(PF.tfm, 450), simpleAdj(`F_M1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.M2, forms(PF.tfm, 451), simpleAdj(`F_M2 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.M3, forms(PF.tfm, 452), simpleAdj(`F_M3 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.M5, forms(PF.tfm, 453), simpleAdj(`F_M5 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.RV1, forms(PF.tfb, 442, { editedfrom: adb.doc(`atc_alpha/${FATC.RV0}`),
+    formsubmitted: { [DF.sleep]: FANS.rvSleep } }), simpleAdj(`F_RV1 adjustment ${RUN}`));
+
+  // requests (firestore-atc · atc_form_requests/{atcid}_{formid})
+  const request = (atcid, formKey, pid, extra = {}) => adb.collection('atc_form_requests').doc(`${atcid}_${DF[formKey]}`).set({
+    atcid, formid: DF[formKey], profileid: pid, product: FORMS_MODEL, sentby: PF.admin, sentat: daysAgo(2), formstatus: 'sent', ...extra, ...tag,
+  });
+  await request(FATC.V0, 'life', PF.tfa, { answerid: FANS.life });      // earlier version, resent → V1 shows Resent
+  await request(FATC.V1, 'diet', PF.tfa);                               // sent → V1 shows Sent
+  await request(FATC.OTHER, 'sleep', PF.tfa, { answerid: 'not-v1' });   // another ATC → V1's sleep stays Submitted
+  await request(FATC.RV0, 'sleep', PF.tfb, { formstatus: 'submitted' });  // sent + submitted on RV0, before the edit
+  await request(FATC.RV0, 'old', PF.tfb);                                // soft-deleted form, still pending
+  await request(FATC.M1, 'old', PF.tfm);                                 // mobile: soft-deleted form already sent (D3: still fillable)
+  await request(FATC.M2, 'life', PF.tfm);                                // mobile: a second ATC of the same model
+  await request(FATC.M3, 'sleep', PF.tfm);                               // mobile: its ATC gets deleted before submit
+}
+
+async function seedPhase7({ admin, db, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  // one delivery form template (the View answer overlay reads it); each answer has its own form name and text
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  await db.collection('delivery forms').doc(DQ.form).set({ docid: DQ.form, formname: `Activity Form ${RUN}`, formdescription: `Delivery / queue forms ${RUN}`, formarray: [question], ...tag });
+  const answer = (id, name, pid, d, extra) => fdb.collection('formsByClient').doc(id).set({
+    docid: id, formid: DQ.form, formname: name, profileid: pid, date: daysAgo(d), formarray: [{ ...question, value: DQ_TEXT(id) }], ...extra, ...tag });
+  // delivery: purchase a has three answers (Life Check twice), purchase b one
+  await answer(DQ_ANS.a1, DQ_FORM.intake, PF.tfp, 30, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.a2, DQ_FORM.life, PF.tfp, 20, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.a3, DQ_FORM.life, PF.tfp, 10, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.b1, DQ_FORM.reflect, PF.tfp, 3, { participantproductid: DQ.ppB, submittedin: 'breakthroughs' });
+  // queue: one answer in tfp's queue
+  await answer(DQ_ANS.q1, DQ_FORM.stage, PF.tfp, 2, { queueref: fdb.doc(`queue generation/${DQ.queue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+  // negative controls
+  await answer(DQ_ANS.xPp, DQ_FORM.otherPp, PF.tfa, 5, { participantproductid: DQ.ppA, submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.xNoPp, DQ_FORM.noPp, PF.tfp, 6, { submittedin: 'breakthroughs' });
+  await answer(DQ_ANS.xQ, DQ_FORM.otherQ, PF.tfp, 4, { queueref: fdb.doc(`queue generation/${DQ.otherQueue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+  await answer(DQ_ANS.xQp, DQ_FORM.otherQp, PF.tfa, 4, { queueref: fdb.doc(`queue generation/${DQ.queue}`), stagename: DQ_STAGE, submittedin: 'starlabs' });
+
+  const wish = (d, extra) => ({ ...base(PF.tfp, PF.admin, TPL_MODEL.wish, d), directive: TPL_DIRECTIVE.wish, outcomes: TPL_OUTCOMES, status: 'validated', ...extra });
+  await writeATC('atc_alpha', DQ.ATC_A, wish(460, { appointmentid: `${RUN}_dq_ap_a`, participantproductid: DQ.ppA }), simpleAdj(`DQ_A adjustment ${RUN}`));
+  await writeATC('atc_alpha', DQ.ATC_B, wish(461, { appointmentid: `${RUN}_dq_ap_b`, participantproductid: DQ.ppB }), simpleAdj(`DQ_B adjustment ${RUN}`));
+  await writeATC('atc_alpha', DQ.ATC_Q, { ...base(PF.tfp, PF.admin, MODEL.alpha, 462), status: 'validated',
+    queueid: DQ.queue, stagename: DQ_STAGE, queuename: DQ_QUEUE_NAME }, simpleAdj(`DQ_Q adjustment ${RUN}`));
+
+  // the app's FILL button: tfm's form step (purchase ppApp) on the Life Report delivery form
+  await db.collection('deliverables').doc(DQ.appStep).set({ deliveryref: db.doc(`delivery forms/${DF.life}`), fileref: [],
+    participantproductid: DQ.ppApp, profileid: PF.tfm, status: 'ready', type: 'form', ...tag });
+  // tfm signs in to the app: an unverified profile is sent to Profile Verification (home.dart _startDefaultAppFlow)
+  await db.collection('profile_data').doc(PF.tfm).set({ enable: true, profileverified: true }, { merge: true });
+  // the app's home reads this before anything else (homeContent.dart null-checks hpcConfig) — Flutter runs need it
+  await db.collection('static meta data').doc('HPC Config').set({ awards: {}, ...tag }, { merge: true });
+}
+
+// Phase 8 (2026-11-02): sponsor forms.
+async function seedPhase8({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  for (const k of Object.keys(SPF)) {
+    await db.collection('delivery forms').doc(SPF[k]).set({ docid: SPF[k], formname: SPF_NAME[k], formdescription: `Sponsor forms ${RUN}`, formarray: [question], ...tag });
+  }
+  const config = [{ formid: DF.life, filledby: 'participant' }, { formid: SPF.support, filledby: 'sponsor' }, { formid: SPF.feedback, filledby: 'sponsor' }];
+  await db.collection('atc model').doc(`${RUN}_model_sponsor`).set({ atcmodel: SP_MODEL, directive: `Sponsor directive ${RUN}`, forms: config, ...tag });
+  await db.collection('products').doc(`${RUN}_product_sponsor`).set({ atcmodel: SP_MODEL, directive: `Sponsor directive ${RUN}`, ...tag });
+
+  const answer = (id, formid, formname, pid, d, extra) => fdb.collection('formsByClient').doc(id).set({
+    docid: id, formid, formname, profileid: pid, date: daysAgo(d), formarray: [{ ...question, value: SP_TEXT(id) }], ...extra, ...tag });
+  await answer(SP_ANS.support, SPF.support, SPF_NAME.support, PF.tss, 3, { atcid: FATC.SP0, filledby: 'sponsor', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.life, DF.life, DF_NAME.life, PF.tsp, 2, { atcid: FATC.SP1, filledby: 'participant', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.delivery, DQ.form, SP_DELIVERY_NAME, PF.tsp, 9, { participantproductid: SP_PP, submittedin: 'breakthroughs' });
+  // negative controls
+  await answer(SP_ANS.xSponsor, SPF.support, SPF_NAME.support, PF.tss, 1, { atcid: FATC.SPX, filledby: 'participant', submittedin: 'breakthroughs' });
+  await answer(SP_ANS.xOther, SPF.feedback, SPF_NAME.feedback, PF.tfb, 1, { atcid: FATC.OTHER, filledby: 'sponsor', submittedin: 'breakthroughs' });
+
+  const sp = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, SP_MODEL, d), status: 'validated', ...extra });
+  await writeATC('atc_alpha', FATC.SPN, sp(PF.tsp, 470), simpleAdj(`F_SPN adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SP0, sp(PF.tsp, 472, { status: 'upgraded', isdelete: true, upgradedto: adb.doc(`atc_alpha/${FATC.SP1}`),
+    sponsorid: PF.tss, participantproductid: SP_PP }), simpleAdj(`F_SP0 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SP1, sp(PF.tsp, 471, { editedfrom: adb.doc(`atc_alpha/${FATC.SP0}`), sponsorid: PF.tss, participantproductid: SP_PP,
+    formsubmitted: { [SPF.support]: SP_ANS.support, [DF.life]: SP_ANS.life } }), simpleAdj(`F_SP1 adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.SPX, sp(PF.tss, 473), simpleAdj(`F_SPX adjustment ${RUN}`));
+  await writeATC('atc_alpha', FATC.COR, { ...base(PF.tsp, PF.admin, FORMS_MODEL, 474), status: 'validated' }, simpleAdj(`F_COR adjustment ${RUN}`));
+
+  // requests: the sponsor's, made on SP0 (submitted) and on SP1 (waiting) — they load by atcid, not by the participant
+  const request = (atcid, formid, extra) => adb.collection('atc_form_requests').doc(`${atcid}_${formid}`).set({
+    atcid, formid, profileid: PF.tss, participantid: PF.tsp, filledby: 'sponsor', product: SP_MODEL, sentby: PF.admin, sentat: daysAgo(4), ...extra, ...tag });
+  await request(FATC.SP0, SPF.support, { formstatus: 'submitted' });
+  await request(FATC.SP1, SPF.feedback, { formstatus: 'sent' });
+  // the sponsor signs in to the app (Flutter sponsor test): an unverified profile is sent to Profile Verification
+  await db.collection('profile_data').doc(PF.tss).set({ enable: true, profileverified: true }, { merge: true });
+}
+
+// Phase 9 (2026-11-02): the ATC form web link — a participant / sponsor fills the form screen from a copied
+// link. Plan: specs/plans/2026-11-02-atc-form-web-link.md (app repo).
+async function seedPhase9({ admin, db, adb, tag, daysAgo, writeATC, base, simpleAdj }) {
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  const question = { type: 'Text', fieldname: DF_QUESTION, fielddescription: 'seeded question', required: false };
+  for (const k of Object.keys(WLF)) {
+    await db.collection('delivery forms').doc(WLF[k]).set({ docid: WLF[k], formname: WLF_NAME[k], formdescription: `Web link forms ${RUN}`, formarray: [question], ...tag });
+  }
+  const config = [{ formid: WLF.part, filledby: 'participant' }, { formid: WLF.edit, filledby: 'participant' },
+    { formid: WLF.spon, filledby: 'sponsor' }];
+  await db.collection('atc model').doc(`${RUN}_model_weblink`).set({ atcmodel: WL_MODEL, directive: `Web link directive ${RUN}`, forms: config, ...tag });
+  await db.collection('products').doc(`${RUN}_product_weblink`).set({ atcmodel: WL_MODEL, directive: `Web link directive ${RUN}`, ...tag });
+
+  // the answer the EDIT request sends them back to update (filled in the app, as a resubmission would be)
+  await fdb.collection('formsByClient').doc(WL_ANS.edit).set({ docid: WL_ANS.edit, formid: WLF.edit, formname: WLF_NAME.edit,
+    profileid: PF.twp, atcid: WLATC.EDIT, filledby: 'participant', submittedin: 'breakthroughs',
+    date: daysAgo(6), formarray: [{ ...question, value: WL_TEXT(WL_ANS.edit) }], ...tag });
+
+  const wl = (pid, d, extra = {}) => ({ ...base(pid, PF.admin, WL_MODEL, d), status: 'validated', ...extra });
+  await writeATC('atc_alpha', WLATC.NEW, wl(PF.twp, 480), simpleAdj(`F_WL_NEW adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.EDIT, wl(PF.twp, 481, { formsubmitted: { [WLF.edit]: WL_ANS.edit } }), simpleAdj(`F_WL_EDIT adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.SPON, wl(PF.twp, 482, { sponsorid: PF.tws }), simpleAdj(`F_WL_SPON adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.DONE, wl(PF.twp, 483), simpleAdj(`F_WL_DONE adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.OTHER, wl(PF.twp, 484), simpleAdj(`F_WL_OTHER adjustment ${RUN}`));
+  await writeATC('atc_alpha', WLATC.DRAFT, wl(PF.twp, 485), simpleAdj(`F_WL_DRAFT adjustment ${RUN}`));
+
+  const request = (atcid, formid, extra) => adb.collection('atc_form_requests').doc(`${atcid}_${formid}`).set({
+    atcid, formid, product: WL_MODEL, sentby: PF.admin, sentat: daysAgo(5), ...extra, ...tag });
+  await request(WLATC.NEW, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+  await request(WLATC.EDIT, WLF.edit, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent', answerid: WL_ANS.edit });
+  await request(WLATC.SPON, WLF.spon, { profileid: PF.tws, participantid: PF.twp, filledby: 'sponsor', formstatus: 'sent' });
+  await request(WLATC.DONE, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'submitted' });
+  await request(WLATC.OTHER, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+  await request(WLATC.DRAFT, WLF.part, { profileid: PF.twp, filledby: 'participant', formstatus: 'sent' });
+}
+
+async function teardownATC() {
+  const admin = initAdminAuto();
+  const db = admin.firestore();
+  const adb = atcDb(admin);
+  let n = 0;
+  // default DB — only this run's tagged docs
+  for (const col of DEFAULT_SEEDED) {
+    const snap = await db.collection(col).where('testrunid', '==', RUN).get();
+    for (const d of snap.docs) { await d.ref.delete(); n++; }
+  }
+  const ours = Object.values(PF);
+  for (let i = 0; i < ours.length; i += 30) {
+    const snap = await db.collection('pick_for_mentoring').where('profileid', 'in', ours.slice(i, i + 30)).get();
+    for (const d of snap.docs) { await d.ref.delete(); n++; }
+  }
+  const aw = await db.collection('classify').doc('adjustment_awareness').get();
+  if (aw.exists && aw.data().testrunid === RUN) { await aw.ref.delete(); n++; }
+  // firestore-atc (EMULATOR ONLY — G1 above): clear the ATC collections entirely, incl. app-written docs
+  // (new versions, drafts, conflicts) that carry no testrunid.
+  for (const col of ATC_COLLECTIONS) { await adb.recursiveDelete(adb.collection(col)); }
+  // firestore-forms (EMULATOR): the seeded answers + the answers the app wrote for this run's forms ATCs
+  const fdb = getFirestore(admin.app(), FORMS_DB_ID);
+  for (const d of (await fdb.collection('formsByClient').where('testrunid', '==', RUN).get()).docs) { await d.ref.delete(); n++; }
+  const fatcIds = Object.values(FATC);
+  for (let i = 0; i < fatcIds.length; i += 30) {
+    for (const d of (await fdb.collection('formsByClient').where('atcid', 'in', fatcIds.slice(i, i + 30)).get()).docs) { await d.ref.delete(); n++; }
+  }
+  // answers + drafts the app wrote WITHOUT an ATC for this run's forms (VATCF-11 / VATCF-13)
+  const dfIds = [...Object.values(DF), DF_ALL];
+  for (const col of ['formsByClient', 'temporary_forms']) {
+    for (const d of (await fdb.collection(col).where('formid', 'in', dfIds).get()).docs) { await d.ref.delete(); n++; }
+  }
+  // Storage emulator: media the app uploaded during the run.
+  try {
+    const bucket = admin.storage().bucket(`${process.env.FIREBASE_PROJECT || 'starlabs-cicd'}.appspot.com`);
+    for (const prefix of ['ATC_Audio_Notes/', 'Uploaded ATC/', 'Online ATC Images/']) {
+      await bucket.deleteFiles({ prefix, force: true }).catch(() => {});
+    }
+  } catch { /* storage emulator not reachable — nothing to clean */ }
+  return n;
+}
+
+module.exports = { RUN, PF, EMAIL, ACT, ACT_NAME, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, ATC, ATC_DB_ID, QUEUE_NAME,
+  ATC2, PA, PFM_M, LRX_DRAFT, TRA2_DRAFT, EIA, ATE_QUEUE_NAME, TRIPLE_QUEUE_NAME, AI_ADJ,
+  TPL, TPL_MODEL, TPL_DIRECTIVE, TPL_NEAR_MISS, TPL_NEAR_MISS_DIRECTIVE, LIVE_QUEUE_NAME, LIVE_STAGE, TPL_ASKS, TPL_OUTCOMES, REVIEW,
+  FORMS_DB_ID, FORMS_MODEL, DF, DF_NAME, DF_QUESTION, FORMS_CONFIG, FATC, FANS, FANSWER_TEXT,
+  SP_MODEL, SPF, SPF_NAME, SP_PP, SP_ANS, SP_DELIVERY_NAME, SP_TEXT,
+  WL_MODEL, WLF, WLF_NAME, WLATC, WL_ANS, WL_TEXT,
+  DF_ALL, DF_ALL_NAME, ALL_MODEL, W, MEDIA, DQ, DQ_QUEUE_NAME, DQ_STAGE, DQ_FORM, DQ_ANS, DQ_TEXT, seedATC, teardownATC };
+
+if (require.main === module) {
+  (async () => {
+    const mode = process.argv[2];
+    if (mode === '--seed') await seedATC();
+    else if (mode === '--teardown') { const n = await teardownATC(); console.log('[seed-atc] torn down', n, 'default-DB docs + ATC collections for run', RUN); }
+    else { console.log('usage: seed-atc.js --seed | --teardown'); process.exit(1); }
+    process.exit(0);
+  })().catch((e) => { console.error(e); process.exit(1); });
+}

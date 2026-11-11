@@ -93,6 +93,14 @@ export const bufferProfiles = [`${RUN}_buf_p0`, `${RUN}_buf_p1`];
 export const tierProfiles = [`${RUN}_tier_p0`, `${RUN}_tier_p1`];
 
 /** Install the prod firewall + all external stubs. Call in beforeEach BEFORE navigating. */
+/**
+ * Firebase Storage as the app reaches it: the real host, OR the local Storage EMULATOR (localhost:9199). Since
+ * 2026-10-13 the emulator build connects Storage to the emulator (ci/overlay/environment.emulator.ts
+ * emulators.storage), so uploads go to the emulator host — a stub or watcher that only matched the real host
+ * would silently stop intercepting (CN-14 broke exactly this way). Match BOTH.
+ */
+export const STORAGE_HOST = /^https?:\/\/(firebasestorage\.googleapis\.com|(localhost|127\.0\.0\.1):9199)\/v0\/b\//i;
+
 export async function installContentStubs(page: Page): Promise<void> {
   await installProdFirewall(page);
   installAllExternalStubs(page);
@@ -110,7 +118,7 @@ export async function installContentStubs(page: Page): Promise<void> {
  */
 export async function installStorageStub(page: Page): Promise<void> {
   const TOKEN = 'e2e-stub-token';
-  await page.route('**/firebasestorage.googleapis.com/**', async (route) => {
+  await page.route(STORAGE_HOST, async (route) => {
     const url = route.request().url();
     // object PATH is everything after `/o/` (or the `?name=` query on upload).
     let objectPath = '';
@@ -354,7 +362,7 @@ export type StorageWatch = {
 export function watchStorageRequests(page: Page): StorageWatch {
   const seen: { method: string; url: string }[] = [];
   page.on('request', (r) => {
-    if (/firebasestorage\.googleapis\.com/i.test(r.url())) seen.push({ method: r.method(), url: r.url() });
+    if (STORAGE_HOST.test(r.url())) seen.push({ method: r.method(), url: r.url() });
   });
   let marked = 0;
   const line = (r: { method: string; url: string }) => `${r.method} ${r.url}`;

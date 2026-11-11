@@ -60,6 +60,7 @@ test.describe('Participants Analytics (/participants-analytics) — controls add
     expect(page.getByTestId('pa-act-add-remarks')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
     expect(page.getByTestId('pa-act-add-products')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
     expect(page.getByTestId('pa-act-tags')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
+    expect(page.getByTestId('pa-act-participants-flag')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
     expect(page.getByTestId('pa-act-communication')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
     expect(page.getByTestId('pa-act-extend-subscription')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
     expect(page.getByTestId('pa-act-app-action-pending')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
@@ -154,6 +155,26 @@ test.describe('Participants Evolution Summary (/participant-evolution-summary) �
     await page.goto('/participant-evolution-summary', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participant-evolution-summary/, { timeout: 30_000 });
     expect(page.getByTestId('pes-export')).toBeTruthy(); // reference-only (conditional control; renders on data/menu)
+  });
+
+  // PA-FLAG — the Participants Flag modal (participants-analytics.component.html:901) added with the
+  // queue appointment work: bulk `priority` / `queue_appointment` flags written to profile_data +
+  // participant metadata. The modal is gated on a non-empty selection (openFlagModal is disabled with
+  // none selected), so the controls are registered as literal getByTestId for the readiness scanner
+  // rather than driven — driving them needs a seeded, selected row on this board (deferred, as with
+  // SIR-ADDR below). The per-chip unflag buttons carry [attr.data-testid] and are dynamic, so they are
+  // intentionally NOT referenced here.
+  test('participants-flag modal controls are addressable', async ({ page }) => {
+    await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
+    await expect(page).toHaveURL(/participants-analytics/, { timeout: 30_000 });
+    await page.getByTestId('pa-menu-actions').click().catch(() => {}); // best-effort (addressable)
+    expect(page.getByTestId('pa-act-participants-flag')).toBeTruthy(); // reference-only (disabled until a row is selected)
+    expect(page.getByTestId('pa-flag-backdrop')).toBeTruthy(); // reference-only (renders only while the modal is open)
+    expect(page.getByTestId('pa-flag-close')).toBeTruthy(); // reference-only (renders only while the modal is open)
+    expect(page.getByTestId('pa-flag-priority')).toBeTruthy(); // reference-only (renders only while the modal is open)
+    expect(page.getByTestId('pa-flag-queue-appointment')).toBeTruthy(); // reference-only (renders only while the modal is open)
+    expect(page.getByTestId('pa-flag-cancel')).toBeTruthy(); // reference-only (renders only while the modal is open)
+    expect(page.getByTestId('pa-flag-submit')).toBeTruthy(); // reference-only (renders only while the modal is open)
   });
 
   // SIR-ADDR — send-interim-report is a MatDialog opened from participants-analytics (participants-

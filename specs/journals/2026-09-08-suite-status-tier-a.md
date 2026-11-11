@@ -665,3 +665,34 @@ with (b) in place `rolloutApproved()` is true and stage ④ renders "approved" p
 "⚠ bypassed" badge — which is what a bypass should look like once it has taken effect.
 
 Verified: 75/75 unit tests · full AOT production build clean.
+
+## ROLLOUT — the new flow is LIVE (2026-09-10)
+
+Deployed to production on operator instruction.
+
+**Functions** (`starlabs-cicd`, codebase `console`) — all six verified live via `functions:list`:
+`webhookReceiver` · `recordSuiteStatus` · `recordBranchChannel` · `recordSuiteRun` ·
+`approveRollout` · `recheckSuites`.
+
+**Hosting** — clean rebuild (`rm -rf dist`) then `firebase deploy --only hosting`; 17 files,
+released to `cicdconsole`. Pre-flight checked before deploying: `useMock: false`, hosting site
+`cicdconsole`, public `dist/console/browser`. Verified after: https://cicdconsole.web.app serves,
+title renders, **zero console errors** on load (sign-in gate reached, not signed in from this
+session).
+
+**What the team sees change, in one deploy:**
+- Working Branches is now the four-stage pipeline and the ONLY place the flow is driven. Every
+  old-flow action button is gone from it (Deploy ▾, sign-off, Create PR, Run tests).
+- Every role can now reach it (`anyMemberGuard`) — previously a pure tester was locked out of the
+  screen carrying their only action.
+- Preview Channels is off the nav (route + component intact, reachable by URL).
+- Release Channel is on the nav for ALL roles and is read-only.
+- Overview reads new-flow facets; its old counters would have read zero for ever.
+
+**Expected regression, by design:** `shipped to production` disappears from every existing card.
+Those branches predate the `released` record, so the console genuinely cannot prove they shipped.
+New releases populate it from here.
+
+**Still on the old flow and untouched:** CF Board, and the CF repo's whole pipeline. The old
+callables (`deployPreview`, `signoff`, `createPullRequest`) remain deployed and functional — nothing
+was deleted, only removed from the UI — so a rollback is a hosting redeploy, not a code revert.

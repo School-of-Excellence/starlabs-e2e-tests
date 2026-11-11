@@ -157,14 +157,17 @@ async function seedAppointments() {
   // product/delivery is NOT seeded (dashboard must keep showing exactly one type for P1), so it never
   // appears on the dashboard; it is reached only via /bookappointment for p1 (no customer_eismapping).
   await apptTypeRef(ID.AT2R).set({ docid: ID.AT2R, id: ID.AT2R, appointmenttype: 'Test Two-Role', duration: 60, ischangeworkrequired: false, ...tag });
-  await roleRef(ID.R1).set({ docid: ID.R1, role: 'Primary Specialist', experiencestage: 'S1', experiencelevel: 'L1', ...tag });
-  await roleRef(ID.R2).set({ docid: ID.R2, role: 'Secondary Specialist', experiencestage: 'S2', experiencelevel: 'L1', ...tag });
+  await roleRef(ID.R1).set({ docid: ID.R1, id: ID.R1, role: 'Primary Specialist', experiencestage: 'S1', experiencelevel: 'L1', ...tag });
+  await roleRef(ID.R2).set({ docid: ID.R2, id: ID.R2, role: 'Secondary Specialist', experiencestage: 'S2', experiencelevel: 'L1', ...tag });
   await db.collection('Roles-To-EIS').doc(ID.RTE1).set({ docid: ID.RTE1, assigned_role_ref: roleRef(ID.R1), assigned_eis: [profileRef(PF.eis0), profileRef(PF.eis1)], ...tag });
   // R2 → ONLY eis1, so the 2-role appt resolves R1→{eis0,eis1}, R2→{eis1}; the only same-time pair that
   // survives the merge's `eisprofile != eisprofile` filter is (eis0 as R1, eis1 as R2) → exactly 1 slot.
   await db.collection('Roles-To-EIS').doc(ID.RTE2).set({ docid: ID.RTE2, assigned_role_ref: roleRef(ID.R2), assigned_eis: [profileRef(PF.eis1)], ...tag });
   await db.collection('AppointmentType-To-Roles').doc(ID.ATR1).set({ docid: ID.ATR1, assigned_appttype_ref: apptTypeRef(ID.AT1), required_role: [roleRef(ID.R1)], additional_role: [], ...tag });
   await db.collection('AppointmentType-To-Roles').doc(ID.ATR2R).set({ docid: ID.ATR2R, assigned_appttype_ref: apptTypeRef(ID.AT2R), required_role: [roleRef(ID.R1), roleRef(ID.R2)], additional_role: [], ...tag });
+  // The ATC data of the map-appointment-role dialog is NOT seeded here: map-appointment-role-atc.spec.ts adds it
+  // in beforeAll and removes it in afterAll (seedDialogAtc / removeDialogAtc below), so it never lingers on a
+  // shared emulator for the next suite (the ATC suite reads bigactivity + `atc model` app-wide).
   await productRef(ID.P1).set({ docid: ID.P1, product: 'Test WiSH Priority', mode: 'Priority Mode', atcmodel: null, ...tag });
   // Distinct product whose name appears ONLY on the two roster appointments (APROSTER/APFUTURE), so the
   // roster Search box isolates exactly them — the past AP1/AP2 carry P1 and won't match this filter.
@@ -346,7 +349,189 @@ async function seedAppointments() {
   await db.collection('deliverytime').doc(ID.DT1).set({ docid: ID.DT1, profileid: PF.eis0, ...dtDays, ...tag });
   await db.collection('deliverytime').doc(ID.DT2).set({ docid: ID.DT2, profileid: PF.eis1, ...dtDays, ...tag });
 
-  return { TESTRUNID, ID, PF, EMAIL, counts: { appointments: 5, availability: 5, offtime: 2, deliverytime: 2 } };
+  // 8) SPECIALIST APPOINTMENT STUDIO world (/specialistappointmentstudio) — its OWN tag (SAS_RUN), see below.
+  await seedStudio(db, auth, T);
+
+  return { TESTRUNID, ID, PF, EMAIL, counts: { appointments: 5, availability: 5, offtime: 2, deliverytime: 2, studio: { appointments: 7, availability: 5 } } };
+}
+
+// =================================================================================================
+// SPECIALIST APPOINTMENT STUDIO (SAS) world — appointments/specialist-appointment-studio.spec.ts.
+//
+// WHY ITS OWN TAG (`${TESTRUNID}sas`): the studio's numbers are sums over a specialist's windows and
+// sessions, and its tables list a specialist's sessions. Every doc here hangs off NEW actors (ah / cw / cw2
+// and clients c0..c5) so nothing the other appointment specs count or filter on moves — their row filters
+// key on `eis0+appt@…` / `participant0+appt@…`, which none of these emails contain as a substring. The
+// separate tag keeps the world's teardown/reset independent of the main seed (teardownStudio()).
+//
+// WHY THE AUTH CHAIN IS WRITTEN HERE and not via seed.seedAuthChain: seedAuthChain also writes the queue
+// DRIVEN_ROUTES `dashboard` grants under the run tag, and authguard.routeConfig() lets the LAST matching
+// dashboard doc win (doc-id order). `apptsas_dash_*` sorts after `appt_dash_*`, so those grants would
+// REPLACE the main seed's for every queue route with an ah/eis-only role list. Only the studio route is granted.
+//
+// TIME LAYOUT — all relative to THIS week's Monday 00:00 local (Home opens on the current week):
+//   last week  Wed (-5)  WL1 cw  09:00–13:00 [Coaching, Review]  A_DONE 09–10 attended (c1)
+//                                                            A_CANC 10–11 cancelled, no-show reason (c2)
+//                                                            A_PEND 11:00–11:45 Review, UNMARKED (c0)
+//              Wed (-5)  WOT cw2 09:00–17:00 [Coaching]      A_OTHER_DONE 09–10 attended, A_OTHER_PEND 13–14 (c5)
+//              Thu (-4)  WL2 cw  14:00–16:00 [Coaching]      nothing booked
+//   2 weeks ago Wed (-12)          A_OLD 09:00–10:30 attended (c3) — no window, outside last week
+//   next week  Wed (+9)  WN1 cw  09:00–12:00 [Coaching]      A_UP 09–10 booked, future (c4)
+//              Thu (+10) WN2 cw  14:00–15:00 [Coaching]      nothing booked (the deletable window)
+//   this week: NOTHING for cw (the default period must read zero).
+// Last week, the app must compute for cw: Available 6h (240+120) · Booked 1h 45m (union of the booked
+// slots 09–10 + 11:00–11:45) · Delivered 1h (A_DONE only) · 1h cancelled · Unutilised 5h · Utilisation 17%.
+// Each control moves a number if its rule breaks: A_CANC → Delivered 2h/33%; A_PEND → 1h 45m/29%;
+// cw2 leaking in → Available 14h; A_OLD leaking in → Delivered 2h 30m.
+// A_PEND is cw's NEWEST-ENDED session and is a "SAS Studio Review" (the others are "Coaching"), so the
+// add-availability gate (unmarkedLastAppointment) must name Review.
+// =================================================================================================
+const SAS_RUN = `${TESTRUNID}sas`;
+const SAS_ID = {
+  AT: `${SAS_RUN}_AT`,       // appointmenttype "SAS Studio Coaching" 60 min, group (max 3), change work required
+  AT2: `${SAS_RUN}_AT2`,     // appointmenttype "SAS Studio Review" 45 min, no group, no change work
+  R1: `${SAS_RUN}_R1`,       // eisroles "SAS Specialist"
+  RTE1: `${SAS_RUN}_RTE1`,   // Roles-To-EIS R1 → cw, cw2
+  ATR1: `${SAS_RUN}_ATR1`,   // AppointmentType-To-Roles AT → [R1]
+  ATR2: `${SAS_RUN}_ATR2`,   // AppointmentType-To-Roles AT2 → [R1]
+  PROD: `${SAS_RUN}_PROD`,   // products "SAS Studio Product" (atcmodel:null, not Priority Mode → off the dashboard)
+  WL1: `${SAS_RUN}_WL1`, WL2: `${SAS_RUN}_WL2`, WOT: `${SAS_RUN}_WOT`, WN1: `${SAS_RUN}_WN1`, WN2: `${SAS_RUN}_WN2`,
+  A_DONE: `${SAS_RUN}_A_DONE`, A_CANC: `${SAS_RUN}_A_CANC`, A_PEND: `${SAS_RUN}_A_PEND`, A_OLD: `${SAS_RUN}_A_OLD`,
+  A_UP: `${SAS_RUN}_A_UP`, A_OTHER_DONE: `${SAS_RUN}_A_OTHER_DONE`, A_OTHER_PEND: `${SAS_RUN}_A_OTHER_PEND`,
+};
+const SAS_KEYS = ['ah', 'cw', 'cw2', 'c0', 'c1', 'c2', 'c3', 'c4', 'c5'];
+const SAS_PF = Object.fromEntries(SAS_KEYS.map((k) => [k, `${SAS_RUN}_pf_${k}`]));
+const SAS_EMAIL = {
+  ah: `ah+${SAS_RUN}@example.com`,        // users_roles {ah}  → A&H view (Overview, Mentors, Utilisation, Book, Settings)
+  cw: `cw+${SAS_RUN}@example.com`,        // users_roles {eis} → CW view (Home only)
+  cw2: `cw2+${SAS_RUN}@example.com`,      // users_roles {eis} → the OTHER host (negative control)
+  ...Object.fromEntries(['c0', 'c1', 'c2', 'c3', 'c4', 'c5'].map((k) => [k, `client${k.slice(1)}+${SAS_RUN}@example.com`])),
+};
+const SAS_ROUTES = [{ route: '/specialistappointmentstudio', label: 'Specialist Appointment Studio' }];
+// Every collection the studio world writes (teardownStudio sweeps these by testrunid == SAS_RUN).
+const SAS_SEEDED = [
+  'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
+  'appointments', 'availability', 'participant metadata',
+  'user_data', 'profile_data', 'users_roles', 'dashboard',
+];
+
+/** Local time `dayOffset` days from THIS week's Monday 00:00 (sas-logic mondayOf), at h:m. */
+function sasAt(T, dayOffset, h, m = 0) {
+  const d = new Date(); d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7) + dayOffset);
+  d.setHours(h, m, 0, 0);
+  return T.fromDate(d);
+}
+
+async function seedStudio(db, auth, T) {
+  const tag = TAG(SAS_RUN);
+  const profileRef = (pf) => db.collection('profile_data').doc(pf);
+  const typeRef = (id) => db.collection('appointmenttype').doc(id);
+  const roleRef = (id) => db.collection('eisroles').doc(id);
+
+  // 1) Auth chain: same shape as seed.seedAuthChain (login needs profile_data by email + number + role_ref;
+  //    getRoles() resolves profile_data by user_ref → role_ref → users_roles flags, which pick the view).
+  const flags = { ah: { ah: true }, cw: { eis: true }, cw2: { eis: true } };
+  for (const k of SAS_KEYS) {
+    const uid = `${SAS_RUN}_u_${k}`, email = SAS_EMAIL[k], staff = !!flags[k];
+    await auth.createUser({ uid, email, password: 'Test!1234', displayName: email })
+      .catch((e) => { if (e.code !== 'auth/uid-already-exists') throw e; });
+    await auth.setCustomUserClaims(uid, { testrunid: SAS_RUN, role: staff ? (k === 'ah' ? 'ah' : 'eis') : 'participant' });
+    const userDataRef = db.collection('user_data').doc(uid);
+    const roleDocRef = db.collection('users_roles').doc(`${SAS_RUN}_role_${uid}`);
+    await userDataRef.set({ name: email, email, number: '9999900000', ...tag });
+    await roleDocRef.set({ id: roleDocRef.id, name: email, participant: !staff, profile_ref: profileRef(SAS_PF[k]), ...(flags[k] || {}), ...tag });
+    await profileRef(SAS_PF[k]).set({
+      docid: SAS_PF[k], profileid: SAS_PF[k], email: email.toLowerCase(), name: email,
+      number: '9999900000', countrycode: '+91', user_ref: userDataRef, role_ref: roleDocRef, ...tag,
+    });
+    // Clients need a `participant metadata` doc (with `name`): the /appointmentstudio screen derefs
+    // mapProfileMeta[bookedby.id] for every appointment it lists (see 4a above).
+    if (!staff) await db.collection('participant metadata').doc(SAS_PF[k]).set({ docid: SAS_PF[k], profileid: SAS_PF[k], name: email, activejourney: null, ...tag });
+  }
+  await seedDashboardRoutes(db, SAS_RUN, SAS_ROUTES, { staffProfileIds: [SAS_PF.ah, SAS_PF.cw, SAS_PF.cw2], allRoles: ['ah', 'eis'] });
+
+  // 2) Config. Settings (Delivery Type Details) renders these straight from appointmenttype: the spec
+  //    asserts the APP's formatting of them (fmtHours, "Yes · up to 3", "Required"), never the raw fields.
+  await typeRef(SAS_ID.AT).set({ docid: SAS_ID.AT, id: SAS_ID.AT, appointmenttype: 'SAS Studio Coaching', duration: 60, groupappointment: true, maxbooking: 3, ischangeworkrequired: true, ...tag });
+  await typeRef(SAS_ID.AT2).set({ docid: SAS_ID.AT2, id: SAS_ID.AT2, appointmenttype: 'SAS Studio Review', duration: 45, groupappointment: false, ischangeworkrequired: false, ...tag });
+  await roleRef(SAS_ID.R1).set({ docid: SAS_ID.R1, role: 'SAS Specialist', experiencestage: 'S1', experiencelevel: 'L1', ...tag });
+  await db.collection('Roles-To-EIS').doc(SAS_ID.RTE1).set({ docid: SAS_ID.RTE1, assigned_role_ref: roleRef(SAS_ID.R1), assigned_eis: [profileRef(SAS_PF.cw), profileRef(SAS_PF.cw2)], ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(SAS_ID.ATR1).set({ docid: SAS_ID.ATR1, assigned_appttype_ref: typeRef(SAS_ID.AT), required_role: [roleRef(SAS_ID.R1)], additional_role: [], ...tag });
+  await db.collection('AppointmentType-To-Roles').doc(SAS_ID.ATR2).set({ docid: SAS_ID.ATR2, assigned_appttype_ref: typeRef(SAS_ID.AT2), required_role: [roleRef(SAS_ID.R1)], additional_role: [], ...tag });
+  await db.collection('products').doc(SAS_ID.PROD).set({ docid: SAS_ID.PROD, product: 'SAS Studio Product', mode: 'Event Mode', atcmodel: null, ...tag });
+
+  // 3) Availability (last week + the cw2 control). Slot arrays are keyed by the type DOC id
+  //    (service.parseWindow reads d[typeId]). The cancelled 10–11 slot is free again (cancel reopens it).
+  const slot = (day, h1, m1, h2, m2, booked) => ({ slotstart: sasAt(T, day, h1, m1), slotend: sasAt(T, day, h2, m2), booked, available: !booked });
+  const win = (id, pf, day, h1, h2, types) => ({ docid: id, id, profileref: profileRef(SAS_PF[pf]), starttime: sasAt(T, day, h1), endtime: sasAt(T, day, h2), appointments: Object.keys(types).map(typeRef), ...types, ...tag });
+  await db.collection('availability').doc(SAS_ID.WL1).set(win(SAS_ID.WL1, 'cw', -5, 9, 13, {
+    [SAS_ID.AT]: [slot(-5, 9, 0, 10, 0, true), slot(-5, 10, 0, 11, 0, false), slot(-5, 12, 0, 13, 0, false)],
+    [SAS_ID.AT2]: [slot(-5, 11, 0, 11, 45, true)],
+  }));
+  await db.collection('availability').doc(SAS_ID.WL2).set(win(SAS_ID.WL2, 'cw', -4, 14, 16, {
+    [SAS_ID.AT]: [slot(-4, 14, 0, 15, 0, false), slot(-4, 15, 0, 16, 0, false)],
+  }));
+  await db.collection('availability').doc(SAS_ID.WOT).set(win(SAS_ID.WOT, 'cw2', -5, 9, 17, {
+    [SAS_ID.AT]: [slot(-5, 9, 0, 10, 0, true), slot(-5, 13, 0, 14, 0, true), slot(-5, 15, 0, 16, 0, false)],
+  }));
+  await seedStudioNextWeek(db, T);
+
+  // 4) Appointments. hosts + hostRole (keyed by ROLE PATH) like every booking path writes; `created` is
+  //    read by AppointmentDetailComponent's template and the roster stream; `cancelledon` by the detail
+  //    template when cancelled. productid/slotdata keep the roster stream (APPT-07) from throwing.
+  const appt = (id, host, client, typeId, day, h1, m1, h2, m2, state = {}) => ({
+    docid: id,
+    appointment: typeRef(typeId),
+    appointmentrole: [roleRef(SAS_ID.R1)],
+    hostRole: { [roleRef(SAS_ID.R1).path]: [profileRef(SAS_PF[host])] },
+    hosts: [profileRef(SAS_PF[host])],
+    bookedby: profileRef(SAS_PF[client]),
+    starttime: sasAt(T, day, h1, m1), endtime: sasAt(T, day, h2, m2),
+    cancelled: false, attended: false, cancelledon: null, cancelledreason: null,
+    journeycoach: false, onboarding: false,
+    // slotdata = [{availability doc id, index in that type's slot array}] — what booking writes and
+    // guard.cancelAppointment() reads to reopen the slot. A_OLD has no window → [].
+    productid: SAS_ID.PROD, created: sasAt(T, day - 7, 9), slotdata: [],
+    ...state, ...tag,
+  });
+  const A = db.collection('appointments');
+  await A.doc(SAS_ID.A_DONE).set(appt(SAS_ID.A_DONE, 'cw', 'c1', SAS_ID.AT, -5, 9, 0, 10, 0, { attended: true, slotdata: [{ id: SAS_ID.WL1, index: 0 }] }));
+  await A.doc(SAS_ID.A_CANC).set(appt(SAS_ID.A_CANC, 'cw', 'c2', SAS_ID.AT, -5, 10, 0, 11, 0,
+    { cancelled: true, cancelledon: sasAt(T, -5, 11, 5), cancelledreason: "Client didn't show up", slotdata: [{ id: SAS_ID.WL1, index: 1 }] }));
+  await A.doc(SAS_ID.A_PEND).set(appt(SAS_ID.A_PEND, 'cw', 'c0', SAS_ID.AT2, -5, 11, 0, 11, 45, { slotdata: [{ id: SAS_ID.WL1, index: 0 }] }));
+  await A.doc(SAS_ID.A_OLD).set(appt(SAS_ID.A_OLD, 'cw', 'c3', SAS_ID.AT, -12, 9, 0, 10, 30, { attended: true }));
+  await A.doc(SAS_ID.A_UP).set(appt(SAS_ID.A_UP, 'cw', 'c4', SAS_ID.AT, 9, 9, 0, 10, 0, { slotdata: [{ id: SAS_ID.WN1, index: 0 }] }));
+  await A.doc(SAS_ID.A_OTHER_DONE).set(appt(SAS_ID.A_OTHER_DONE, 'cw2', 'c5', SAS_ID.AT, -5, 9, 0, 10, 0, { attended: true, slotdata: [{ id: SAS_ID.WOT, index: 0 }] }));
+  await A.doc(SAS_ID.A_OTHER_PEND).set(appt(SAS_ID.A_OTHER_PEND, 'cw2', 'c5', SAS_ID.AT, -5, 13, 0, 14, 0, { slotdata: [{ id: SAS_ID.WOT, index: 1 }] }));
+}
+
+/** Next week's two cw windows: WN1 holds A_UP's booked slot (delete must be REFUSED), WN2 is free (delete
+ *  must SUCCEED). Also the precondition reset SAS-08 runs first (its delete removes WN2). PRECONDITION only. */
+async function seedStudioNextWeek(db, T) {
+  const tag = TAG(SAS_RUN);
+  const pref = db.collection('profile_data').doc(SAS_PF.cw);
+  const at = db.collection('appointmenttype').doc(SAS_ID.AT);
+  const slot = (day, h1, h2, booked) => ({ slotstart: sasAt(T, day, h1), slotend: sasAt(T, day, h2), booked, available: !booked });
+  await db.collection('availability').doc(SAS_ID.WN1).set({
+    docid: SAS_ID.WN1, id: SAS_ID.WN1, profileref: pref, starttime: sasAt(T, 9, 9), endtime: sasAt(T, 9, 12), appointments: [at],
+    [SAS_ID.AT]: [slot(9, 9, 10, true), slot(9, 10, 11, false), slot(9, 11, 12, false)], ...tag,
+  });
+  await db.collection('availability').doc(SAS_ID.WN2).set({
+    docid: SAS_ID.WN2, id: SAS_ID.WN2, profileref: pref, starttime: sasAt(T, 10, 14), endtime: sasAt(T, 10, 15), appointments: [at],
+    [SAS_ID.AT]: [slot(10, 14, 15, false)], ...tag,
+  });
+}
+
+async function resetStudioWindows() {
+  const admin = initAdminAuto();
+  await seedStudioNextWeek(admin.firestore(), admin.firestore.Timestamp);
+}
+
+async function teardownStudio(admin) {
+  const n = await seed.teardownCollections(admin.firestore(), SAS_SEEDED, SAS_RUN);
+  for (const k of SAS_KEYS) await admin.auth().deleteUser(`${SAS_RUN}_u_${k}`).catch(() => {});
+  return n;
 }
 
 /** Seed (or reset) the p1 booking subject: participantsproduct(ongoing) + participantdeliverysequence
@@ -379,12 +564,43 @@ async function seedBookingSlot(db, T, profileRef, apptTypeRef) {
   }, { merge: false });
 }
 
+// ATC section of the map-appointment-role dialog (2026-10-22)
+const ATC_ACT = { author: `${TESTRUNID}_ba_author`, observer: `${TESTRUNID}_ba_observer`, ca: `${TESTRUNID}_ba_ca`, plain: `${TESTRUNID}_ba_plain` };
+const ATC_ACT_NAME = { author: 'Diagnostics Solo', observer: 'Diagnostics Shadow', ca: 'Changework Solo', plain: `Plain Activity ${TESTRUNID}` };
+const ATC_ACT_PROP = { author: 'author', observer: 'observer', ca: 'assigned_to', plain: null };
+// `ei` carries the PRODUCTION spelling ("EI Solutions", plural): the app matches the model name by substring
+// since 2026-11-02 (starlabs-angular src/app/ATC/shared/atc-product.ts). Do not shorten it to the singular.
+const ATC_MODEL = { ei: 'EI Solutions', wish: 'WiSH' };
+
+/**
+ * The map-appointment-role dialog's ATC world, owned by map-appointment-role-atc.spec.ts (beforeAll):
+ * bigactivity with an atcproperty (+ one without, which must NOT be offered), the `atc model` names
+ * (reference-only config — safe per CLAUDE.md), and ATR2R prescribing an EI Solution ATC (R1 → author,
+ * R2 → observer + CA) for MARD-ATC-03. EMULATOR ONLY (initAdminAuto: the spec runs under the emulator config).
+ */
+async function seedDialogAtc(db) {
+  const tag = TAG(TESTRUNID);
+  for (const k of Object.keys(ATC_ACT)) {
+    await db.collection('bigactivity').doc(ATC_ACT[k]).set({ docid: ATC_ACT[k], activity: ATC_ACT_NAME[k], atcproperty: ATC_ACT_PROP[k], ...tag });
+  }
+  for (const k of Object.keys(ATC_MODEL)) {
+    await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).set({ atcmodel: ATC_MODEL[k], ...tag });
+  }
+  await db.collection('AppointmentType-To-Roles').doc(ID.ATR2R).update({
+    atcrequired: true, atcmodel: ATC_MODEL.ei, atcrolemap: { [ID.R1]: [ATC_ACT.author], [ID.R2]: [ATC_ACT.observer, ATC_ACT.ca] } });
+}
+/** Removes what seedDialogAtc added (the spec restores ATR2R from its own snapshot). */
+async function removeDialogAtc(db) {
+  for (const k of Object.keys(ATC_ACT)) await db.collection('bigactivity').doc(ATC_ACT[k]).delete().catch(() => {});
+  for (const k of Object.keys(ATC_MODEL)) await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).delete().catch(() => {});
+}
+
 // Collections this seed writes (for teardown).
 const SEEDED = [
   'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
   'productToDeliverySequence', 'participantsproduct', 'participantdeliverysequence', 'deliverables',
   'appointments', 'availability', 'offtime', 'EISzoomcontact', 'customer_eismapping', 'deliverytime',
-  'participant metadata',
+  'participant metadata', 'bigactivity',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
@@ -393,12 +609,19 @@ async function teardownAppointments() {
   const admin = initAdminAuto();
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID);
+  for (const k of Object.keys(ATC_MODEL)) await db.collection('atc model').doc(`${TESTRUNID}_model_${k}`).delete().catch(() => {});
+  // mappings the dialog CREATED for this run's appointment types carry no testrunid — remove them too
+  for (const at of [ID.AT1, ID.AT2, ID.AT2R]) {
+    const made = await db.collection('AppointmentType-To-Roles').where('assigned_appttype_ref', '==', db.collection('appointmenttype').doc(at)).get();
+    for (const d of made.docs) if (!d.data().testrunid) await d.ref.delete();
+  }
   // Also delete the Auth users (emails carry the run id).
   const auth = admin.auth();
   for (const key of Object.keys(PF)) {
     await auth.deleteUser(`${TESTRUNID}_u_${key}`).catch(() => {});
   }
-  return n;
+  // The studio world carries its own tag (SAS_RUN) — swept separately.
+  return n + await teardownStudio(admin);
 }
 
 /** Re-runnable precondition resets for the booking write-mutation cases (APPT-02/03). Restores the p1
@@ -433,6 +656,8 @@ async function resetBookingSubject() {
 
 module.exports = {
   TESTRUNID, ID, PF, EMAIL, ROUTES, SEEDED, seedAppointments, teardownAppointments, resetBookingSubject,
+  ATC_ACT, ATC_ACT_NAME, ATC_MODEL, seedDialogAtc, removeDialogAtc,
+  SAS_RUN, SAS_ID, SAS_PF, SAS_EMAIL, SAS_SEEDED, seedStudio, resetStudioWindows,
 };
 
 if (require.main === module) {

@@ -23,6 +23,7 @@ results.xml
 /firebase.emulator.json
 /firestore.rules
 /firestore.indexes.json
+/storage.rules
 
 # secrets / local-only (never commit)
 *.local

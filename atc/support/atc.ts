@@ -1,0 +1,251 @@
+// @ts-nocheck
+// atc.ts — actors, login, guards and Material helpers for the ATC suite (Prescribe / Edit / View Prescribed ATC).
+//
+// OPERATOR RULE (2026-10-13): NEVER test ATC against the development or production databases — emulator only.
+// Three layers enforce it (plan §3):
+//   G1  atc/seed-atc.js refuses to run without the emulator hosts (and so does this module — it requires it).
+//   G2  installAtcGuards() aborts EVERY browser request to a real Firestore / Storage host and records it;
+//       assertNoRealDb() fails the test if anything tried. A missing firestore-atc emulator wiring in main.ts
+//       therefore shows up as a red test, never as a silent read of a real database.
+//   G3  emulator-wiring.spec.ts proves a doc that exists ONLY in the emulator's firestore-atc renders.
+import { Page, Locator, expect } from '@playwright/test';
+import { loginAs } from '../../queue/support/actors';
+import { installAllExternalStubs } from '../../queue/stubs';
+import { installProdFirewall } from '../../_shared/prod-firewall';
+
+const S = require('../seed-atc');
+const { initAdminAuto } = require('../../lib/seed-common');
+const { getFirestore } = require('firebase-admin/firestore');
+
+export const RUN: string = S.RUN;
+export const PF = S.PF;
+export const EMAIL = S.EMAIL;
+export const ACT = S.ACT;
+export const ACT_NAME = S.ACT_NAME;
+export const PROC = S.PROC;
+export const PROC_NAME = S.PROC_NAME;
+export const MODEL = S.MODEL;
+export const MODEL_DIRECTIVE = S.MODEL_DIRECTIVE;
+export const ATC = S.ATC;
+export const QUEUE_NAME: string = S.QUEUE_NAME;
+export const RECOMMEND_NAME = `Recommend Self ${S.RUN}`;
+// phase 2 (2026-10-17) — the 14 live ATC screens
+export const ATC2 = S.ATC2;
+export const PA = S.PA;
+export const PFM_M: string = S.PFM_M;
+export const LRX_DRAFT: string = S.LRX_DRAFT;
+export const TRA2_DRAFT: string = S.TRA2_DRAFT;
+export const EIA = S.EIA;
+export const ATE_QUEUE_NAME: string = S.ATE_QUEUE_NAME;
+export const TRIPLE_QUEUE_NAME: string = S.TRIPLE_QUEUE_NAME;
+export const AI_ADJ: string = S.AI_ADJ;
+// phase 3 (2026-10-22) — prescribe templates: EI Solution / WiSH by name, the EI appointment world, the live queue
+export const TPL = S.TPL;
+export const TPL_MODEL = S.TPL_MODEL;
+export const TPL_DIRECTIVE = S.TPL_DIRECTIVE;
+// the near-miss model names the substring match must NOT pick up (PTPL-08)
+// phase 9 (2026-11-02) — the ATC form web link world
+export const WL_MODEL: string = S.WL_MODEL;
+export const WLF = S.WLF;
+export const WLF_NAME = S.WLF_NAME;
+export const WLATC = S.WLATC;
+export const WL_ANS = S.WL_ANS;
+export const WL_TEXT: (id: string) => string = S.WL_TEXT;
+export const TPL_NEAR_MISS = S.TPL_NEAR_MISS;
+export const TPL_NEAR_MISS_DIRECTIVE = S.TPL_NEAR_MISS_DIRECTIVE;
+export const LIVE_QUEUE_NAME: string = S.LIVE_QUEUE_NAME;
+export const LIVE_STAGE: string = S.LIVE_STAGE;
+// phase 4 (2026-10-23) — what the Edit / View template ATCs hold
+export const TPL_ASKS = S.TPL_ASKS;
+export const TPL_OUTCOMES = S.TPL_OUTCOMES;
+// phase 5 (2026-10-24) — the seeded Review log notes
+export const REVIEW = S.REVIEW;
+// phase 6 (2026-10-29) — ATC forms
+export const FORMS_MODEL: string = S.FORMS_MODEL;
+export const DF = S.DF;
+export const DF_NAME = S.DF_NAME;
+export const DF_QUESTION: string = S.DF_QUESTION;
+export const FORMS_CONFIG = S.FORMS_CONFIG;
+export const FATC = S.FATC;
+export const FANS = S.FANS;
+export const FANSWER_TEXT: (k: string) => string = S.FANSWER_TEXT;
+export const DF_ALL: string = S.DF_ALL;
+export const DF_ALL_NAME: string = S.DF_ALL_NAME;
+export const ALL_MODEL: string = S.ALL_MODEL;
+export const W = S.W;
+export const MEDIA = S.MEDIA;
+export function formsDb() { return getFirestore(initAdminAuto().app(), S.FORMS_DB_ID); }
+// phase 7 (2026-11-01) — delivery / queue forms on View ATC
+export const DQ = S.DQ;
+export const DQ_QUEUE_NAME: string = S.DQ_QUEUE_NAME;
+export const DQ_STAGE: string = S.DQ_STAGE;
+export const DQ_FORM = S.DQ_FORM;
+export const DQ_ANS = S.DQ_ANS;
+export const DQ_TEXT: (id: string) => string = S.DQ_TEXT;
+export const SP_MODEL: string = S.SP_MODEL;
+export const SPF = S.SPF;
+export const SPF_NAME = S.SPF_NAME;
+export const SP_PP: string = S.SP_PP;
+export const SP_ANS = S.SP_ANS;
+export const SP_DELIVERY_NAME: string = S.SP_DELIVERY_NAME;
+export const SP_TEXT: (id: string) => string = S.SP_TEXT;
+/** A popup the click opens, with the test's guards already covering it (context-level, installAtcGuards). */
+export async function popupFrom(page: Page, click: () => Promise<unknown>): Promise<Page> {
+  const [popup] = await Promise.all([page.context().waitForEvent('page'), click()]);
+  await popup.waitForLoadState('domcontentloaded');
+  return popup;
+}
+export const PASSWORD = 'Test!1234';
+
+/** users_roles.name == the actor's email (seedAuthChain), so that is the label every picker renders. */
+export const NAME = EMAIL;
+
+// ---- Admin SDK handles (EMULATOR — G1 has already verified the env in seed-atc) ------------------------
+export function defaultDb() { return initAdminAuto().firestore(); }
+export function atcDb() { return getFirestore(initAdminAuto().app(), S.ATC_DB_ID); }
+export function storageBucket() { return initAdminAuto().storage().bucket(`${process.env.FIREBASE_PROJECT || 'starlabs-cicd'}.appspot.com`); }
+
+export async function atcDoc(path: string): Promise<any | null> {
+  const s = await atcDb().doc(path).get();
+  return s.exists ? s.data() : null;
+}
+export async function atcDocs(path: string): Promise<{ id: string; path: string; data: any }[]> {
+  const s = await atcDb().collection(path).get();
+  return s.docs.map((d) => ({ id: d.id, path: d.ref.path, data: d.data() }));
+}
+/** Poll fn until it returns a truthy value (or throw with `what` after timeoutMs). */
+export async function waitFor<T>(fn: () => Promise<T>, what: string, timeoutMs = 30_000): Promise<T> {
+  const end = Date.now() + timeoutMs;
+  let last: T;
+  while (Date.now() < end) {
+    last = await fn();
+    if (last) return last;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`timed out after ${timeoutMs}ms waiting for: ${what}`);
+}
+/** Doc ids in an ATC collection, so a test can find the doc the APP created (anti-circular). */
+export async function atcIds(coll: string): Promise<Set<string>> {
+  return new Set((await atcDb().collection(coll).get()).docs.map((d) => d.id));
+}
+
+// ---- guards + stubs -----------------------------------------------------------------------------------
+export interface AtcGuard { realDbHits: string[]; staticAssetBlocks: string[]; dialogs: string[]; confirmAnswer: boolean }
+
+const REAL_DB = /^https?:\/\/(firestore|firebasestorage|storage)\.googleapis\.com\//i;
+// The app shell hard-codes a few branding images (logo, default avatar) as download URLs on the production
+// bucket (`…/o/<file>.png?alt=media&token=…`). They are ABORTED like everything else (nothing leaves the
+// browser) but are not a database access, so they are recorded separately instead of failing the test.
+// Anything else — any Firestore API call, any Storage upload / list / metadata call — fails it.
+const STATIC_ASSET = /^https?:\/\/firebasestorage\.googleapis\.com\/v0\/b\/[^/]+\/o\/[^?]+\.(png|jpe?g|svg|gif|webp)\?alt=media/i;
+
+/**
+ * Install per-test safety + stubs. `guard.confirmAnswer` decides what a native confirm() returns (default OK;
+ * a test may flip it mid-flow).
+ * Every native alert/confirm message is recorded in guard.dialogs.
+ */
+export async function installAtcGuards(page: Page, opts: { confirmAnswer?: boolean } = {}): Promise<AtcGuard> {
+  const guard: AtcGuard = { realDbHits: [], staticAssetBlocks: [], dialogs: [], confirmAnswer: opts.confirmAnswer !== false };
+  await installProdFirewall(page);
+  installAllExternalStubs(page);
+  // G2 — EVERY request to a real Firestore/Storage backend is aborted. Database-shaped ones fail the test.
+  const g2 = (route) => {
+    const req = route.request();
+    if (req.method() === 'GET' && STATIC_ASSET.test(req.url())) guard.staticAssetBlocks.push(req.url());
+    else guard.realDbHits.push(`${req.method()} ${req.url()}`);
+    return route.abort();
+  };
+  // Connectivity probes the ATC screens poll (NetworkStatusService / ConnectivityGuardService). A sandbox
+  // that blocks them would show "You're offline" and block submit — stub both as healthy.
+  const json200 = (r) => r.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  const ok204 = (r) => r.fulfill({ status: 204, body: '' });
+  const onDialog = async (d) => {
+    guard.dialogs.push(`${d.type()}: ${d.message()}`);
+    try { d.type() === 'confirm' && !guard.confirmAnswer ? await d.dismiss() : await d.accept(); } catch { /* already handled */ }
+  };
+  // PAGE level: registered after the prod firewall's page-level catch-all, so these win for this page.
+  await page.route(REAL_DB, g2);
+  await page.route(/jsonplaceholder\.typicode\.com/i, json200);
+  await page.route(/gstatic\.com\/generate_204/i, ok204);
+  page.on('dialog', onDialog);
+  // CONTEXT level (2026-10-17): POPUPS (window.open — Edit links, version buttons, preview links) are new pages
+  // with no page routes, so G2 + stubs + the dialog handler must also cover the whole context. (Page routes take
+  // precedence over context routes, which is why the page-level copies above are kept for the main page.)
+  const ctx: any = page.context();
+  if (!ctx.__atcGuarded) {
+    ctx.__atcGuarded = true;
+    await ctx.route(REAL_DB, g2);
+    await ctx.route(/jsonplaceholder\.typicode\.com/i, json200);
+    await ctx.route(/gstatic\.com\/generate_204/i, ok204);
+    ctx.on('page', (p) => { if (p !== page) p.on('dialog', onDialog); });
+  }
+  return guard;
+}
+
+export function assertNoRealDb(guard: AtcGuard) {
+  expect(guard.realDbHits, 'G2: the app must NEVER contact a real Firestore/Storage backend while testing ATC').toEqual([]);
+}
+
+export async function loginAsAtc(page: Page, who: keyof typeof EMAIL = 'admin') {
+  await loginAs(page, EMAIL[who], PASSWORD);
+}
+
+// ---- Material helpers ---------------------------------------------------------------------------------
+const tid = (id: string) => `[data-testid="${id}"]`;
+export { tid };
+
+/** Open a mat-select and click the option(s) whose text matches; closes a multi-select with Escape. */
+export async function pickOptions(page: Page, select: Locator, labels: (string | RegExp)[], multiple = true) {
+  // Click the enclosing mat-form-field (its container click opens the select): an empty outline field's
+  // floating <mat-label> sits over the select and intercepts a direct click.
+  const field = select.locator('xpath=ancestor::mat-form-field[1]');
+  const panel = page.locator('.cdk-overlay-pane .mat-mdc-select-panel').last();
+  // A mat-select with no options yet does not open at all, so a click made before the screen's list has loaded
+  // is lost — retry the click until the panel shows (ATE-01: the queue list loads after getRoles()).
+  await expect(async () => {
+    if (!(await panel.isVisible())) { if (await field.count()) await field.click(); else await select.click(); }
+    await expect(panel).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+  for (const l of labels) {
+    await panel.locator('mat-option').filter({ hasText: l }).first().click();
+  }
+  if (multiple) {
+    await page.keyboard.press('Escape');
+  }
+  await expect(page.locator('.cdk-overlay-pane .mat-mdc-select-panel')).toHaveCount(0);
+}
+
+/**
+ * Type into the shared text editor dialog (UpdateDialogComponent, `dbu-textarea`) and make sure it holds EXACTLY that
+ * text. The dialog pre-fills the current value through ngModel, which writes it a moment AFTER the textarea appears;
+ * a fill that lands in that gap ends up with the old text in front of the new one (CI run 40215649769, PATC-09:
+ * "Alpha directive atc" + "PATC-09 directive atc"). Fill, let it settle, check — and refill if the pre-fill won.
+ */
+export async function fillEditorDialog(page: Page, text: string) {
+  const box = page.getByTestId('dbu-textarea');
+  await expect(box).toBeVisible({ timeout: 15_000 });
+  await expect(async () => {
+    await box.fill(text);
+    await page.waitForTimeout(300);
+    await expect(box).toHaveValue(text, { timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+}
+
+/** Selected-value text a mat-select currently shows. */
+export async function selectText(select: Locator): Promise<string> {
+  return ((await select.locator('.mat-mdc-select-value').innerText()) || '').trim();
+}
+
+/** Tiny valid WAV / PNG payloads for the media upload cases. */
+export function wavBuffer(): Buffer {
+  const sampleRate = 8000, n = 800;
+  const b = Buffer.alloc(44 + n);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n, 4); b.write('WAVE', 8); b.write('fmt ', 12);
+  b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22); b.writeUInt32LE(sampleRate, 24);
+  b.writeUInt32LE(sampleRate, 28); b.writeUInt16LE(1, 32); b.writeUInt16LE(8, 34); b.write('data', 36); b.writeUInt32LE(n, 40);
+  for (let i = 0; i < n; i++) b[44 + i] = 128;
+  return b;
+}
+export function pngBuffer(): Buffer {
+  return Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+}

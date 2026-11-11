@@ -20,7 +20,7 @@ import { test, expect } from '@playwright/test';
 import {
   wsIds, wsProfileIds, wsProductNames, wsActors, installWshopStubs, installWshopStubsCapturingProdBlocks,
   loginAsWshopAdmin, loginAsWshopMover, resetWorkshopConfigBaseline, cleanEnrollmentForP2,
-  cleanDuplicateWorkshops,
+  cleanDuplicateWorkshops, wsAllowEdit, seedAllowEditConfig, cleanAllowEditConfig,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, countWhere, pollUntil, db } from '../queue/support/firestore-admin';
@@ -501,10 +501,12 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
 
       // hasText with a STRING is a case-insensitive SUBSTRING match, and the seed deliberately carries
       // both "Active Workshop <run>" and "Inactive Workshop <run>" — the latter CONTAINS the former, so
-      // the plain string matched two rows and failed on strict mode. Anchor with a case-sensitive regex:
-      // \b does not fire between the "n" and "a" of "Inactive", so only the real active row matches.
+      // the plain string matched two rows and failed on strict mode. Match the TITLE ELEMENT exactly
+      // instead of the row's text: since 2026-10-15 the title cell also carries a green "Active" chip,
+      // so the row reads "Active Workshop <run>Active" and a word-boundary regex on the row no longer
+      // fires after the title. An exact match on the title text is immune to anything else in the row.
       const row = page.locator('tr.mat-mdc-row, tr[mat-row]')
-        .filter({ hasText: new RegExp(`\\b${sourceTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`) });
+        .filter({ has: page.getByText(sourceTitle, { exact: true }) });
       await expect(row, 'WS-13: exactly the active workshop row must render (not the Inactive one)')
         .toHaveCount(1, { timeout: 30_000 });
 
@@ -567,5 +569,73 @@ test.describe('Workshops deep — duplicate write + legacy route smokes', () => 
       if (/\/login/.test(page.url())) bounced.push(`${route} -> ${page.url()}`);
     }
     expect(bounced, `legacy routes that bounced to /login (missing dashboard grant): ${bounced.join(', ')}`).toHaveLength(0);
+  });
+});
+
+// ===========================================================================================
+// WS-76 — workshopconfig → Challenges: a Question assignment has an "Allow edit" switch (2026-11-05)
+// ===========================================================================================
+// Stored as the boolean `allowedit` on the activity. Anti-circular: the seed writes NO allowedit key,
+// so `true` in Firestore can only come from the switch; the reload proves the editor reads it back.
+// Negative controls: the Form assignment never shows the switch and saves false, and switching the
+// Question one to Form turns it off.
+test.describe('Workshops deep — assignment Allow edit (real UI, anti-circular)', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'workshops deep (allow edit): no fatal console errors / pageerrors'));
+
+  test('WS-76 Allow edit shows for Question only, saves true, reloads, and Form turns it off', async ({ page }) => {
+    await seedAllowEditConfig();
+    const acts = () => getDoc('workshopconfiguration', wsAllowEdit.id).then((d: any) => d?.challenges?.[0]?.challenges || []);
+    try {
+      await loginAsWshopAdmin(page);
+
+      const openActivities = async () => {
+        await page.goto(`/workshopconfig/${wsAllowEdit.id}`, { waitUntil: 'domcontentloaded' });
+        await page.getByRole('button', { name: 'Challenges', exact: true }).click();
+        await page.getByTestId('wc1-toggle-set-10').filter({ hasText: wsAllowEdit.set }).click();
+        await page.getByTestId('wc1-toggle-act-25').filter({ hasText: wsAllowEdit.question }).click();
+        await page.getByTestId('wc1-toggle-act-25').filter({ hasText: wsAllowEdit.form }).click();
+      };
+      const actBox = (name: string) =>
+        page.locator('.act').filter({ has: page.getByTestId('wc1-toggle-act-25').filter({ hasText: name }) });
+
+      await openActivities();
+      const qSwitch = actBox(wsAllowEdit.question).getByTestId('wc1-toggle-allowedit');
+      await expect(qSwitch, 'WS-76: the Question assignment shows Allow edit').toBeVisible({ timeout: 30_000 });
+      await expect(qSwitch, 'WS-76: an activity saved before the switch existed reads off').not.toHaveClass(/\bon\b/);
+      await expect(actBox(wsAllowEdit.form).getByTestId('wc1-toggle-allowedit'),
+        'WS-76: a Form assignment has no Allow edit').toHaveCount(0);
+
+      await qSwitch.click();
+      await expect(qSwitch, 'WS-76: the switch turns on').toHaveClass(/\bon\b/);
+      const save = page.getByRole('button', { name: /Save Challenges/i });
+      await expect(save, 'WS-76: the change makes the save bar dirty').toBeEnabled({ timeout: 15_000 });
+      await save.click();
+      await pollUntil(acts, (a: any[]) => a[0]?.allowedit === true,
+        { label: 'WS-76: the Question activity stores allowedit true', timeoutMs: 30_000 });
+      const saved = await acts();
+      expect(saved[1].allowedit, 'WS-76: the Form activity stores a boolean false').toBe(false);
+
+      // Reload: the editor reads the stored value back.
+      await openActivities();
+      await expect(actBox(wsAllowEdit.question).getByTestId('wc1-toggle-allowedit'),
+        'WS-76: Allow edit reloads as on').toHaveClass(/\bon\b/, { timeout: 30_000 });
+
+      // Switching the Question assignment to Form hides the switch and turns it off.
+      await actBox(wsAllowEdit.question).getByTestId('wc1-set-assignment-type-41').click();
+      await expect(actBox(wsAllowEdit.question).getByTestId('wc1-toggle-allowedit'),
+        'WS-76: Form hides Allow edit').toHaveCount(0);
+      await expect(save).toBeEnabled({ timeout: 15_000 });
+      await save.click();
+      const after = await pollUntil(acts, (a: any[]) => a[0]?.assignmenttype === 'form',
+        { label: 'WS-76: the activity is saved as Form', timeoutMs: 30_000 });
+      expect(after[0].allowedit, 'WS-76: switching to Form stored allowedit false').toBe(false);
+    } finally {
+      await cleanAllowEditConfig();
+    }
   });
 });

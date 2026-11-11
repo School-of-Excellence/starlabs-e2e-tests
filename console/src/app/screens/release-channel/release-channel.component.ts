@@ -7,7 +7,12 @@ import { ToastService } from '../../shared/toast.service';
 import { ConfirmService } from '../../shared/confirm.service';
 import { TestRunDialogService } from '../../shared/test-run-dialog/test-run-dialog.service';
 import { RouterLink } from '@angular/router';
-import { ReleaseCandidate, isProtectedBranch, toMillis } from '../../core/release-candidate.model';
+import {
+  ReleaseCandidate,
+  ChannelFacet,
+  isProtectedBranch,
+  toMillis,
+} from '../../core/release-candidate.model';
 import { repoTypeOf } from '../../core/repos';
 import { StatusChipComponent } from '../../shared/status-chip/status-chip.component';
 import { ActivityDrawerComponent } from '../../shared/activity-drawer/activity-drawer.component';
@@ -111,6 +116,73 @@ export class ReleaseChannelComponent {
     if (s === 'in_progress' || s === 'queued' || s === 'pending') return 'active';
     return 'none';
   }
+  // --- NEW-FLOW test state (cutover 2026-10-21) ---------------------------------------------
+  //
+  // This screen read ONLY old-flow fields — gateRun, promotable, derivedStatus — while Working
+  // Branches was cut over to the new flow on 2026-09-09. For flutter, which never touches the old
+  // flow at all, that meant gateRun was permanently NONE and `promotable` permanently false: the two
+  // screens disagreed about the same branch because they were reading different generations of truth.
+  //
+  // Prefer `testSuiteStatus.run` (new flow) and fall back to `gateRun` so repos still on the old lane
+  // are unaffected.
+
+  /**
+   * Should this card show the old-flow `derivedStatus` chip?
+   *
+   * NO for flutter. deriveStatus() builds that value from `preview.buildState` OR, for flutter,
+   * `mobileBuildState(mobileDelivery)` — and `mobileDelivery` is written by the RETIRED native lane
+   * (recordMobileRelease). breakthroughs-flutter's development card was showing "Preview failed"
+   * because the deleted android-firebase-distribution.yml had been failing on every push since
+   * September and its FAILED reports are still sitting in that facet. The chip was reporting a lane
+   * that no longer exists, about a build that no longer happens.
+   *
+   * The new flow says everything this card needs — the test badge and the APK row — so there is
+   * nothing to replace it with. Stale data stays in Firestore; it just stops being rendered.
+   */
+  showStatusChip(rc: ReleaseCandidate): boolean {
+    return !this.isFlutter(rc);
+  }
+
+  /** The test result to show, from whichever flow actually reported. Null = nothing ran. */
+  testBadge(rc: ReleaseCandidate): { label: string; tone: string } | null {
+    const run = rc.testSuiteStatus?.run;
+    if (run && run.state) {
+      return { label: this.gateRunLabel(run.state), tone: this.gateRunTone(run.state) };
+    }
+    if (rc.gateRun && rc.gateRun.status !== 'NONE') {
+      return { label: this.gateRunLabel(rc.gateRun.status), tone: this.gateRunTone(rc.gateRun.status) };
+    }
+    return null;
+  }
+
+  /**
+   * The new flow's human gate, as Working Branches shows it. A PR can be open while its approval has
+   * been revoked by a later push (approveRollout pins `rollout.sha` to the commit it approved), and
+   * the admin merging on GitHub needs to see that here rather than on another screen.
+   */
+  rolloutBadge(rc: ReleaseCandidate): { label: string; tone: string } | null {
+    const r = rc.rollout;
+    if (!r || r.state !== 'APPROVED') return null;
+    const stale = !!r.sha && !!rc.headSha && r.sha !== rc.headSha;
+    if (stale) return { label: 'approval superseded', tone: 'bad' };
+    return { label: r.bypass ? 'approved ⚠ bypassed' : 'approved', tone: 'ok' };
+  }
+
+  /** Stage 2 verdict — only shown when it is actually blocking, to keep the row short. */
+  suiteBlockBadge(rc: ReleaseCandidate): string | null {
+    const ts = rc.testSuiteStatus;
+    return ts && !ts.canProceed ? ts.state.toLowerCase().replace(/_/g, ' ') : null;
+  }
+
+  /**
+   * Flutter has no promotion lane and no deploy: `development` is terminal (v3 plan L7), so
+   * "awaiting tester validation" and "dev deploy" are not merely empty there — they describe a
+   * process that does not exist for this repo, which is what made the card read as wrong.
+   */
+  hasPromotionLane(rc: ReleaseCandidate): boolean {
+    return !this.isFlutter(rc);
+  }
+
   gateRunLabel(s: string): string {
     return s === 'RUNNING' ? 'running…' : s === 'QUEUED' ? 'queued' : s === 'PASSED' ? 'passed' : 'failed';
   }
@@ -126,6 +198,66 @@ export class ReleaseChannelComponent {
   }
 
   /** CF-type repos have no gate workflow (plan L13) — no system-test button on their entries. */
+  // --- Flutter: the development branch's two APKs -------------------------------------------
+  //
+  // A web repo's `development` is a DEPLOYED environment, so its card shows a hosting URL and deploy
+  // health. Flutter has neither — merging to development produces two APKs in Storage and nothing
+  // else. Without this the card was silent after a merge, which read as "nothing happened" even while
+  // the build was running (2026-10-21).
+  //
+  // Driven by the same `previewStatus` facet branch-apks.yml writes for feature branches; here it is
+  // the development branch's own candidate, so it always reflects the LATEST merge.
+
+  readonly APK_ENVS: ('dev' | 'prod')[] = ['dev', 'prod'];
+
+  isFlutter(rc: ReleaseCandidate): boolean {
+    return repoTypeOf(rc.repo) === 'flutter';
+  }
+
+  apkLeg(rc: ReleaseCandidate, env: 'dev' | 'prod'): ChannelFacet | null {
+    return rc.previewStatus?.[env] ?? null;
+  }
+
+  apkLabel(ch: ChannelFacet | null): string {
+    if (!ch) return 'not built';
+    if (ch.status === 'BUILDING') return 'building…';
+    if (ch.status === 'FAILED') return 'failed';
+    return 'built';
+  }
+
+  apkTone(ch: ChannelFacet | null): string {
+    if (!ch) return 'none';
+    if (ch.status === 'BUILDING') return 'active';
+    if (ch.status === 'FAILED') return 'bad';
+    return 'ok';
+  }
+
+  /** The commit the current pair was built from — so a stale pair is visible as such. */
+  apkSha(rc: ReleaseCandidate): string | null {
+    const s = rc.previewStatus?.sha;
+    return s ? s.slice(0, 7) : null;
+  }
+
+  apkBuiltAt(rc: ReleaseCandidate): number | null {
+    return rc.previewStatus?.updatedAt ?? null;
+  }
+
+  /** Storage holds the object PATH, so the download URL is minted on click (v3 plan §5). */
+  async openApk(ch: ChannelFacet, env: 'dev' | 'prod'): Promise<void> {
+    if (!ch.url) return;
+    const url = await this.fb.artifactUrl(ch.url);
+    if (!url) {
+      this.toast.show(
+        false,
+        this.fb.useMock
+          ? 'Mock mode — no APK is actually stored.'
+          : `Could not resolve the ${env} APK. A newer build may have replaced it.`,
+      );
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
   isCfRepo(rc: ReleaseCandidate): boolean {
     return repoTypeOf(rc.repo) === 'cloud-function';
   }

@@ -14,10 +14,11 @@
 import { test, expect } from '@playwright/test';
 import {
   wsActors, wsIds, installWshopStubs, loginAsWshopAdmin, resetWorkshopInactive,
-  clearPopupBanner, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
+  clearPopupBanner, seedListFilterWorkshops, clearListFilterWorkshops, wsListFilterTitles,
+  countLiveNotCompletedWorkshops, wsListFilterIds, popupBannerArray, popupBannerDoc, seedLegacyPopupBanner, wsPopupBannerLegacy,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
+import { getDoc, countWhere, pollUntil, queryWhere, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 
@@ -62,7 +63,8 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
     // Wait for the table to populate before filtering.
     await expect(page.locator('tr.mat-mdc-row, tr[mat-row]').first()).toBeVisible({ timeout: 30_000 });
 
-    // [REAL-UI] click the "Active" filter chip; applyAllFilters() keeps only w.active && !completed.
+    // [REAL-UI] click the "Active" filter chip; it keeps not-completed workshops with ANY of the app,
+    // web or EiFlix mobile switches on (2026-10-15).
     await page.getByRole('button', { name: /^Active$/ }).click();
 
     // The seeded inactive workshop must DISAPPEAR (the filter is the app computing over its stream).
@@ -71,9 +73,9 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
       'WS-03: the inactive workshop must be filtered out of the active view',
     ).toHaveCount(0, { timeout: 15_000 });
 
-    // [ASSERT] the app's active view shows no MORE rows than Firestore's independent count of active
+    // [ASSERT] the app's active view shows no MORE rows than Firestore's independent count of live
     // (non-completed) workshops. Upper-bound only — the stream may lag, but it can't invent actives.
-    const firestoreActive = await countWhere('workshopconfiguration', [['active', '==', true], ['workshopcompleted', '==', false]]);
+    const firestoreActive = await countLiveNotCompletedWorkshops();
     const visibleActive = await page.locator('table.workshops-table tr.mat-mdc-row, table.workshops-table tr[mat-row]').count();
     expect(visibleActive, `WS-03: visible active rows (${visibleActive}) must be <= Firestore active count (${firestoreActive})`).toBeLessThanOrEqual(firestoreActive);
     // And the active workshop we seeded should be present (sanity that the filter didn't nuke everything).
@@ -81,9 +83,306 @@ test.describe('Workshops — list + configuration (real UI, anti-circular)', () 
   });
 
   // ===========================================================================================
+  // WS-64 — Status counts web and EiFlix mobile as live; Type filters CP / Workshop / Evergreen
+  // ===========================================================================================
+  test.describe('WS-64 status + type filters', () => {
+    test.beforeEach(async () => { await resetWorkshopInactive(); await seedListFilterWorkshops(); });
+    test.afterEach(async () => { await clearListFilterWorkshops(); });
+
+    test('WS-64 Active includes web-only and mobile-only workshops, Inactive is all switches off, Type narrows the list', async ({ page }) => {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      const rows = page.locator('table.workshops-table tr.mat-mdc-row, table.workshops-table tr[mat-row]');
+      const row = (t: string) => rows.filter({ hasText: t });
+      const web = row(wsListFilterTitles.WEB), mobile = row(wsListFilterTitles.MOBILE), done = row(wsListFilterTitles.DONE);
+      const inactive = row(`Inactive Workshop ${RUN}`), active = row(`Active Workshop ${RUN}`);
+      await expect(web, 'WS-64: the web-only workshop renders under All').toBeVisible({ timeout: 30_000 });
+      await expect(mobile).toBeVisible();
+      await expect(done).toBeVisible();
+
+      // The Active column (Breakthroughs App / Web / EiFlix Mobile switches + the Completed label) is
+      // hidden for now (operator 2026-10-15): none of its controls render on any row.
+      await expect(page.getByTestId('wor-change-on-workshop-status-change-14'), 'WS-64: Active column hidden').toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-web-status-change-15')).toHaveCount(0);
+      await expect(page.getByTestId('wor-change-on-workshop-mobile-status-change')).toHaveCount(0);
+      await expect(page.getByTestId('wor-completed-pill')).toHaveCount(0);
+
+      // Green Active chip: the same rule as the Active filter (any switch on, not completed).
+      await expect(web.getByTestId('wor-active-chip'), 'WS-64: web-only shows the Active chip').toHaveText('Active');
+      await expect(mobile.getByTestId('wor-active-chip'), 'WS-64: mobile-only shows the Active chip').toHaveText('Active');
+      await expect(active.getByTestId('wor-active-chip'), 'WS-64: app-active shows the Active chip').toHaveText('Active');
+      await expect(inactive.getByTestId('wor-active-chip'), 'WS-64: all switches off, no chip').toHaveCount(0);
+      await expect(done.getByTestId('wor-active-chip'), 'WS-64: completed, no chip').toHaveCount(0);
+      // The row's green left line follows the same rule as the chip.
+      await expect(web, 'WS-64: web-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(mobile, 'WS-64: mobile-only row has the green line').toHaveClass(/\brow-active\b/);
+      await expect(inactive, 'WS-64: all switches off, no green line').not.toHaveClass(/\brow-active\b/);
+      await expect(done, 'WS-64: completed, no green line').not.toHaveClass(/\brow-active\b/);
+
+      // Active: app, web or mobile switch on, and not completed.
+      await page.getByTestId('wor-status-filter-8').click();
+      await expect(web, 'WS-64: web-only is active').toBeVisible({ timeout: 15_000 });
+      await expect(mobile, 'WS-64: mobile-only is active').toBeVisible();
+      await expect(active, 'WS-64: app-active is still active').toBeVisible();
+      await expect(inactive, 'WS-64: all switches off is not active').toHaveCount(0);
+      await expect(done, 'WS-64: completed is not active').toHaveCount(0);
+
+      // Inactive: every switch off and not completed.
+      await page.getByTestId('wor-status-filter-9').click();
+      await expect(inactive, 'WS-64: all switches off is inactive').toBeVisible({ timeout: 15_000 });
+      await expect(web, 'WS-64: web-only is not inactive').toHaveCount(0);
+      await expect(mobile, 'WS-64: mobile-only is not inactive').toHaveCount(0);
+      await expect(done, 'WS-64: completed is not inactive').toHaveCount(0);
+
+      // Type, with Status back on All.
+      await page.getByTestId('wor-status-filter-7').click();
+      await page.getByTestId('wor-type-filter-cp').click();
+      await expect(web, 'WS-64: CP Workshop shows the cpworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(mobile).toHaveCount(0);
+      await expect(done).toHaveCount(0);
+      await expect(inactive).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-evergreen').click();
+      await expect(mobile, 'WS-64: Evergreen shows the evergreenworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(web).toHaveCount(0);
+      await expect(done).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-live').click();
+      await expect(done, 'WS-64: Workshop shows the liveworkshop').toBeVisible({ timeout: 15_000 });
+      await expect(inactive, 'WS-64: a seed with no type falls back to Workshop').toBeVisible();
+      await expect(web).toHaveCount(0);
+      await expect(mobile).toHaveCount(0);
+
+      // Status and Type combine: Active + CP is the web-only workshop alone among ours.
+      await page.getByTestId('wor-status-filter-8').click();
+      await page.getByTestId('wor-type-filter-cp').click();
+      await expect(web).toBeVisible({ timeout: 15_000 });
+      await expect(active).toHaveCount(0);
+
+      await page.getByTestId('wor-type-filter-all').click();
+      await expect(active, 'WS-64: All types brings the rest back').toBeVisible({ timeout: 15_000 });
+    });
+
+    // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+    test.skip('WS-65 the EiFlix Mobile toggle writes eiflixmobileactive and moves the workshop between Active and Inactive', async ({ page }) => {
+      const before = await getDoc('workshopconfiguration', wsListFilterIds.MOBILE);
+      expect(before!.eiflixmobileactive, 'WS-65: starts live on EiFlix mobile only').toBe(true);
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      const row = page.locator('table.workshops-table tr.mat-mdc-row').filter({ hasText: wsListFilterTitles.MOBILE });
+      const toggle = row.getByTestId('wor-change-on-workshop-mobile-status-change');
+      await expect(toggle, 'WS-65: the EiFlix Mobile toggle renders').toBeVisible({ timeout: 30_000 });
+      await expect(toggle.locator('button[role="switch"]'), 'WS-65: it shows the stored state').toHaveAttribute('aria-checked', 'true');
+
+      page.once('dialog', (d) => d.accept()); // onWorkshopMobileStatusChange() opens window.confirm
+      await toggle.locator('button[role="switch"]').click();
+      const after = await pollUntil(
+        () => getDoc('workshopconfiguration', wsListFilterIds.MOBILE),
+        (d) => !!d && d.eiflixmobileactive === false,
+        { label: 'WS-65: eiflixmobileactive -> false', timeoutMs: 30_000 },
+      );
+      expect(after!.eiflixmobileactive).toBe(false);
+      expect(after!.active, 'WS-65: Active untouched').toBe(false);
+      expect(after!.webactive, 'WS-65: Web untouched').toBe(false);
+
+      // All three off now: Inactive shows it, Active does not.
+      await page.getByTestId('wor-status-filter-9').click();
+      await expect(row, 'WS-65: switched off everywhere -> Inactive').toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('wor-status-filter-8').click();
+      await expect(row, 'WS-65: no longer Active').toHaveCount(0);
+    });
+  });
+
+  // ===========================================================================================
+  // WS-66 — EiFlix Banner: Title and Description are optional (operator 2026-10-16)
+  // ===========================================================================================
+  test('WS-66 the EiFlix Banner dialog saves a banner with no title and no description', async ({ page }) => {
+    // Anti-circular: the app writes the new doc; the test only notes which banners existed before.
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const title = dialog.locator('input[formcontrolname="title"]');
+      const description = dialog.locator('textarea[formcontrolname="description"]');
+      await expect(title, 'WS-66: the banner form opens').toBeVisible({ timeout: 30_000 });
+      await expect(title).toHaveValue('');
+      await expect(description).toHaveValue('');
+      // Neither field is marked required any more (no asterisk on its label).
+      await expect(title.locator('xpath=ancestor::mat-form-field[1]').locator('.mat-mdc-form-field-required-marker'),
+        'WS-66: Title is not marked required').toHaveCount(0);
+      await expect(description.locator('xpath=ancestor::mat-form-field[1]').locator('.mat-mdc-form-field-required-marker'),
+        'WS-66: Description is not marked required').toHaveCount(0);
+
+      await dialog.getByTestId('eb-submit-6').click();
+      await expect(page.getByText('Please fill all fields'), 'WS-66: no "fill all fields" stop').toHaveCount(0);
+
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-66: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).title, 'WS-66: title stored as blank text').toBe('');
+      expect((added[0] as any).description, 'WS-66: description stored as blank text').toBe('');
+    } finally {
+      // Cleanup only what this case created (the post-condition was already asserted).
+      await Promise.all(created.map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
+  });
+
+  // ===========================================================================================
+  // WS-70 — EiFlix Banner: an EiFlix Mobile switch (enableeiflixmobile) beside Web and Mobile (2026-10-21)
+  // ===========================================================================================
+  test('WS-70 EiFlix Mobile is on for a new banner, saved, shown in the list and switchable there', async ({ page }) => {
+    const title = `EiFlix Mobile Banner ${RUN}`;
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const sw = dialog.getByTestId('eb-toggle-eiflixmobile');
+      await expect(sw, 'WS-70: the EiFlix Mobile switch is in Visibility').toBeVisible({ timeout: 30_000 });
+      await expect(sw.locator('button[role="switch"]'), 'WS-70: on by default, like Web and Mobile').toHaveAttribute('aria-checked', 'true');
+
+      await dialog.locator('input[formcontrolname="title"]').fill(title);
+      await dialog.getByTestId('eb-submit-6').click();
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-70: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).enableeiflixmobile, 'WS-70: stored as a boolean true').toBe(true);
+
+      // Banner list: the status pill and the quick switch.
+      await dialog.getByRole('tab', { name: /Banner List/ }).click();
+      const row = dialog.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: title });
+      await expect(row, 'WS-70: the banner is listed').toHaveCount(1, { timeout: 30_000 });
+      await expect(row.getByTestId('eb-status-eiflixmobile'), 'WS-70: EiFlix Mobile reads Active').toContainText('Active');
+      await row.getByTestId('eb-change-toggle-platform-eiflixmobile').locator('button[role="switch"]').click();
+      const after = await pollUntil(
+        () => getDoc('eiflixbanner', created[0]),
+        (d) => !!d && (d as any).enableeiflixmobile === false,
+        { label: 'WS-70: the quick switch writes enableeiflixmobile:false', timeoutMs: 30_000 },
+      );
+      expect((after as any).enable, 'WS-70: Web untouched').toBe(true);
+      expect((after as any).enableapp, 'WS-70: Mobile untouched').toBe(true);
+      await expect(row.getByTestId('eb-status-eiflixmobile'), 'WS-70: and the pill reads Inactive').toContainText('Inactive');
+    } finally {
+      await Promise.all(created.map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
+  });
+
+  // ===========================================================================================
+  // WS-75 — EiFlix Banner: "Show Text" single-select (Video / Image / Both), stored as `showtext` (2026-11-05)
+  // ===========================================================================================
+  // Anti-circular: the default is Both and the case picks Video, then Image on edit, so each stored
+  // value can only come from the pick the test made. The edit step also proves the form reloads it.
+  test('WS-75 Show Text defaults to Both, stores the pick, and an edit reloads and changes it', async ({ page }) => {
+    const title = `ShowText Banner ${RUN}`;
+    const before = new Set((await queryWhere('eiflixbanner')).map((d) => d.id));
+    let created: string[] = [];
+    try {
+      await loginAsWshopAdmin(page);
+      await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+      await page.getByTestId('wor-actions-menu').click();
+      await page.getByTestId('wor-open-eiflix-banner-dialog-4').click();
+
+      const dialog = page.locator('mat-dialog-container');
+      const select = dialog.getByTestId('eb-showtext');
+      await expect(select, 'WS-75: Show Text is in Banner Details').toBeVisible({ timeout: 30_000 });
+      await expect(select, 'WS-75: a new banner starts on Both').toContainText('Both');
+
+      await dialog.locator('input[formcontrolname="title"]').fill(title);
+      await select.click();
+      await expect(page.getByTestId('eb-showtext-both'), 'WS-75: Both is the selected option')
+        .toHaveAttribute('aria-selected', 'true');
+      await page.getByTestId('eb-showtext-video').click();
+      await expect(select, 'WS-75: single select — Video replaces Both').toHaveText(/^\s*Video\s*$/);
+      await dialog.getByTestId('eb-submit-6').click();
+
+      const added = await pollUntil(
+        async () => (await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)),
+        (list) => list.length === 1,
+        { label: 'WS-75: the app wrote one new eiflixbanner doc', timeoutMs: 30_000 },
+      );
+      created = added.map((d) => d.id);
+      expect((added[0] as any).showtext, 'WS-75: stored as the string "video"').toBe('video');
+      // The form resets after a save, back to the default.
+      await expect(select, 'WS-75: the form resets to Both after saving').toContainText('Both');
+
+      // Edit: the stored value comes back, and a new pick overwrites it.
+      await dialog.getByRole('tab', { name: /Banner List/ }).click();
+      const row = dialog.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: title });
+      await expect(row, 'WS-75: the banner is listed').toHaveCount(1, { timeout: 30_000 });
+      await row.getByTestId('eb-edit-banner-11').click();
+      await expect(select, 'WS-75: the edit form reloads Video').toHaveText(/^\s*Video\s*$/, { timeout: 15_000 });
+      await select.click();
+      await page.getByTestId('eb-showtext-image').click();
+      await dialog.getByTestId('eb-submit-6').click();
+      const after = await pollUntil(
+        () => getDoc('eiflixbanner', created[0]),
+        (d) => !!d && (d as any).showtext === 'image',
+        { label: 'WS-75: the edit writes showtext "image"', timeoutMs: 30_000 },
+      );
+      expect((after as any).title, 'WS-75: the same banner was updated, not a new one').toBe(title);
+      expect((await queryWhere('eiflixbanner')).filter((d) => !before.has(d.id)).length,
+        'WS-75: editing added no extra banner').toBe(1);
+    } finally {
+      // Delete every banner that appeared during the case, not just the one recorded — a failure
+      // before `created` is set (or a wrongly added second doc) must not leak into a rerun.
+      const leftover = (await queryWhere('eiflixbanner')).map((d) => d.id).filter((id) => !before.has(id));
+      await Promise.all([...new Set([...created, ...leftover])].map((id) => db().collection('eiflixbanner').doc(id).delete()));
+    }
+  });
+
+  // ===========================================================================================
+  // WS-67 — the header has ONE Actions button; the former header buttons are its menu items
+  // ===========================================================================================
+  test('WS-67 the header shows one Actions button whose menu lists every workshop action', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    const trigger = page.getByTestId('wor-actions-menu');
+    await expect(trigger, 'WS-67: the Actions button renders').toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('.header-actions > button'), 'WS-67: it is the only header button').toHaveCount(1);
+    // Closed menu: none of the actions are on the page.
+    await expect(page.getByTestId('wor-open-popup-banner-dialog-1'), 'WS-67: actions hidden until opened').toHaveCount(0);
+    await expect(page.getByTestId('wor-route-6')).toHaveCount(0);
+
+    await trigger.click();
+    const items = page.locator('.mat-mdc-menu-panel [mat-menu-item], .mat-mdc-menu-panel .mat-mdc-menu-item');
+    // The admin may create workshops and open New Users, so all six actions are listed, New Workshop first.
+    await expect(items, 'WS-67: six actions for the admin').toHaveText(
+      [/New Workshop/, /Popup Banner/, /New Users/, /Referral Code/, /EiFlix Banner/, /Products/], { timeout: 15_000 });
+    await expect(page.getByTestId('wor-route-6')).toBeVisible();
+    await expect(page.getByTestId('wor-open-new-users-tab-2')).toBeVisible();
+    await expect(page.getByTestId('wor-open-refferalcode-dialog-3')).toBeVisible();
+    await expect(page.getByTestId('wor-route-to-products-5')).toBeVisible();
+
+    // An item still does its job: New Workshop opens the editor on a fresh id in a new tab.
+    const [editor] = await Promise.all([
+      page.context().waitForEvent('page'),
+      page.getByTestId('wor-route-6').click(),
+    ]);
+    await expect(editor, 'WS-67: New Workshop opens the workshop editor').toHaveURL(/\/workshopconfig\/[^/]+$/, { timeout: 30_000 });
+    await editor.close();
+  });
+
+  // ===========================================================================================
   // WS-04 — toggling a workshop inactive→active WRITES active:true to Firestore (not just optimistic UI)
   // ===========================================================================================
-  test('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
+  // Active column hidden in the list for now (operator 2026-10-15); restore with the column.
+  // While it is hidden the row's first switch is Completed, so this case must not run.
+  test.skip('WS-04 activating a workshop via the slide-toggle writes active:true to Firestore', async ({ page }) => {
     // Precondition (anti-circular): force the pivot workshop back to inactive (idempotent re-runs).
     await resetWorkshopInactive();
     const before = await getDoc('workshopconfiguration', wsIds.W_INACTIVE);
@@ -190,6 +489,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
 
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     // [ASSERT] the live flat banner was adopted, so the operator sees it rather than an empty editor.
@@ -242,6 +542,7 @@ test.describe('Workshops — popup banner stores an array of banners', () => {
   test('WS-47 switching between banners keeps each one\'s edits, and removing one drops only it', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await page.goto('/workshops', { waitUntil: 'domcontentloaded' });
+    await page.getByTestId('wor-actions-menu').click();   // header actions live in one menu (2026-10-16)
     await page.getByTestId('wor-open-popup-banner-dialog-1').click();
 
     const picks = page.getByTestId('pb-select-banner-10');

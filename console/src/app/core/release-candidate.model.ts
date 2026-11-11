@@ -67,7 +67,15 @@ export type ChannelStatus = 'BUILDING' | 'SUCCESS' | 'FAILED';
 /** One hosting channel built from a branch commit. */
 export interface ChannelFacet {
   status: ChannelStatus;
-  /** The REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED. */
+  /**
+   * WEB repos: the REAL channel URL captured from the CLI — never reconstructed. Absent when FAILED.
+   *
+   * FLUTTER (v3 plan 2026-10-13 §5): the Storage OBJECT PATH of the branch APK,
+   * `apks/<branch>/<env>.apk` — NOT a URL. A signed URL would expire and a pinned download token
+   * would be a public capability URL for a binary built against live data, so the console resolves
+   * the path to a download URL at click time. Tell them apart by shape: an http(s) prefix means
+   * anchor, anything else means resolve-then-open (`isApkRef` in working-branches).
+   */
   url?: string | null;
   project?: string | null;
   site?: string | null;
@@ -366,7 +374,9 @@ export interface ReleaseCandidate {
 
   /** Latest pushed commit on the branch. */
   headSha?: string;
-  headCommit?: { msg?: string; author?: string; at?: string };
+  // `at` is epoch millis on live data (handlePush writes toMillis(commit.timestamp)) and an ISO
+  // string in the mock fixtures — same dual shape as `updatedAt`. toMillis() accepts both.
+  headCommit?: { msg?: string; author?: string; at?: string | number };
 
   preview: PreviewFacet;
   devGate: GateFacet;
@@ -485,7 +495,17 @@ export interface ActivityLogEntry {
  * on Overview. A candidate for one of these only exists to hold deploy health.
  */
 export function isProtectedBranch(branch: string): boolean {
-  return branch === 'development' || branch === 'production';
+  return (
+    branch === 'development' ||
+    branch === 'production' ||
+    // NOT deployment environments — out of the flow entirely (2026-10-19). A push to `main` can still
+    // create a candidate (a webhook for any branch does), and without this it would render in Working
+    // Branches as if it were someone's feature branch, with stage badges nobody will ever act on.
+    // Every caller uses this as `!isProtectedBranch(...)`, i.e. "is this a feature candidate?", so
+    // widening it here hides these branches from every feature-facing list at once.
+    branch === 'main' ||
+    branch === 'master'
+  );
 }
 
 /**

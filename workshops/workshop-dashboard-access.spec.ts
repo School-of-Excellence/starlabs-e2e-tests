@@ -200,18 +200,20 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     const dashRow = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: `Dashboard Workshop ${RUN}` });
     await expect(dashRow, 'WDA-05: the list must render for a signed-in admin').toBeVisible({ timeout: 45_000 });
 
+    // The header actions live in one Actions menu (2026-10-16): open it, prove it rendered (Popup Banner
+    // is open to everyone), then the gated items must be absent from it.
+    await page.getByTestId('wor-actions-menu').click();
+    await expect(page.getByTestId('wor-open-popup-banner-dialog-1'), 'WDA-05: the Actions menu opened').toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('wor-route-6'), 'WDA-05: New Workshop needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-route-18'), 'WDA-05: Edit needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-duplicate-workshop-19'), 'WDA-05: Duplicate needs editing access').toHaveCount(0);
     await expect(page.getByTestId('wor-open-new-users-tab-2'), 'WDA-05: New Users is its own list').toHaveCount(0);
+    await page.keyboard.press('Escape');   // close the Actions menu before checking the rows
 
-    // [ASSERT] the three switches still render (they show state) but cannot be changed.
-    const activeToggle = page.getByTestId('wor-change-on-workshop-status-change-14').first();
-    await expect(activeToggle, 'WDA-05: the Active switch still shows state').toBeVisible();
-    await expect(activeToggle.locator('button[role="switch"], input'), 'WDA-05: but it is not operable')
-      .toBeDisabled({ timeout: 15_000 });
-    await expect(page.getByTestId('wor-change-on-workshop-web-status-change-15').first()
-      .locator('button[role="switch"], input'), 'WDA-05: Web Active is not operable').toBeDisabled();
+    // [ASSERT] the Active / Web switches are hidden with the Active column for now (operator
+    // 2026-10-15); the Completed switch still renders (it shows state) but cannot be changed.
+    await expect(page.getByTestId('wor-change-on-workshop-status-change-14'), 'WDA-05: Active column hidden').toHaveCount(0);
+    await expect(page.getByTestId('wor-change-on-workshop-web-status-change-15'), 'WDA-05: Web Active hidden with it').toHaveCount(0);
     await expect(page.getByTestId('wor-change-on-workshop-completed-change-16').first()
       .locator('button[role="switch"], input'), 'WDA-05: Completed is not operable').toBeDisabled();
 

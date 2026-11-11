@@ -331,6 +331,74 @@ export class WorkingBranchesComponent {
     return ps[env] ?? null;
   }
 
+  /**
+   * A flutter candidate stores the Storage OBJECT PATH for its APKs, not a URL (v3 plan §5), so the
+   * stage-1 link cannot be a plain href — it is resolved on click, behind the org-email Storage
+   * rule. Web repos still store a real channel URL and keep the plain anchor.
+   */
+  isApkRef(ch: ChannelFacet): boolean {
+    return !!ch.url && !/^https?:\/\//i.test(ch.url);
+  }
+
+  /** Resolve the stored APK path to a download URL and hand it to the browser. */
+  async openApk(ch: ChannelFacet, env: 'dev' | 'prod'): Promise<void> {
+    if (!ch.url) return;
+    const url = await this.fb.artifactUrl(ch.url);
+    if (!url) {
+      this.toast.show(
+        false,
+        this.fb.useMock
+          ? 'Mock mode — no APK is actually stored.'
+          : `Could not resolve the ${env} APK. A newer push may have replaced it.`,
+      );
+      return;
+    }
+    window.open(url, '_blank', 'noopener');
+  }
+
+  // --- Stage 4: where the merge actually landed (flutter) -----------------------------------
+  //
+  // Stage 4 used to end at "approved" / "merged", which says what the CONSOLE did but nothing about
+  // what came out the other side. For flutter a merge produces two APKs on `development` and nothing
+  // else, so without this the card went quiet exactly when the interesting part started (2026-10-21).
+  //
+  // Reads the DEVELOPMENT candidate for this feature's repo — so every feature card shows the same,
+  // current development state. That is intentional: it is one branch, not per-feature.
+
+  /** The `development` candidate for this feature's repo, if the console has one. */
+  devCandidate(rc: ReleaseCandidate): ReleaseCandidate | null {
+    return this.rcs().find((r) => r.repo === rc.repo && r.branch === 'development') ?? null;
+  }
+
+  devApkLeg(rc: ReleaseCandidate, env: 'dev' | 'prod'): ChannelFacet | null {
+    return this.devCandidate(rc)?.previewStatus?.[env] ?? null;
+  }
+
+  /** True once development has reported anything at all — otherwise stage 4 stays as it was. */
+  hasDevApks(rc: ReleaseCandidate): boolean {
+    return this.isFlutter(rc) && !!this.devCandidate(rc)?.previewStatus;
+  }
+
+  devApkLabel(ch: ChannelFacet | null): string {
+    if (!ch) return 'not built';
+    if (ch.status === 'BUILDING') return 'building…';
+    if (ch.status === 'FAILED') return 'failed';
+    return 'built';
+  }
+
+  devApkTone(ch: ChannelFacet | null): string {
+    if (!ch) return 'none';
+    if (ch.status === 'BUILDING') return 'active';
+    if (ch.status === 'FAILED') return 'bad';
+    return 'ok';
+  }
+
+  /** The commit development's pair was built from — shows at a glance if it predates this merge. */
+  devApkSha(rc: ReleaseCandidate): string | null {
+    const s = this.devCandidate(rc)?.previewStatus?.sha;
+    return s ? s.slice(0, 7) : null;
+  }
+
   bcChannelTone(ch: ChannelFacet): string {
     return ch.status === 'SUCCESS' ? 'ok' : ch.status === 'FAILED' ? 'bad' : 'active';
   }
@@ -447,7 +515,13 @@ export class WorkingBranchesComponent {
     if (!ts) return { text: 'Waiting for the first push to report.', tone: 'none' };
     if (ts.state === 'CHECKING') return { text: 'Checking suite coverage…', tone: 'active' };
     if (ts.state === 'NOT_APPLICABLE') {
-      return { text: 'No app code changed — nothing to test.', tone: 'none' };
+      // For a web repo this genuinely means a docs/CI-only diff. For FLUTTER it means something else
+      // entirely: the gate DID run (analyze + flutter test over the whole project), there is simply no
+      // per-suite coverage mapping yet (v3 plan D10 — deferred to the native-suite work). Saying
+      // "nothing to test" there is wrong on both counts and reads as "the console has no data".
+      return this.isFlutter(rc)
+        ? { text: 'Analyze and unit tests ran over the whole project. No per-suite coverage mapping for Flutter yet.', tone: 'none' }
+        : { text: 'No app code changed — nothing to test.', tone: 'none' };
     }
     if (!ts.canProceed) return { text: `Blocked — ${this.bcSuiteDetail(ts)}`, tone: 'bad' };
     if (!run) return { text: 'Coverage matched. Dispatching the test suites…', tone: 'active' };

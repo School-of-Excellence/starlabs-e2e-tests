@@ -70,26 +70,9 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 
 **Needs:** the test admin user must have a `profile_data` doc linked by `user_ref`. Otherwise every save is refused ("No profile found…"), and SGB-02..06 fail on their first write.
 
-## 2026-10-22 · SGB-07 segment groups; SGB-06 on updatedat / updatedby
+## 2026-10-22 · SGB-07 segment groups
 
-**What changed in the app:** segment history now writes `updatedat` and `updatedby` (a profile id). SGB-06 asserts those fields, and that `updatedby` has no `@`.
-
-**SGB-07** runs on the seeded manual segment, because SGB-06 has already archived the automated one. Steps:
-1. Create groups A and B in Manage groups. A gets a `create` grouphistory entry.
-2. Assign A in the segment dialog. Check that config `groupid` = A and the card label shows A.
-3. Move the segment to B. A gets `segment-removed`; B gets `segment-added` for the segment, with a profile-id `updatedby` and an `updatedat`.
-4. Rename B to B2. The group doc's name changes, the segment's `groupid` is unchanged, a `rename` entry is written, and the group History view lists items.
-5. Delete B2. The group doc stays, set to `deleted: true`. The segment's `groupid` is removed, a `delete` entry is written, the segment history has `groupid {from: B, to: null}`, and the card label is gone.
-
-**Isolation and cleanup:**
-- The group names are run-unique.
-- Teardown `recursiveDelete`s those group docs, including their grouphistory subcollection. The app itself only ever soft-deletes groups; removing them for real is right for test data.
-
-**ADDR3:** now also registers the dialog's inline "New group…" (`sgb-dlg-group-new` / `-add`). SGB-07 creates its groups from Manage groups instead.
-
-**Needs (console):**
-- rules for `segmentboardgroups` and `grouphistory` on starlabs-test;
-- the test admin's `profile_data` linked by `user_ref`.
+See `2026-10-22-segment-board-groups.md` (main's SGB-07: groups G_REF / G_OPS).
 
 ## 2026-11-11 · SGB-08 Import & move (list → manual segment, review first)
 
@@ -121,7 +104,6 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 
 **Cleanup:** the seed and teardown `recursiveDelete` the SB Import config, including its history, and delete its list doc.
 
-**First real run (local emulator lane, 2026-11-11):** 8 passed, 4 ADDR skipped. Fixes it needed:
-- **SGB-06 / SGB-07:** the card's edit pencil is hidden until hover (design pass 2026-10-12), so clicking it timed out on "not visible". The new `editCard()` helper hovers the card first. These cases had not run since that design pass.
-- **SGB-07:** after the rename, the row was still looked up by the old name (`input[value=GB]`), which no longer exists once the dialog re-renders. It is now found again by GB2.
+**First real run (local emulator lane, 2026-11-11):** 8 passed, 4 ADDR skipped. This was the branch spec; it carried its own copy of SGB-07, and that copy needed a hover before edit and a re-lookup after the rename.
 - **SGB-08** found an app bug: a ticked row jumped out of the "Not ticked" view. Fixed in the app (tab rows are fixed while the tab is open).
+- **Merge to main:** main already had SGB-07 (with the hover). The merge keeps main's SGB-01..07 and adds only SGB-08, ADDR4 and the SB Import seed. That combination is re-run before the push.

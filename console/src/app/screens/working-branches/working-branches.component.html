@@ -77,10 +77,15 @@
                     @for (env of BC_ENVS; track env) {
                       @if (bcChannel(ps, env); as ch) {
                         @if (ch.url) {
-                          <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener"
-                             [title]="env + ' channel · ' + (ch.project || '')">{{ env }} ↗</a>
+                          @if (isApkRef(ch)) {
+                            <button class="ghlink sm" (click)="openApk(ch, env)"
+                                    [title]="env + '-env APK · ' + ch.url">{{ env }} apk ↓</button>
+                          } @else {
+                            <a class="ghlink sm" [href]="ch.url" target="_blank" rel="noopener"
+                               [title]="env + ' channel · ' + (ch.project || '')">{{ env }} ↗</a>
+                          }
                         } @else {
-                          <span class="st-fail" [title]="env + ' channel failed'">{{ env }} ✕</span>
+                          <span class="st-fail" [title]="env + ' build failed'">{{ env }} ✕</span>
                         }
                       }
                     }
@@ -193,6 +198,33 @@
                   </button>
                 } @else {
                   <span class="st-val" [title]="bcRolloutBlockReason(rc) || ''">waiting</span>
+                }
+
+                <!-- FLUTTER: what the merge produced on `development`. Shows the branch-wide state,
+                     identical on every feature card of this repo — it is one branch, not per-feature. -->
+                @if (hasDevApks(rc)) {
+                  <span class="st-sub devapks">
+                    <span class="devapks-l">dev branch</span>
+                    @for (env of BC_ENVS; track env) {
+                      <!-- chip + its download stay in ONE inline-flex unit, so the arrow can never
+                           wrap away from the env it belongs to. -->
+                      <span class="apkunit">
+                        <span class="apkchip" [attr.data-tone]="devApkTone(devApkLeg(rc, env))"
+                              [title]="env + '-env APK on development'">
+                          {{ env }} {{ devApkLabel(devApkLeg(rc, env)) }}
+                        </span>
+                        @if (devApkLeg(rc, env); as ch) {
+                          @if (ch.status === 'SUCCESS' && ch.url) {
+                            <button class="apkdl" (click)="openApk(ch, env)"
+                                    [title]="'Download the ' + env + '-env APK · ' + ch.url">↓</button>
+                          }
+                        }
+                      </span>
+                    }
+                    @if (devApkSha(rc); as sha) {
+                      <span class="devapks-sha" [title]="'development built from ' + sha">{{ sha }}</span>
+                    }
+                  </span>
                 }
               </div>
             </div>

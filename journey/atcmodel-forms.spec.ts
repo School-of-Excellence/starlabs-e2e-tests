@@ -1,0 +1,183 @@
+// atcmodel-forms.spec.ts — ATC model forms config (/atcmodel table + the Create/Edit ATC model dialog), EMULATOR.
+// Hook prefixes: va (view-atcmodel), ca (create-atcmodel). Plan: specs/plans/2026-10-29-atc-forms-step1.md (app repo).
+//
+// World (seeded here, run-namespaced, removed in afterAll): delivery forms A + B active, C soft-deleted (delete:true);
+// one ATC model configured with A (specialist), C (participant) and a form id with no delivery forms doc.
+// Anti-circularity: names on screen are compared with the seeded delivery forms; the saved config is read back
+// from the emulator with the Admin SDK.
+import { test, expect, Page, Locator } from '@playwright/test';
+import { installJourneyStubs, loginAsJourneyAdmin } from './support/journey';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const seed = require('../fixtures/seed-test-project');
+const RUN = process.env.JNY_RUNID || 'jny';
+const db = () => seed.initAdmin().firestore();
+
+const F = { a: `${RUN}_amf_a`, b: `${RUN}_amf_b`, c: `${RUN}_amf_c`, gone: `${RUN}_amf_gone` };
+const NAME = { a: `AMF Alpha form ${RUN}`, b: `AMF Bravo form ${RUN}`, c: `AMF Charlie form ${RUN}` };
+const MODEL_ID = `${RUN}_amf_model`;
+const MODEL = `AMF Forms model ${RUN}`;
+const CONFIG = [
+  { formid: F.a, filledby: 'specialist' },
+  { formid: F.c, filledby: 'participant' },
+  { formid: F.gone, filledby: 'participant' },
+];
+
+async function openTable(page: Page) {
+  await loginAsJourneyAdmin(page);
+  await page.goto('/atcmodel', { waitUntil: 'domcontentloaded' });
+  await page.getByPlaceholder('Ex. Mia').fill(MODEL);
+  const row = page.locator('tr.mat-mdc-row').filter({ hasText: MODEL });
+  await expect(row).toHaveCount(1, { timeout: 45_000 });
+  return row;
+}
+
+test.describe('Product Designer — ATC model forms config (real UI, emulator)', () => {
+  test.beforeAll(async () => {
+    const tag = { testrunid: RUN };
+    const form = (id: string, name: string, extra = {}) => db().collection('delivery forms').doc(id).set({ docid: id, formname: name, formarray: [], ...extra, ...tag });
+    await form(F.a, NAME.a);
+    await form(F.b, NAME.b);
+    await form(F.c, NAME.c, { delete: true });
+    await db().collection('atc model').doc(MODEL_ID).set({ docid: MODEL_ID, atcmodel: MODEL, evolutiontype: 'full', forms: CONFIG, ...tag });
+  });
+  test.afterAll(async () => {
+    for (const id of Object.values(F)) await db().collection('delivery forms').doc(id).delete().catch(() => {});
+    await db().collection('atc model').doc(MODEL_ID).delete().catch(() => {});
+  });
+  test.beforeEach(async ({ page }) => {
+    await installJourneyStubs(page);
+    // reset the config before every case (AMF-03 saves a change)
+    await db().collection('atc model').doc(MODEL_ID).set({ forms: CONFIG }, { merge: true });
+  });
+
+  test('AMF-01 table Forms column lists the configured form names', async ({ page }) => {
+    const row = await openTable(page);
+    // names read by document id: A and C (soft-deleted forms still have a name); the missing doc has none
+    await expect(row.getByTestId('va-form-name')).toHaveCount(3);
+    await expect(row.getByTestId('va-form-name').nth(0)).toHaveText(NAME.a, { timeout: 20_000 });
+    await expect(row.getByTestId('va-form-name').nth(1)).toHaveText(NAME.c);
+    await expect(row.getByTestId('va-form-name').nth(2)).toHaveText('');
+    await expect(row.getByTestId('va-forms-none')).toHaveCount(0);
+  });
+
+  test('AMF-02 edit dialog: configured forms by name, inactive/missing ones flagged; "Add a form" offers only active, unchosen forms', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    await expect(rows.nth(0)).toContainText(NAME.a);                         // active → named, first
+    await expect(page.getByTestId('ca-form-missing'), 'C is soft-deleted (not loaded) and gone has no doc').toHaveCount(2);
+    await expect(rows.nth(0).getByTestId('ca-form-specialist')).toHaveAttribute('class', /mat-button-toggle-checked/);
+
+    await page.getByTestId('ca-form-input').click();
+    await page.getByTestId('ca-form-input').fill(`AMF`);
+    const options = page.locator('.cdk-overlay-pane mat-option');
+    await expect(options.filter({ hasText: NAME.b })).toHaveCount(1, { timeout: 15_000 });
+    await expect(options.filter({ hasText: NAME.a }), 'already chosen → not offered').toHaveCount(0);
+    await expect(options.filter({ hasText: NAME.c }), 'soft-deleted → not offered').toHaveCount(0);
+    await page.getByTestId('ca-form-input').fill('zzz-no-such-form');
+    await expect(options).toHaveCount(0);
+    await page.getByTestId('ca-dialog-ref-1').click();
+  });
+
+  test('AMF-03 add a form: "filled by" required before Save, then saved in name order', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    await expect(page.getByTestId('ca-form-row')).toHaveCount(3, { timeout: 20_000 });
+    await page.getByTestId('ca-form-input').click();
+    await page.getByTestId('ca-form-input').fill(NAME.b);
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: NAME.b }).click();
+
+    const b = page.getByTestId('ca-form-row').filter({ hasText: NAME.b });
+    await expect(page.getByTestId('ca-form-row').nth(1), 'name order: A, B, then the unnamed ones').toContainText(NAME.b);
+    await expect(b.getByTestId('ca-form-filledby-required')).toBeVisible();
+    await expect(b.getByTestId('ca-form-filledby'), 'the Specialist / Participant toggle').toBeVisible();
+    await expect(page.getByTestId('ca-on-submit-2')).toBeDisabled();
+    await b.getByTestId('ca-form-participant').click();
+    await expect(b.getByTestId('ca-form-filledby-required')).toHaveCount(0);
+    await expect(page.getByTestId('ca-on-submit-2')).toBeEnabled();
+    await page.getByTestId('ca-on-submit-2').click();
+
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
+      { formid: F.a, filledby: 'specialist', participantview: false },
+      { formid: F.b, filledby: 'participant', participantview: true },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
+    ]);
+    await expect(row.getByTestId('va-form-name').nth(1)).toHaveText(NAME.b, { timeout: 20_000 });
+  });
+
+  test('AMF-04 remove a form takes it out of the saved config', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    await rows.nth(0).getByTestId('ca-form-remove').click();
+    await expect(rows).toHaveCount(2);
+    await page.getByTestId('ca-on-submit-2').click();
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms.map((f: any) => f.formid), { timeout: 20_000 })
+      .toEqual([F.c, F.gone]);
+  });
+
+  // plan 2026-11-02-atc-sponsor-forms: "filled by" has a third option, Sponsor
+  test('AMF-05 a form can be filled by the sponsor: the third toggle saves filledby "sponsor"', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    const a = rows.filter({ hasText: NAME.a });
+    await a.getByTestId('ca-form-sponsor').click();
+    await expect(a.getByTestId('ca-form-sponsor')).toHaveAttribute('class', /mat-button-toggle-checked/);
+    await page.getByTestId('ca-on-submit-2').click();
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
+      { formid: F.a, filledby: 'sponsor', participantview: false },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
+    ]);
+  });
+
+  // participantview (operator 2026-11-03): the participant app shows an ATC form only when this is true. The flag is
+  // per row whatever "filled by" says, so the checkbox is on the specialist row too. CONFIG carries no such key,
+  // which makes the three seeded rows the negative control: absent must read as unchecked, and a row the admin never
+  // touches must save false rather than becoming visible on its own.
+  test('AMF-06 "Participant can view": on every row, unchecked when the saved config has no flag, checked on a new row, saved per row', async ({ page }) => {
+    const row = await openTable(page);
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    const rows = page.getByTestId('ca-form-row');
+    await expect(rows).toHaveCount(3, { timeout: 20_000 });
+    const box = (r: Locator) => r.getByTestId('ca-form-participantview').locator('input');
+
+    // one box per row: the specialist row and the row whose delivery form doc is gone have it too
+    await expect(page.getByTestId('ca-form-participantview')).toHaveCount(3);
+    for (const i of [0, 1, 2]) {
+      await expect(box(rows.nth(i)), `row ${i}: no flag in the saved config → unchecked`).not.toBeChecked();
+    }
+
+    // a form added in the dialog starts visible
+    await page.getByTestId('ca-form-input').click();
+    await page.getByTestId('ca-form-input').fill(NAME.b);
+    await page.locator('.cdk-overlay-pane mat-option').filter({ hasText: NAME.b }).click();
+    const b = rows.filter({ hasText: NAME.b });
+    await expect(box(b), 'a row added in the dialog starts checked').toBeChecked();
+    await b.getByTestId('ca-form-participant').click();
+
+    // tick the specialist row, leave the two unnamed ones alone
+    await box(rows.filter({ hasText: NAME.a })).check();
+    await page.getByTestId('ca-on-submit-2').click();
+    await expect.poll(async () => (await db().collection('atc model').doc(MODEL_ID).get()).data().forms, { timeout: 20_000 }).toEqual([
+      { formid: F.a, filledby: 'specialist', participantview: true },
+      { formid: F.b, filledby: 'participant', participantview: true },
+      { formid: F.c, filledby: 'participant', participantview: false },
+      { formid: F.gone, filledby: 'participant', participantview: false },
+    ]);
+
+    // round trip: what the emulator holds is what the reopened dialog shows (A, B, then the unnamed ones)
+    await row.getByTestId('va-on-edit-dialog-2').click();
+    await expect(rows).toHaveCount(4, { timeout: 20_000 });
+    await expect(box(rows.nth(0)), 'saved true comes back checked').toBeChecked();
+    await expect(box(rows.nth(1))).toBeChecked();
+    await expect(box(rows.nth(2))).not.toBeChecked();
+    await expect(box(rows.nth(3))).not.toBeChecked();
+  });
+});
