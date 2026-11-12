@@ -686,7 +686,32 @@ async function seedReferenceData(db, admin, testrunid) {
     ...TAG(testrunid),
   });
 
-  return { deliveryFormId, arenaVideoAskId, bigCoreFormId, bigCorePaId };
+  // QCV3-FD (queue-creation-v3 form dropdowns, queue-creation-form-dropdown.spec.ts) — four DEFAULT-db
+  // `delivery forms` templates. queue-creation-v3 reads `delivery forms` from the default db with
+  // orderBy('formname') and filters client-side on `delete`. Prod stores all three shapes, so each
+  // is seeded here (prod read 2026-11-12: 9 live forms carried `delete:false` and were hidden by the
+  // old `[null,undefined].includes(delete)` check):
+  //   • livefalse  — delete:false (the buildDoc default; the shape the bug hid)      → MUST show
+  //   • liveabsent — no `delete` field at all                                         → MUST show
+  //   • deleted    — delete:true (soft-deleted)                                       → MUST NOT show
+  //   • other      — delete:false, DIFFERENT name token                                → shown unfiltered,
+  //                  MUST be dropped by the search (proves the search filters, not just renders)
+  // Names carry a run-unique token so the spec's search narrows shared-project data to these four.
+  const qcv3Forms = {};
+  for (const [key, token, del] of [
+    ['livefalse', 'QCV3FD', false],
+    ['liveabsent', 'QCV3FD', undefined],
+    ['deleted', 'QCV3FD', true],
+    ['other', 'QCV3XO', false],
+  ]) {
+    const docid = `${testrunid}_qcv3form_${key}`;
+    const body = buildDoc('delivery forms', { ...ctx, docid, formname: `${token} ${testrunid} ${key}` });
+    if (del === undefined) delete body.delete; else body.delete = del;
+    await db.collection('delivery forms').doc(docid).set(body);
+    qcv3Forms[key] = docid;
+  }
+
+  return { deliveryFormId, arenaVideoAskId, bigCoreFormId, bigCorePaId, qcv3Forms };
 }
 
 /**
