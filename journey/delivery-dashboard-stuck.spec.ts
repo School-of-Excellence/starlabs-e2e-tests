@@ -1,18 +1,26 @@
-// delivery-dashboard-stuck.spec.ts — /delivery-dashboard → Participants → Stuck Cases, after the
-// "stuck = last ATTENDED appointment >= 15 days ago" rule (starlabs-angular bb5bca74, mahalakshmi
-// 2026-09-29, pulled onto charan-release 2026-10-01) and the new Subscription Start / End columns.
+// delivery-dashboard-stuck.spec.ts — /delivery-dashboard → Participants → Stuck Cases.
+// STUCK RULE (starlabs-angular charan-release 2026-11-12, taken from mahalakshmi-development's
+// delivery-dashboard-new; journal specs/journals/2026-11-12-pull-joshua-delivery-dashboard-fixes.md):
+//   in delivery = status 'ongoing' AND participantsproduct.mode 'priority mode'
+//   stuck       = > 15 days since the last ATTENDED appointment (none → since statusdate.ongoing)
+//                 AND no future appointment booked. Longest stuck first.
+// (Replaced: "initiated|ongoing, last ATTENDED appointment >= 15 days", bb5bca74 — which dropped products
+// with no attended appointment.) Plus the Subscription Start / End columns.
 //
 // Hook prefix: ddc — DeliveryDashboardCloneComponent (same prefix dashboards.spec.ts addresses).
 // Reference: starlabs-angular specs/journals/2026-10-01-pull-delivery-dashboard-stuck-cases.md.
 //
-// SEEDED WORLD (seed-journey.js step 8, seedDdcStuck — own run tag `<run>_ddc`, own DFU product):
-//   STALE   ongoing   · attended appt 18d ago + a newer UNattended appt 2d ago → the ONLY stuck row
-//   RECENT  initiated · attended appt 3d ago                                   → excluded
-//   NOAPPT  ongoing   · no appointment                                         → excluded
-//   UNATT   ongoing   · only an unattended appt 30d ago                        → excluded
-//   DONE    completed · attended appt 40d ago                                  → excluded (status)
-// Every PP has a 20-day-old statusdate, so under the PREVIOUS rule (15 days since statusdate) all four
-// active controls would be stuck: a green run cannot be the old rule, nor "there was nothing to drop".
+// SEEDED WORLD (seed-journey.js step 8, seedDdcStuck — own run tag `<run>_ddc`, own DFU product).
+// Every PP has a 20-day-old statusdate; all are priority mode except NONPRIO.
+//   STALE   ongoing   · attended 18d ago + a newer UNattended appt 2d ago (past) → STUCK, DAYS 18
+//   NOAPPT  ongoing   · no appointment                                  → STUCK, DAYS 20 (from statusdate.ongoing)
+//   UNATT   ongoing   · only an unattended appt 30d ago                 → STUCK, DAYS 20 (unattended never counts)
+//   RECENT  initiated · attended 3d ago                                 → excluded (status)
+//   DONE    completed · attended 40d ago                                → excluded (status)
+//   FUTURE  ongoing   · attended 25d ago + appt booked 3d AHEAD         → excluded (future booking)
+//   NONPRIO ongoing   · Journey Mode · attended 18d ago                 → excluded (not priority mode)
+// Each exclusion is a different clause of the rule, so a green run cannot be "nothing to drop": FUTURE is
+// stale by days alone and NONPRIO is STALE's exact shape with the wrong mode.
 //
 // ANTI-CIRCULARITY. The test only clicks and types a name filter. The app derives membership from a
 // join it runs itself (participantsproduct.docid ↔ appointments.participantproductid, attended filter,
@@ -20,11 +28,12 @@
 // name comes from `participant metadata`. The test asserts none of the values it wrote except the
 // formatted subscription dates, and those only as "the column renders the PP's field".
 //
-// DDC-FLT (app dfdb6b57, mahalakshmi 2026-10-01, pulled 2026-10-02): the new "All" tab (= Awaiting + Initiated
+// DDC-FLT (app dfdb6b57, mahalakshmi 2026-10-01, pulled 2026-10-02): the "All" tab (= Awaiting + Initiated
 // – Not Consuming + Stuck rows, each with a status) and the Customer Status / Financial Status / Parallel Product
-// filters + Clear Filter. In this world the All tab holds exactly two run rows — STALE (Stuck; active, regular,
-// parallel product = the NDFU `DDC Parallel Product`) and RECENT (Initiated – Not Consuming; non active,
-// defaulted, no parallel) — so every filter has one row it must keep and one it must drop.
+// filters + Clear Filter. In this world the All tab holds four run rows — STALE (Stuck; active, regular,
+// parallel product = the NDFU `DDC Parallel Product`), NOAPPT and UNATT (Stuck; active, no finance status, no
+// parallel) and RECENT (Initiated – Not Consuming; non active, defaulted, no parallel) — so every filter has rows
+// it must keep and rows it must drop.
 //
 // NOT COVERED: the participant-set cache (stuckKey) — it only changes WHEN the appointment read re-runs,
 // which no assertion here can observe without counting reads. Subscription columns on the other three
@@ -54,8 +63,8 @@ async function openStuckCases(page: Page) {
   return panel;
 }
 
-test.describe('Journey — Delivery dashboard Stuck Cases (last attended appointment >= 15 days; subscription columns)', () => {
-  test('DDC-STK-01 only the participant whose last ATTENDED appointment is >= 15 days old is stuck', async ({ page }) => {
+test.describe('Journey — Delivery dashboard Stuck Cases (priority in-delivery, > 15 days since last attended, no future booking; subscription columns)', () => {
+  test('DDC-STK-01 stuck = ongoing priority products > 15 days since last attended appointment with nothing booked ahead', async ({ page }) => {
     const panel = await openStuckCases(page);
     const rows = panel.locator('tr.pm-table-row');
 
@@ -67,15 +76,25 @@ test.describe('Journey — Delivery dashboard Stuck Cases (last attended appoint
       await expect(rows.filter({ hasText: W.names.STALE })).toHaveCount(1, { timeout: 3_000 });
     }, 'DDC-STK-01: STALE (attended 18d ago) must be a stuck row').toPass({ timeout: 90_000 });
 
-    await expect(rows, 'DDC-STK-01: exactly one of the five seeded participants is stuck').toHaveCount(1);
-    for (const k of ['RECENT', 'NOAPPT', 'UNATT', 'DONE'] as const) {
-      await expect(rows.filter({ hasText: W.names[k] }), `DDC-STK-01: ${k} must not be stuck`).toHaveCount(0);
+    await expect(rows, 'DDC-STK-01: exactly STALE, NOAPPT and UNATT are stuck').toHaveCount(3);
+    for (const k of ['STALE', 'NOAPPT', 'UNATT'] as const) {
+      await expect(rows.filter({ hasText: W.names[k] }), `DDC-STK-01: ${k} must be stuck`).toHaveCount(1);
     }
-    // DAYS comes from the last ATTENDED appointment (18d) — not the newer unattended one (2d), and not
-    // the 20-day statusdate that DAYS STUCK (waitingperiod) shows in the same row.
-    const badges = rows.first().locator('.pm-days-badge');
-    await expect(badges.filter({ hasText: /^\s*18 DAYS\s*$/ }), 'DDC-STK-01: DAYS is counted from the last ATTENDED appointment').toHaveCount(1);
-    await expect(badges.filter({ hasText: /^\s*2 DAYS\s*$/ }), 'DDC-STK-01: the unattended 2-day-old appointment is ignored').toHaveCount(0);
+    await expect(rows.filter({ hasText: W.names.RECENT }), 'DDC-STK-01: RECENT is initiated, not in delivery').toHaveCount(0);
+    await expect(rows.filter({ hasText: W.names.DONE }), 'DDC-STK-01: DONE is completed').toHaveCount(0);
+    await expect(rows.filter({ hasText: W.names.FUTURE }), 'DDC-STK-01: FUTURE has an appointment booked ahead').toHaveCount(0);
+    await expect(rows.filter({ hasText: W.names.NONPRIO }), 'DDC-STK-01: NONPRIO is not priority mode').toHaveCount(0);
+
+    // DAYS for STALE comes from the last ATTENDED appointment (18d) — not the newer unattended one (2d), and
+    // not the 20-day statusdate that DAYS STUCK (waitingperiod) shows in the same row.
+    const stale = rows.filter({ hasText: W.names.STALE }).locator('.pm-days-badge');
+    await expect(stale.filter({ hasText: /^\s*18 DAYS\s*$/ }), 'DDC-STK-01: STALE DAYS = since last ATTENDED appointment').toHaveCount(1);
+    await expect(stale.filter({ hasText: /^\s*2 DAYS\s*$/ }), 'DDC-STK-01: the unattended 2-day-old appointment is ignored').toHaveCount(0);
+    // NOAPPT has no attended appointment → DAYS falls back to statusdate.ongoing (20d), so BOTH badges read 20.
+    const noappt = rows.filter({ hasText: W.names.NOAPPT }).locator('.pm-days-badge');
+    await expect(noappt.filter({ hasText: /^\s*20 DAYS\s*$/ }), 'DDC-STK-01: NOAPPT DAYS falls back to the ongoing date').toHaveCount(2);
+    // Longest stuck first: the 20-day rows sit above STALE's 18.
+    await expect(rows.last(), 'DDC-STK-01: sorted longest stuck first').toContainText(W.names.STALE);
   });
 
   test('DDC-STK-02 the stuck row renders the PP subscription start and end dates', async ({ page }) => {
@@ -114,8 +133,8 @@ test.describe('Journey — Delivery dashboard All tab + filters (customer status
     await expect(async () => {
       await page.getByTestId('ddc-inp-104').fill('');
       await page.getByTestId('ddc-inp-104').fill(W.tag);
-      await expect(rows).toHaveCount(2, { timeout: 3_000 });
-    }, 'the All tab shows the two run rows (STALE stuck + RECENT idle)').toPass({ timeout: 90_000 });
+      await expect(rows).toHaveCount(4, { timeout: 3_000 });
+    }, 'the All tab shows the four run rows (STALE, NOAPPT, UNATT stuck + RECENT idle)').toPass({ timeout: 90_000 });
     return rows;
   }
 
@@ -127,7 +146,10 @@ test.describe('Journey — Delivery dashboard All tab + filters (customer status
     await expect(stale, 'DDC-FLT-01: STALE shows its parallel product').toContainText(W.parallel);
     await expect(recent, 'DDC-FLT-01: RECENT is listed as Initiated – Not Consuming').toContainText('Initiated – Not Consuming');
     await expect(recent, 'DDC-FLT-01: RECENT has no parallel product').not.toContainText(W.parallel);
-    for (const k of ['NOAPPT', 'UNATT', 'DONE'] as const) {
+    for (const k of ['NOAPPT', 'UNATT'] as const) {
+      await expect(rows.filter({ hasText: W.names[k] }), `DDC-FLT-01: ${k} is listed as Stuck`).toContainText('Stuck');
+    }
+    for (const k of ['DONE', 'FUTURE', 'NONPRIO'] as const) {
       await expect(rows.filter({ hasText: W.names[k] }), `DDC-FLT-01: ${k} is in no actionable bucket`).toHaveCount(0);
     }
   });
@@ -145,17 +167,18 @@ test.describe('Journey — Delivery dashboard All tab + filters (customer status
     await expect(page.getByTestId('ddc-inp-104'), 'DDC-FLT-02: Clear Filter also clears the search').toHaveValue('');
 
     await page.getByTestId('ddc-inp-104').fill(W.tag);
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(4);
     await pickFilter(page, page.getByTestId('ddc-msel-126'), 'Regular');
     await only('STALE', 'DDC-FLT-02: Financial Status = Regular keeps STALE only');
     await page.getByTestId('ddc-btn-129').click();
 
     await page.getByTestId('ddc-inp-104').fill(W.tag);
-    await expect(rows).toHaveCount(2);
+    await expect(rows).toHaveCount(4);
     await pickFilter(page, page.getByTestId('ddc-msel-127'), 'Parallel Product Available');
     await only('STALE', 'DDC-FLT-02: Parallel Product Available keeps STALE only');
     await pickFilter(page, page.getByTestId('ddc-msel-127'), 'No Parallel Product');
-    await only('RECENT', 'DDC-FLT-02: No Parallel Product keeps RECENT only');
+    await expect(rows, 'DDC-FLT-02: No Parallel Product keeps RECENT, NOAPPT and UNATT').toHaveCount(3);
+    await expect(rows.filter({ hasText: W.names.STALE }), 'DDC-FLT-02: No Parallel Product drops STALE').toHaveCount(0);
   });
 
   test.fixme('DDC-ADDR1 All-tab filter-indicator Clear addressable (deferred behavioral — shown only for tile-driven filters)', async ({ page }) => {
