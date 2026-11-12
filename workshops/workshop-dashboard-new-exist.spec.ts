@@ -1,5 +1,6 @@
 // workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, the
-// Total Enrolled export's Enrollment Date + Tags columns, and the Total Enrolled cards' tag chips (2026-11-12).
+// Total Enrolled export's Enrollment Date + Tags columns, and the Total Enrolled cards' tag chips + Tag filter
+// (2026-11-12).
 //
 // Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
 //
@@ -8,8 +9,8 @@
 //   Exist = everyone else — participant metadata people, and new_user_data people marked movedtoexist.
 // The participant-metadata `workshoponly` flag no longer decides either (it used to drive "New").
 //
-// Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist` and `wd-side-enrolled-tag`
-// landed with these rules,
+// Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist`, `wd-side-enrolled-tag` and
+// `wd-side-tag-filter/-option/-clear` landed with these rules,
 // so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this file on app branches without it.
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
@@ -192,5 +193,54 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     await page.getByTestId('wdash-exist-users-card').click();
     await expect(panelCard(page, moved.name), 'WNE-04: the moved person is in Exist Users').toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('wd-side-enrolled-tag'), 'WNE-04: only Total Enrolled shows tag chips').toHaveCount(0);
+  });
+
+  test('WNE-05 Total Enrolled filters by enrolment tag, together with New / Exist; other panels have no Tag filter', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const { segment, venue, ghost } = wsExportTags;
+    // NU carries Segment + Venue; the moved person carries Segment plus a dead id; p0 carries none.
+    await tagEnrolledExportCase([ghost, segment.id]);
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    await loginAsWshopAdmin(page);
+    await openTotalEnrolled(page);
+    await expect(panelCard(page, nu.name).getByTestId('wd-side-enrolled-tag'), 'WNE-05 precondition: tags loaded')
+      .toHaveCount(2, { timeout: 30_000 });
+
+    await page.getByTestId('wd-button-63').click();
+    await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-05: the Tag filter sits under All / New / Exist').toBeVisible();
+    await expect(page.getByTestId('wd-side-filter-exist'), 'WNE-05: in the same menu as New / Exist').toBeVisible();
+    const option = page.getByTestId('wd-side-tag-option');
+    await expect(option, 'WNE-05: one option per tag in the panel, A to Z; a dead id offers nothing')
+      .toHaveText([segment.name, venue.name]);
+
+    await option.filter({ hasText: venue.name }).click();
+    await expect(panelCard(page, nu.name), 'WNE-05: Venue keeps the person carrying it').toBeVisible();
+    await expect(panelCard(page, moved.name), 'WNE-05: Venue drops the moved person (Segment only)').toHaveCount(0);
+    await expect(panelCard(page, p0Meta.name), 'WNE-05: Venue drops untagged p0').toHaveCount(0);
+
+    await option.filter({ hasText: segment.name }).click();     // the menu stays open while ticking
+    await expect(panelCard(page, moved.name), 'WNE-05: any ticked tag matches').toBeVisible();
+    await expect(panelCard(page, nu.name)).toBeVisible();
+    await expect(panelCard(page, p0Meta.name), 'WNE-05: still no untagged people').toHaveCount(0);
+
+    await page.getByTestId('wd-side-filter-exist').click();     // picking a radio closes the menu
+    await expect(panelCard(page, moved.name), 'WNE-05: Exist + tags keeps the moved person').toBeVisible();
+    await expect(panelCard(page, nu.name), 'WNE-05: Exist + tags drops the new user').toHaveCount(0);
+
+    await page.getByTestId('wd-button-63').click();
+    await page.getByTestId('wd-side-tag-clear').click();
+    await page.keyboard.press('Escape');
+    await pickFilter(page, 'wd-side-filter-all');
+    await expect(panelCard(page, p0Meta.name), 'WNE-05: Clear + All brings untagged people back').toBeVisible();
+    await expect(panelCard(page, nu.name)).toBeVisible();
+    await expect(panelCard(page, moved.name)).toBeVisible();
+
+    // Negative control: Exist Users Enrolled has the same filter menu, without the Tag filter.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wdash-exist-users-card').click();
+    await expect(panelCard(page, moved.name), 'WNE-05: the Exist Users panel opened').toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('wd-button-63').click();
+    await expect(page.getByTestId('wd-side-filter-exist'), 'WNE-05: its filter menu opened').toBeVisible();
+    await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-05: only Total Enrolled has the Tag filter').toHaveCount(0);
   });
 });
