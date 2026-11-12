@@ -643,7 +643,7 @@ export const wsAccessKeys = [
 export const wsLimitedGrants = ['qanda', 'export'];
 
 /** The three shared lists, as the app stores them. */
-export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[] }> {
+export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[]; clearWorkshop: string[] }> {
   const admin = seed.initAdmin();
   const snap = await admin.firestore().collection('static meta data').doc('Workshop Admin').get();
   const d: any = snap.exists ? (snap.data() || {}) : {};
@@ -652,6 +652,7 @@ export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[];
     dashboardAdmins: list(d.workshopdashboardadmin),
     editAccess: list(d.workshopeditaccess),
     newUsersAccess: list(d.workshopnewusersaccess),
+    clearWorkshop: list(d.clearworkshop),
   };
 }
 
@@ -690,6 +691,24 @@ export async function resetWorkshopAdminLists(): Promise<void> {
     workshopdashboardadmin: [wsProfileIds.admin, wsProfileIds.mover],
     workshopeditaccess: [wsProfileIds.admin, wsProfileIds.mover],
     workshopnewusersaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    clearworkshop: [wsProfileIds.mover],
+    testrunid: RUN,
+    _testdata: true,
+  });
+}
+
+/** PRECONDITION write: replace only the shared Clear list (reset with resetWorkshopAdminLists). */
+export async function setWorkshopClearList(ids: string[]): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('static meta data').doc('Workshop Admin').set({ clearworkshop: ids }, { merge: true });
+}
+
+/** PRECONDITION write: replace W_DASH's whole grants map, profileid -> actions (reset with resetDashboardAccess). */
+export async function setDashboardGrants(grants: Record<string, string[]>): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopsettings').doc(wsIds.W_DASH).set({
+    workshopid: wsIds.W_DASH,
+    dashboardaccess: grants,
     testrunid: RUN,
     _testdata: true,
   });
