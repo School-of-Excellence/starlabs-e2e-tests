@@ -89,6 +89,7 @@ const ID = {
   SLQ: `${TESTRUNID}_SLQ`,          // salesleads doc — ASSURED, no journey AND no productref — JCD-06 (PJP fallback)
   PJP_SLQ: `${TESTRUNID}_PJP_SLQ`,  // participantjourneyproduct for SLQ (salesleadsref → SLQ, productref → P2) — JCD-06
   DF1: `${TESTRUNID}_DF1`,          // delivery forms doc with a formarray — formtemplate render (JP-16) + a deliverysequence-authoring activity option (JP-AUTH)
+  DFM: `${TESTRUNID}_DFM`,          // delivery forms doc with video/audio media fields — /deliveryactivities edit dialog copy/play (UDM-*)
   APT1: `${TESTRUNID}_APT1`,        // appointmenttype doc — a second deliverysequence-authoring activity option
   EMT1: `${TESTRUNID}_EMT1`,        // email templates doc (active:true) — JP-09 onboarding email template
 };
@@ -143,6 +144,7 @@ const ROUTES = [
   { route: '/participantdeliverysequence', label: 'Participant Delivery Sequence' },
   { route: '/productinitiated-dashboard', label: 'Product Initiation Dashboard' },
   { route: '/formtemplate', label: 'Form Template' },
+  { route: '/deliveryactivities', label: 'Delivery Activities' },  // UDM-* (update-delivery media copy/play)
   // 2026-10-29: ATC model table + Create/Edit dialog (atcmodel-forms.spec.ts — forms config)
   { route: '/atcmodel', label: 'ATC Model' },
   // 2026-10-29: delivery forms list + dialog (delivery-form-delete.spec.ts — delete default, Restore)
@@ -416,6 +418,30 @@ async function seedJourney() {
     formarray: [
       { type: 'label', fieldname: `Onboarding Questionnaire ${TESTRUNID}`, fielddescription: 'Seeded section.' },
       { type: 'Text', fieldname: `Participant Goal ${TESTRUNID}`, required: false },
+    ], ...tag,
+  });
+
+  //    delivery forms doc whose fields carry media URLs — the /deliveryactivities edit dialog
+  //    (update-delivery) shows Copy link / Play only for a video|audio field that HAS a URL, and turns a
+  //    YouTube watch link into an embed URL itself. The spec finds each card by its field name:
+  //      0 video  · YouTube WATCH link            → Copy + Play → iframe; the app derives /embed/<id>
+  //      1 video  · long direct mp4 URL           → Play → <video>; the chip must ellipsize, not overflow
+  //      2 video  · NO URL                         → negative control: no Copy / Play at all
+  //      3 radio  · two options                    → negative control: chips render, still no Copy / Play
+  //      4 array  · sub-field audio with a URL     → the sub-field path: Play → <audio>
+  //    Own doc, NOT DF1: JP-16/JP-33 assert DF1's formtemplate render and must not see extra fields.
+  //    The media hosts are fake (media.example.test); the spec fulfils them, so nothing leaves the run.
+  await db.collection('delivery forms').doc(ID.DFM).set({
+    docid: ID.DFM, formname: `Media Copy Play Form ${TESTRUNID}`, formtype: null, formfor: null,
+    formdescription: `Media URL tools ${TESTRUNID}`,
+    formarray: [
+      { type: 'video', fieldname: `Watch Video ${TESTRUNID}`, options: ['https://www.youtube.com/watch?v=udmVid01xyz&t=7'], required: false },
+      { type: 'video', fieldname: `Direct Video ${TESTRUNID}`, options: [`https://media.example.test/${TESTRUNID}/` + 'very-long-folder-name/'.repeat(8) + 'clip.mp4?alt=media&token=0123456789abcdef0123456789abcdef'], required: false },
+      { type: 'video', fieldname: `Empty Video ${TESTRUNID}`, options: [], required: false },
+      { type: 'radio', fieldname: `Pick One ${TESTRUNID}`, options: ['Yes', 'No'], required: false },
+      { type: 'array', fieldname: `Audio List ${TESTRUNID}`, array: [
+        { type: 'audio', fieldname: `Sub Audio ${TESTRUNID}`, options: [`https://media.example.test/${TESTRUNID}/track.mp3`], required: false },
+      ] },
     ], ...tag,
   });
 

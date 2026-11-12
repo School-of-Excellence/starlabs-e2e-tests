@@ -69,3 +69,41 @@ The app no longer hard-deletes segments: archiving is the only delete. Every con
 **Migration hooks:** `sgb-mig-open`, `-dlg`, `-row`, `-run` and `-done` are registered in SGB-ADDR3 (`test.fixme`) and never driven. The migration rewrites every text-id segment on the project, which on the shared test project would include other runs' and real segments.
 
 **Needs:** the test admin user must have a `profile_data` doc linked by `user_ref`. Otherwise every save is refused ("No profile found…"), and SGB-02..06 fail on their first write.
+
+## 2026-10-22 · SGB-07 segment groups
+
+See `2026-10-22-segment-board-groups.md` (main's SGB-07: groups G_REF / G_OPS).
+
+## 2026-11-11 · SGB-08 Import & move (list → manual segment, review first)
+
+**App change:** a board-level **Import & move** dialog. It reads a CSV/Excel file or a pasted list (a Name/Email template can be downloaded), matches each value to participant metadata and shows a review list before anything moves. People in an automated segment are ticked by default. People in another manual segment, or in no segment, are unticked. Rows already in the target, not found, repeated, or a name shared by several people can't be ticked. The move writes the lists and the `members-added` / `members-removed` history in one batch.
+
+**Seed:** a second empty manual segment, **SB Import** (`${run}_SB_IMPORT`), is the target. The target can't be SB Manual, because Charlie already sits there: Charlie is the "in another manual segment" case.
+
+**Why SGB-08 un-archives SB Active first:** SGB-06 leaves it archived. Without it, Alpha would be "Not in a segment", and the default-tick rule (ticked only when in an automated segment) would go untested.
+
+**The file (5 rows, the template's Name, Email headers), and why each row is there:**
+| Row | Proves |
+|---|---|
+| Alpha | ticked by default, moved; leaves the automated list |
+| Charlie | unticked by default (in SB Manual); ticked by the case, so it leaves SB Manual → `members-removed` |
+| the nameless doc's email | never loaded (rule #2) → Not found |
+| an email nobody has | Not found |
+| Alpha in upper case | Repeated, counted once |
+| (Bravo, absent) | must stay in the automated list: negative control for the resync |
+
+**Oracles:**
+- `segmentboardlist` for SB Import = [Alpha, Charlie]; SB Manual = []; SB Active = [Bravo].
+- SB Import history `members-added`: `changes.members.to` = [Alpha, Charlie], `source.source` = the file name, and `updatedby` is a profile id.
+- SB Manual history `members-removed`: `from` = [Charlie].
+- A re-import shows both as Already there (0/0/2/3), and Move is disabled.
+
+**ADDR4:** registers paste, search, tick-all, the template download and export. SGB-08 drives the file path instead.
+
+**Never run here:** the cases were listed (`--list`, 12 tests), not executed. The gate is the first real run.
+
+**Cleanup:** the seed and teardown `recursiveDelete` the SB Import config, including its history, and delete its list doc.
+
+**First real run (local emulator lane, 2026-11-11):** 8 passed, 4 ADDR skipped. This was the branch spec; it carried its own copy of SGB-07, and that copy needed a hover before edit and a re-lookup after the rename.
+- **SGB-08** found an app bug: a ticked row jumped out of the "Not ticked" view. Fixed in the app (tab rows are fixed while the tab is open).
+- **Merge to main:** main already had SGB-07 (with the hover). The merge keeps main's SGB-01..07 and adds only SGB-08, ADDR4 and the SB Import seed. That combination is re-run before the push.
