@@ -1,5 +1,5 @@
-// workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, and the
-// Total Enrolled export's Enrollment Date + Tags columns (2026-11-12).
+// workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, the
+// Total Enrolled export's Enrollment Date + Tags columns, and the Total Enrolled cards' tag chips (2026-11-12).
 //
 // Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
 //
@@ -8,7 +8,8 @@
 //   Exist = everyone else — participant metadata people, and new_user_data people marked movedtoexist.
 // The participant-metadata `workshoponly` flag no longer decides either (it used to drive "New").
 //
-// Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist` landed with this rule,
+// Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist` and `wd-side-enrolled-tag`
+// landed with these rules,
 // so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this file on app branches without it.
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
@@ -166,5 +167,30 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     expect(otherHeader, 'WNE-03: the other panel still exports Email').toContain('Email');
     expect(otherHeader, 'WNE-03: only Total Enrolled adds Enrollment Date').not.toContain('Enrollment Date');
     expect(otherHeader, 'WNE-03: only Total Enrolled adds Tags').not.toContain('Tags');
+  });
+
+  test('WNE-04 Total Enrolled cards show the enrolled-doc tags beside the New tag; other panels do not', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const { segment, venue, ghost } = wsExportTags;
+    // The moved person carries a deleted tag id AND a real one, so the card must drop just the dead id.
+    await tagEnrolledExportCase([ghost, segment.id]);
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    await loginAsWshopAdmin(page);
+    await openTotalEnrolled(page);
+
+    const nuCard = panelCard(page, nu.name);
+    await expect(nuCard.getByTestId('wd-side-enrolled-tag'), 'WNE-04: tag ids show as names, in stored order')
+      .toHaveText([segment.name, venue.name], { timeout: 30_000 });
+    await expect(nuCard.locator('.new-badge'), 'WNE-04: beside the New tag').toBeVisible();
+    await expect(panelCard(page, moved.name).getByTestId('wd-side-enrolled-tag'),
+      'WNE-04: a deleted tag id shows nothing; the real one shows its name').toHaveText([segment.name]);
+    await expect(panelCard(page, p0Meta.name).getByTestId('wd-side-enrolled-tag'), 'WNE-04: no tags → no chips')
+      .toHaveCount(0);
+
+    // Negative control: Exist Users Enrolled lists the same moved person, without chips.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wdash-exist-users-card').click();
+    await expect(panelCard(page, moved.name), 'WNE-04: the moved person is in Exist Users').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('wd-side-enrolled-tag'), 'WNE-04: only Total Enrolled shows tag chips').toHaveCount(0);
   });
 });

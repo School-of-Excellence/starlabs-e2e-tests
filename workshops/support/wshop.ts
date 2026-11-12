@@ -1940,13 +1940,13 @@ export const wsExportTags = {
  * PRECONDITION (on top of seedEnrolledExportCase): tag the enrolled docs. NU gets both real tags; the
  * moved person gets only an id whose tag doc does not exist. Removed with the docs by clearEnrolledExportCase.
  */
-export async function tagEnrolledExportCase(): Promise<void> {
+export async function tagEnrolledExportCase(movedTags: string[] = [wsExportTags.ghost]): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all([
     db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU)
       .set({ tags: [wsExportTags.segment.id, wsExportTags.venue.id] }, { merge: true }),
     db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED)
-      .set({ tags: [wsExportTags.ghost] }, { merge: true }),
+      .set({ tags: movedTags }, { merge: true }),
   ]);
 }
 
