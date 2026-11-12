@@ -1929,6 +1929,27 @@ export async function seedEnrolledExportCase(): Promise<void> {
   ]);
 }
 
+/** Two of the seeded newusertags docs (seed-workshops.js §tagDoc), by id and the name the app exports. */
+export const wsExportTags = {
+  segment: { id: `${RUN}_nut_seg`, name: `WS Segment ${RUN}` },
+  venue: { id: `${RUN}_nut_loc`, name: `WS Venue ${RUN}` },
+  ghost: `${RUN}_nut_deleted`,   // an id with no newusertags doc — must export as nothing
+};
+
+/**
+ * PRECONDITION (on top of seedEnrolledExportCase): tag the enrolled docs. NU gets both real tags; the
+ * moved person gets only an id whose tag doc does not exist. Removed with the docs by clearEnrolledExportCase.
+ */
+export async function tagEnrolledExportCase(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU)
+      .set({ tags: [wsExportTags.segment.id, wsExportTags.venue.id] }, { merge: true }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED)
+      .set({ tags: [wsExportTags.ghost] }, { merge: true }),
+  ]);
+}
+
 export async function clearEnrolledExportCase(): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all([

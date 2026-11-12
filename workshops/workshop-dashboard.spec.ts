@@ -21,8 +21,8 @@
 //     instead — so typing in the box threw, MatTableDataSource aborted the filter pass, and the
 //     table silently stopped responding. The console guard catches the throw; the negative-control-
 //     first ordering catches the silence.
-//   • WS-44: the tag's condition (`workshoponly`) is a precondition write; the assertion is on what
-//     the app RENDERED from it — a text element with a painted background, and no new.png anywhere.
+//   • WS-44 and WS-77 moved to workshop-dashboard-new-exist.spec.ts (2026-11-12): the New tag now follows
+//     new_user_data (not `workshoponly`), and the Total Enrolled export gained Enrollment Date + Tags.
 //
 // Hook prefix: this screen's hooks are `wd-*` (workshop-dashboard.component.html).
 //
@@ -32,13 +32,13 @@ import { test, expect, Locator } from '@playwright/test';
 import {
   wsActors, wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopMover,
   resetParticipantWorkshopP0, alignWorkshopMetadataNames, p0MetadataEmail, stampP0DistinctName,
-  stampP0Workshoponly, wsP0SearchName,
+  wsP0SearchName,
   WS_EVERGREEN_DAYS_LEFT, clearEvergreenExtended, seedEvergreenExtended, wsEvergreenIds, wsMetaNames,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { readFileSync } from 'fs';
 import {
-  seedEnrolledExportCase, clearEnrolledExportCase, wsExportPeople, wsExportIds, readCsvRows,
+  seedEnrolledExportCase, clearEnrolledExportCase, wsExportPeople, readCsvRows,
 } from './support/wshop';
 import { getDoc, countWhere, pollUntil } from '../queue/support/firestore-admin';
 
@@ -295,39 +295,6 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
       await alignWorkshopMetadataNames();
     }
   });
-
-  // ===========================================================================================
-  // WS-44 — the "New" marker is a highlighted text tag, not the assets/new.png image
-  // ===========================================================================================
-  test('WS-44 a new participant is marked with a highlighted "New" text tag, no image', async ({ page }) => {
-    // Precondition: `workshoponly` is the flag the tag renders on. Not CF-owned, so this write stands.
-    await stampP0Workshoponly(true);
-    try {
-      await loginAsWshopAdmin(page);
-      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
-      await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
-
-      const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
-      await expect(p0Row, 'WS-44: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
-
-      // [ASSERT] the tag is text the app rendered from the flag, in the participant cell.
-      const badge = p0Row.locator('.new-badge');
-      await expect(badge, 'WS-44: the flagged participant carries a New tag').toBeVisible({ timeout: 30_000 });
-      await expect(badge, 'WS-44: the tag is the word New').toHaveText(/^New$/i);
-
-      // [ASSERT] it is a real element, not an <img> — the old marker was assets/new.png, and the point of
-      // the change is that the tag no longer depends on an image loading.
-      expect(await badge.evaluate((el) => el.tagName.toLowerCase()), 'WS-44: the tag is not an image').not.toBe('img');
-      await expect(p0Row.locator('img[src*="new.png"]'), 'WS-44: no new.png image anywhere in the row').toHaveCount(0);
-
-      // [ASSERT] and it is actually highlighted — a background the app painted, not the default
-      // transparent. Read from the live computed style, not from the stylesheet.
-      const bg = await badge.evaluate((el) => getComputedStyle(el).backgroundColor);
-      expect(bg, `WS-44: the tag has a highlight background. Got "${bg}"`).not.toMatch(/rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
-    } finally {
-      await stampP0Workshoponly(false);
-    }
-  });
 });
 
 // ===========================================================================================
@@ -492,63 +459,5 @@ test.describe('Workshop dashboard — Total Enrolled export', () => {
     expect(pmRow, 'WS-69: a participant-metadata person is still exported with their email').toBeTruthy();
     expect(pmRow![col('Participant Name')]).toBe(p0Meta.name);
     expect(data.some((r) => r[col('Participant Name')] === 'Unknown'), 'WS-69: nobody exports as "Unknown"').toBe(false);
-  });
-
-  // WS-77 (2026-11-12): the Total Enrolled export also carries each person's enrollment date AND time
-  // ("07 Nov 2026, 9:00 am"), as the LAST column (existing columns keep their positions). Other panels'
-  // exports stay as they were.
-  test('WS-77 Total Enrolled export adds each person\'s Enrollment Date; other panels do not', async ({ page }) => {
-    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
-    const enrA: any = await getDoc('workshop participant enrolled', wsIds.ENR_A);
-    const enrMoved: any = await getDoc('workshop participant enrolled', wsExportIds.ENR_MOVED);
-    expect(enrA?.enrollmentdate?.toMillis, 'WS-77 precondition: p0 has a seeded enrollment date').toBeTruthy();
-    expect(enrMoved?.enrollmentdate?.toMillis, 'WS-77 precondition: the moved person has one').toBeTruthy();
-    await loginAsWshopAdmin(page);
-    await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
-    // Formatted in the browser exactly as the app's formatDateTime does: "<day>, <time>".
-    const fmt = (ms: number) => page.evaluate((t) => {
-      const d = new Date(t);
-      return `${d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}, ${
-        d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true })}`;
-    }, ms);
-    const p0Date = await fmt(enrA.enrollmentdate.toMillis());
-    const movedDate = await fmt(enrMoved.enrollmentdate.toMillis());
-    expect(p0Date, 'WS-77 precondition: the two seeded dates differ, so a constant column cannot pass').not.toBe(movedDate);
-
-    const exportPanel = async (name: string) => {
-      page.once('dialog', (d) => d.accept());   // "export participants as CSV?"
-      const [download] = await Promise.all([
-        page.waitForEvent('download', { timeout: 30_000 }),
-        page.getByTestId('wd-export-participants-62').click(),
-      ]);
-      const file = test.info().outputPath(name);
-      await download.saveAs(file);
-      return readCsvRows(readFileSync(file, 'utf8').replace(/^\uFEFF/, ''));
-    };
-
-    await page.getByTestId('wd-on-metric-click-6').click({ timeout: 45_000 });
-    await expect(page.getByTestId('wd-export-participants-62'), 'WS-77: the Total Enrolled panel opens with Export').toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(wsExportPeople.moved.name, { exact: true })).toBeVisible({ timeout: 30_000 });
-    const [header, ...data] = await exportPanel('total-enrolled-dates.csv');
-    const col = (h: string) => header.indexOf(h);
-    expect(header[header.length - 1], 'WS-77: Enrollment Date is the last column').toBe('Enrollment Date');
-    expect(header.slice(0, 6), 'WS-77: the existing columns keep their positions')
-      .toEqual(['Participant Name', 'Email', 'Phone', 'Active Journey', 'Last Journey', 'Subscription End']);
-    const p0Row = data.find((r) => r[col('Email')] === p0Meta.email);
-    expect(p0Row, 'WS-77: p0 is exported').toBeTruthy();
-    expect(p0Row![col('Enrollment Date')], 'WS-77: p0 carries their own enrollment date and time').toBe(p0Date);
-    expect(p0Row![col('Enrollment Date')], 'WS-77: the time is included').toMatch(/, \d{1,2}:\d{2}\s?(am|pm)$/i);
-    const movedRow = data.find((r) => r[col('Participant Name')] === wsExportPeople.moved.name);
-    expect(movedRow, 'WS-77: the moved person is exported').toBeTruthy();
-    expect(movedRow![col('Enrollment Date')], 'WS-77: the moved person carries their own date').toBe(movedDate);
-
-    // Negative control: another panel's export (Exist Users Enrolled) has no Enrollment Date column.
-    await page.getByTestId('wd-close-participant-panel-61').click();
-    await page.getByTestId('wdash-exist-users-card').click();
-    await expect(page.getByTestId('wd-export-participants-62'), 'WS-77: the Exist Users panel opens with Export').toBeVisible({ timeout: 30_000 });
-    const [otherHeader, ...otherData] = await exportPanel('exist-users.csv');
-    expect(otherData.length, 'WS-77: the other panel exported rows').toBeGreaterThan(0);
-    expect(otherHeader, 'WS-77: the other panel still exports Email').toContain('Email');
-    expect(otherHeader, 'WS-77: only Total Enrolled adds Enrollment Date').not.toContain('Enrollment Date');
   });
 });
