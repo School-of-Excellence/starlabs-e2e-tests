@@ -8,6 +8,7 @@ import { test, expect, Page } from '@playwright/test';
 import {
   ATC, PF, NAME, ACT, PROC, PROC_NAME, MODEL, RUN, installAtcGuards, assertNoRealDb, loginAsAtc,
   atcDb, atcDoc, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, AtcGuard, fillEditorDialog,
+  storageBucket,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -180,13 +181,20 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     await submitEdit(page, guard);
 
     const nv = await newVersionOf('atc_alpha', ATC.E4);
-    const emu = /^http:\/\/(localhost|127\.0\.0\.1):9199\//;
     const notes = (await atcDb().doc(`atc_notes/${nv.data().notesid}`).get()).data();
+    // Signed-URL migration (2026-11-12): object paths are persisted, not download URLs — see PATC-07.
     expect(notes.changeworkbrief).toHaveLength(1);
-    expect(notes.changeworkbrief[0], 'audio served by the Storage EMULATOR').toMatch(emu);
+    expect(notes.changeworkbrief[0], 'audio stored as an object path')
+      .toMatch(new RegExp(`^ATC_Audio_Notes/${PF.admin}/`));
     expect(notes.imagenotes).toHaveLength(1);
-    expect(notes.imagenotes[0]).toMatch(emu);
-    expect((nv.data().prescription_image || []).some((u: string) => emu.test(u)), 'ATC image served by the Storage EMULATOR').toBe(true);
+    expect(notes.imagenotes[0], 'note image stored as an object path').toMatch(/^Uploaded ATC\//);
+    expect((nv.data().prescription_image || []).some((u: string) => /^Online ATC Images\//.test(u)),
+      'ATC image stored as an object path').toBe(true);
+    for (const v of [...notes.changeworkbrief, ...notes.imagenotes, ...(nv.data().prescription_image || [])]) {
+      expect(v, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+      const [exists] = await storageBucket().file(v).exists();
+      expect(exists, `the stored path points at a real object: ${v}`).toBe(true);
+    }
   });
 
   test('EATC-08 two-device conflict on the edit draft: "keep this device" wins, the other version is archived', async ({ page }) => {

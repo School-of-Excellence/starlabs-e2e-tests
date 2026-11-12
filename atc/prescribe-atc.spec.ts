@@ -287,15 +287,23 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
 
     const [atc] = await waitFor(async () => { const d = await appWrittenFor('atc_alpha', PF.p5); return d.length ? d : null; }, 'ATC for p5');
     const notes = (await atcDb().doc(`atc_notes/${atc.data().notesid}`).get()).data();
-    const emu = /^http:\/\/(localhost|127\.0\.0\.1):9199\//;
+    // Signed-URL migration (2026-11-12): the ATC screens persist the Storage OBJECT PATH, never a
+    // tokenised download URL. A path is inert on its own — rendering one needs a short-lived signed
+    // URL from the getMediaUrls callable. So the contract to assert is the path SHAPE plus the
+    // object's real existence; matching a URL here would now be a regression, not a pass.
+    const stored = [...notes.changeworkbrief, ...notes.imagenotes, ...atc.data().prescription_image];
     expect(notes.changeworkbrief).toHaveLength(1);
-    expect(notes.changeworkbrief[0], 'audio served by the Storage EMULATOR').toMatch(emu);
+    expect(notes.changeworkbrief[0], 'audio stored as an object path')
+      .toMatch(new RegExp(`^ATC_Audio_Notes/${PF.admin}/`));
     expect(notes.imagenotes).toHaveLength(1);
-    expect(notes.imagenotes[0]).toMatch(emu);
+    expect(notes.imagenotes[0], 'note image stored as an object path').toMatch(/^Uploaded ATC\//);
     expect(atc.data().prescription_image).toHaveLength(1);
-    expect(atc.data().prescription_image[0]).toMatch(emu);
-    const [files] = await storageBucket().getFiles({ prefix: `ATC_Audio_Notes/${PF.admin}/` });
-    expect(files.length, 'audio object exists in the Storage emulator').toBeGreaterThan(0);
+    expect(atc.data().prescription_image[0], 'ATC image stored as an object path').toMatch(/^Online ATC Images\//);
+    for (const v of stored) {
+      expect(v, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+      const [exists] = await storageBucket().file(v).exists();
+      expect(exists, `the stored path points at a real object: ${v}`).toBe(true);
+    }
   });
 
   test('PATC-08 two-device conflict: dialog appears, "keep this device" wins, the other version is archived', async ({ page }) => {

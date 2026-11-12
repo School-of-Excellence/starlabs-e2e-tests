@@ -18,6 +18,10 @@ export const environment = {
     // Storage emulator (added 2026-10-13 for the ATC suite's audio/image uploads): main.ts calls
     // connectStorageEmulator when this key exists, so uploads stay local — no real bucket is touched.
     storage: { host: 'localhost', port: 9199 },
+    // Functions emulator (added 2026-11-12 for the ATC signed-URL migration): the ATC screens store
+    // Storage object paths and call the getMediaUrls callable to render one. Without this key main.ts
+    // leaves that callable pointed at the real cloudfunctions.net endpoint.
+    functions: { host: '127.0.0.1', port: 5001 },
   },
   firebase: {
     // projectId = starlabs-cicd (the sanctioned CICD test project) so Angular reads the SAME emulator
