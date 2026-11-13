@@ -1,6 +1,6 @@
 // workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, the
-// Total Enrolled export's Enrollment Date + Tags columns, and the Total Enrolled cards' tag chips + Tag filter
-// (2026-11-12).
+// Total Enrolled export's Enrollment Date + Tags columns, the Total Enrolled cards' tag chips + Tag filter
+// (2026-11-12), the Total Enrolled sort and the Participant Data tags (2026-11-13).
 //
 // Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
 //
@@ -10,7 +10,7 @@
 // The participant-metadata `workshoponly` flag no longer decides either (it used to drive "New").
 //
 // Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist`, `wd-side-enrolled-tag` and
-// `wd-side-tag-filter/-option/-clear` landed with these rules,
+// `wd-side-tag-filter/-option/-clear`, `wd-side-sort-*` and `wd-pd-tag` landed with these rules,
 // so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this file on app branches without it.
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
@@ -22,11 +22,18 @@ import { test, expect, Page } from '@playwright/test';
 import {
   wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, stampP0Workshoponly,
   seedEnrolledExportCase, clearEnrolledExportCase, tagEnrolledExportCase, wsExportPeople, wsExportIds, wsExportTags,
+  setEnrolledTags,
   readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc } from '../queue/support/firestore-admin';
 import { readFileSync } from 'fs';
+
+const PROGRESS_ROW = 'table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]';
+const cardNames = async (page: Page): Promise<string[]> =>
+  (await page.locator('.participant-panel mat-card.participant-card .participant-name').allTextContents()).map(n => n.trim());
+const nameOrder = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+const nameless = (n: string) => !n || n === 'Unknown';
 
 const panelCard = (page: Page, name: string) =>
   page.locator('.participant-panel mat-card.participant-card').filter({ hasText: name });
@@ -242,5 +249,80 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     await page.getByTestId('wd-button-63').click();
     await expect(page.getByTestId('wd-side-filter-exist'), 'WNE-05: its filter menu opened').toBeVisible();
     await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-05: only Total Enrolled has the Tag filter').toHaveCount(0);
+  });
+
+  test('WNE-06 Total Enrolled opens newest-enrolled first; sorts by date and name; picking the active sort turns it off; other panels have no sort', async ({ page }) => {
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const { moved } = wsExportPeople;   // enrolled now; p0 enrolled 5 days ago
+    const ticked = page.locator('.side-sort-menu .mat-mdc-menu-item.on');
+    const movedAboveP0 = async () => { const n = await cardNames(page); return n.indexOf(moved.name) < n.indexOf(p0Meta.name); };
+    await loginAsWshopAdmin(page);
+    await openTotalEnrolled(page);
+    await expect(panelCard(page, p0Meta.name), 'WNE-06 precondition: p0 is listed').toBeVisible();
+    expect((await cardNames(page)).length, 'WNE-06 precondition: enough people to sort').toBeGreaterThan(2);
+
+    // Default: most recent enrollment first, and the menu says so.
+    await expect.poll(movedAboveP0, { message: 'WNE-06: by default the moved person (today) is above p0 (5 days ago)' }).toBe(true);
+    await page.getByTestId('wd-side-sort-btn').click();
+    await expect(ticked, 'WNE-06: one choice is ticked by default').toHaveCount(1);
+    await expect(page.getByTestId('wd-side-sort-enrolled-new'), 'WNE-06: ...newest first').toHaveClass(/\bon\b/);
+    await page.getByTestId('wd-side-sort-enrolled-old').click();
+    await expect.poll(movedAboveP0, { message: 'WNE-06: oldest first puts p0 above the moved person' }).toBe(false);
+
+    const current = await cardNames(page);
+    const az = [...current.filter(n => !nameless(n))].sort(nameOrder).concat(current.filter(nameless));
+    await page.getByTestId('wd-side-sort-btn').click();
+    await page.getByTestId('wd-side-sort-name-az').click();
+    await expect.poll(() => cardNames(page), { message: 'WNE-06: A to Z, ignoring case, nameless last' }).toEqual(az);
+
+    const za = [...current.filter(n => !nameless(n))].sort((a, b) => -nameOrder(a, b)).concat(current.filter(nameless));
+    await page.getByTestId('wd-side-sort-btn').click();
+    await page.getByTestId('wd-side-sort-name-za').click();
+    await expect.poll(() => cardNames(page), { message: 'WNE-06: Z to A, nameless still last' }).toEqual(za);
+
+    // Picking the active choice again turns sorting off: nothing ticked.
+    await page.getByTestId('wd-side-sort-btn').click();
+    await page.getByTestId('wd-side-sort-name-za').click();
+    await page.getByTestId('wd-side-sort-btn').click();
+    await expect(ticked, 'WNE-06: sorting is off').toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    // Reopening Total Enrolled starts on newest first again.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await openTotalEnrolled(page);
+    await expect.poll(movedAboveP0, { message: 'WNE-06: reopened panel is newest first again' }).toBe(true);
+
+    // Negative control: Exist Users Enrolled has no sort button.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wdash-exist-users-card').click();
+    await expect(panelCard(page, moved.name), 'WNE-06: the Exist Users panel opened').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('wd-side-sort-btn'), 'WNE-06: only Total Enrolled sorts').toHaveCount(0);
+  });
+
+  test('WNE-07 Participant Data shows the enrollment\'s tag names after the platform; none while untagged', async ({ page }) => {
+    const { segment, venue, ghost } = wsExportTags;
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const openP0 = async () => {
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      const p0Row = page.locator(PROGRESS_ROW).filter({ hasText: p0Meta.name }).first();
+      await expect(p0Row, 'WNE-07: p0 has a progress row').toBeVisible({ timeout: 90_000 });
+      await p0Row.click();
+      await expect(page.getByTestId('wdash-pd-platform'), 'WNE-07: Participant Data opened').toBeVisible({ timeout: 30_000 });
+    };
+    await setEnrolledTags(wsIds.ENR_A, null);
+    try {
+      await loginAsWshopAdmin(page);
+      // [NEGATIVE CONTROL] the same person, untagged: Participant Data opens with no tag pills.
+      await openP0();
+      await expect(page.getByTestId('wd-pd-tag'), 'WNE-07: no tags on an untagged enrollment').toHaveCount(0);
+
+      // Stored order venue, dead id, segment: names in that order, the dead id dropped.
+      await setEnrolledTags(wsIds.ENR_A, [venue.id, ghost, segment.id]);
+      await openP0();
+      await expect(page.getByTestId('wd-pd-tag'), 'WNE-07: tag names in stored order, the dead id dropped')
+        .toHaveText([venue.name, segment.name], { timeout: 30_000 });
+    } finally {
+      await setEnrolledTags(wsIds.ENR_A, null);
+    }
   });
 });
