@@ -2291,3 +2291,65 @@ export async function setEnrolledTags(enrolledId: string, tags: string[] | null)
   await admin.firestore().collection('workshop participant enrolled').doc(enrolledId)
     .set({ tags: tags === null ? admin.firestore.FieldValue.delete() : tags }, { merge: true });
 }
+
+// ---------------------------------------------------------------------------------------------------
+// /eiflixhomeconfig Upcoming Workshops, Confirmed column (2026-11-13): it counts the responses, not the number
+// stored on the widget. Two widgets of this run's own, each with a stored `confirmed` that is deliberately
+// wrong, so the column can only pass by counting.
+//   counted: stored 99, two real responses (p0, p1)            → shows 2
+//   empty:   stored 5, one response whose ref is a plain string → shows 0 (neither the column nor View counts it)
+// ---------------------------------------------------------------------------------------------------
+export const wsUpcomingConfirmed = {
+  counted: { id: `${RUN}_hw_conf_a`, title: `HC Confirmed Counted ${RUN}`, stored: 99 },
+  empty: { id: `${RUN}_hw_conf_b`, title: `HC Confirmed Empty ${RUN}`, stored: 5 },
+};
+
+const upcomingResponseId = (widgetId: string, profileId: string) => `${widgetId}_${profileId}`;
+
+export async function seedUpcomingConfirmed(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = admin.firestore.Timestamp.now();
+  const inDays = (d: number) => admin.firestore.Timestamp.fromMillis(Date.now() + d * 86_400_000);
+  const W = wsUpcomingConfirmed;
+  const widget = (w: { id: string; title: string; stored: number }, order: number) =>
+    db.collection('eiflixhomewidgets').doc(w.id).set({
+      docid: w.id, widgettype: 'comingsoon', order, title: w.title, with: 'Coach Count', type: 'Workshop',
+      cost: '0', location: 'Online', totalseats: 50, unlimitedseat: false, confirmed: w.stored,
+      showconfirmedseat: true, show: true, eventdate: inDays(10), ...tag,
+    });
+  const response = (widgetId: string, profileId: string, ref: any) =>
+    db.collection('upcomingworkshopsresponse').doc(upcomingResponseId(widgetId, profileId))
+      .set({ upcomingworkshopref: ref, created: now, profileid: profileId, ...tag });
+  const countedRef = db.collection('eiflixhomewidgets').doc(W.counted.id);
+  await Promise.all([
+    widget(W.counted, 100),
+    widget(W.empty, 101),
+    response(W.counted.id, wsProfileIds.p0, countedRef),
+    response(W.counted.id, wsProfileIds.p1, countedRef),
+    response(W.empty.id, wsProfileIds.p0, `eiflixhomewidgets/${W.empty.id}`),   // a string, not a reference
+  ]);
+}
+
+/** One more real response on the counted widget, as EiFlix would write it (no change to the stored number). */
+export async function addUpcomingResponse(profileId: string): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const W = wsUpcomingConfirmed;
+  await db.collection('upcomingworkshopsresponse').doc(upcomingResponseId(W.counted.id, profileId)).set({
+    upcomingworkshopref: db.collection('eiflixhomewidgets').doc(W.counted.id),
+    created: seed.initAdmin().firestore.Timestamp.now(), profileid: profileId, testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function clearUpcomingConfirmed(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const W = wsUpcomingConfirmed;
+  const ids = [W.counted.id, W.empty.id];
+  const responses = await db.collection('upcomingworkshopsresponse').where('testrunid', '==', RUN).get()
+    .catch(() => ({ docs: [] as any[] }));
+  await Promise.all([
+    ...ids.map(id => db.collection('eiflixhomewidgets').doc(id).delete().catch(() => undefined)),
+    ...responses.docs.filter((d: any) => ids.some(id => d.id.startsWith(`${id}_`))).map((d: any) => d.ref.delete().catch(() => undefined)),
+  ]);
+}
