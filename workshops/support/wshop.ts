@@ -2240,3 +2240,54 @@ export async function clearReferredNewUsers(): Promise<void> {
   await Promise.all([wsReferred.byNew, wsReferred.byNewRef, wsReferred.byMeta, wsReferred.byUnknown]
     .map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)));
 }
+
+// ---------------------------------------------------------------------------------------------------
+// New Users screen (2026-11-12): a tag of this run's own to rename in the Tags dialog, plus one user who
+// carries it and three more tags (so the row shows 3 pills + "+1"). Never the shared seeded segment:
+// campaign-dashboard and workshop-dashboard specs assert that one's name.
+// ---------------------------------------------------------------------------------------------------
+export const wsRenameTag = {
+  id: `${RUN}_nut_rename`,
+  name: `WS Rename Me ${RUN}`,
+  renamed: `WS Renamed ${RUN}`,
+  extras: [
+    { id: `${RUN}_nut_extra1`, name: `WS Extra One ${RUN}` },
+    { id: `${RUN}_nut_extra2`, name: `WS Extra Two ${RUN}` },
+    { id: `${RUN}_nut_extra3`, name: `WS Extra Three ${RUN}` },
+  ],
+  user: { id: `${RUN}_nu_tagged`, name: `NU Tagged ${RUN}` },
+};
+
+export async function seedRenameTag(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  const T = wsRenameTag;
+  const tagDoc = (id: string, name: string) =>
+    db.collection('newusertags').doc(id).set({ docid: id, type: 'newusersegments', name, ...tag });
+  await Promise.all([
+    tagDoc(T.id, T.name),
+    ...T.extras.map(e => tagDoc(e.id, e.name)),
+    db.collection('new_user_data').doc(T.user.id).set({
+      docid: T.user.id, name: T.user.name, email: `${T.user.id}@example.com`, phonenumber: '9999900010', countryCode: '+91',
+      enable: true, created: admin.firestore.Timestamp.now(), tags: [T.id, ...T.extras.map(e => e.id)], ...tag,
+    }),
+  ]);
+}
+
+export async function clearRenameTag(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const T = wsRenameTag;
+  await Promise.all([
+    db.collection('newusertags').doc(T.id).delete(),
+    ...T.extras.map(e => db.collection('newusertags').doc(e.id).delete()),
+    db.collection('new_user_data').doc(T.user.id).delete(),
+  ].map(p => p.catch(() => undefined)));
+}
+
+/** Put tag ids on a seeded enrolled doc, or (null) remove the field again. Workshop dashboard, 2026-11-13. */
+export async function setEnrolledTags(enrolledId: string, tags: string[] | null): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshop participant enrolled').doc(enrolledId)
+    .set({ tags: tags === null ? admin.firestore.FieldValue.delete() : tags }, { merge: true });
+}
