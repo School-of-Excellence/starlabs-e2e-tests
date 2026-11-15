@@ -271,6 +271,14 @@ function initAdmin() {
 
 const TAG = testrunid => ({ testrunid, _testdata: true });
 
+// Baseline OCI infra-status doc (one ready media node). Exported so a spec that drives the doc through
+// other states can restore exactly this (queue/join-livekit-server-wait.spec.ts).
+const OCI_STATUS_BASELINE = (now, testrunid) => ({
+  master: { state: 'running' },
+  media: { instanceStates: { healthy: 1, ready: 1, unhealthy: 0, pending: 0, terminating: 0, total: 1 } },
+  lastUpdated: now, ...TAG(testrunid),
+});
+
 /** Stable doc-id for the queue-generation doc of a run (the variation builders share this). */
 const queueGenDocId = testrunid => `${testrunid}_${QUEUE_ID}`;
 /** Stable doc-id for the SECOND (operator-excluded) queue's generation doc. */
@@ -647,6 +655,15 @@ async function seedReferenceData(db, admin, testrunid) {
     media: { instanceStates: { healthy: 1, unhealthy: 0, pending: 0, terminating: 0, total: 1 } },
     lastUpdated: ctx.now(), ...TAG(testrunid),
   }, { merge: true });
+
+  // OCI_System/instance_status — the OCI twin (InstanceStatusService.getOciStatus()). OCI has been the
+  // active cloud since 2026-08-12, and a room without `mediaProvider` defaults to 'oci' in the join
+  // screen, so /joinroom gates on THIS doc (not AWS_System) for every seeded room. Since 2026-11-14 the
+  // join screen waits for a READY media node (`instanceStates.ready`, written by CheckOciNodeStatus);
+  // `healthy` = VM running only. Baseline = one ready node. queue/join-livekit-server-wait.spec.ts
+  // drives this doc through stopped → running-not-ready → ready and restores this exact baseline.
+  // Same fixed-path singleton rules as the AWS doc above.
+  await db.collection('OCI_System').doc('instance_status').set(OCI_STATUS_BASELINE(ctx.now(), testrunid), { merge: true });
 
   // BIG-06 (FormBasedSubmissionComponent, route /formbasedsubmission) PRECONDITIONS — both in the DEFAULT
   // db (`this.afs`), NOT firestore-forms. The legacy screen reads BOTH unconditionally in ngAfterViewInit:
@@ -1135,7 +1152,7 @@ const SEEDED_COLLECTIONS = [
   'live assignment', 'arena participant',
   'profile_data', 'participantjourneyproduct', 'participantsproduct', 'deliverables',
   'participant mode checklist', 'participantvideoask',
-  'arenavideoask', 'modes', 'journey', 'arena events', 'AWS_System',
+  'arenavideoask', 'modes', 'journey', 'arena events', 'AWS_System', 'OCI_System',
   'user_data', 'users_roles', 'dashboard',
   // BIG-06 default-db preconditions (seedReferenceData): a `delivery forms` template in the DEFAULT db
   // (distinct from the firestore-forms one torn down below — same name, different database handle, each
@@ -1226,7 +1243,7 @@ async function runTeardown(testrunid) {
 // ---------------------------------------------------------------------------
 module.exports = {
   // config + ids
-  cfg, QUEUE_ID, QUEUE_ID_2, FORMS_DB, REF_IDS, DRIVEN_ROUTES, TAG, newTestRunId,
+  cfg, QUEUE_ID, QUEUE_ID_2, FORMS_DB, REF_IDS, DRIVEN_ROUTES, TAG, OCI_STATUS_BASELINE, newTestRunId,
   queueGenDocId, queueGenDocId2, tokenDocId,
   // firebase init (allowlist-guarded — only ever the dedicated test project) + named-DB handle
   initAdmin, getFormsDb, makeCtx,
