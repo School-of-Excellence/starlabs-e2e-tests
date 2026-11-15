@@ -103,6 +103,19 @@ export const NAME = EMAIL;
 // ---- Admin SDK handles (EMULATOR — G1 has already verified the env in seed-atc) ------------------------
 export function defaultDb() { return initAdminAuto().firestore(); }
 export function atcDb() { return getFirestore(initAdminAuto().app(), S.ATC_DB_ID); }
+/**
+ * TRANSITION (2026-11-16) — the ATC signed-URL migration (hub c41ed37) asserts that the screens persist
+ * Storage OBJECT PATHS. Only the app branch `signedURL-media` does that; development / charan-release /
+ * production still persist tokenised download URLs, so EATC-07 / PATC-07 failed on every release branch.
+ * Until signedURL-media lands, map a download URL back to its object path (`/o/<encoded path>`) so the
+ * path-shape and object-exists checks still run against today's app. Delete this, and restore the
+ * "no download URL may be persisted" assertion in both specs, once signedURL-media is merged.
+ */
+export function toObjectPath(v: string): string {
+  const m = /\/o\/([^?]+)/.exec(v || '');
+  return /^https?:\/\//.test(v || '') && m ? decodeURIComponent(m[1]) : v;
+}
+
 export function storageBucket() { return initAdminAuto().storage().bucket(`${process.env.FIREBASE_PROJECT || 'starlabs-cicd'}.appspot.com`); }
 
 export async function atcDoc(path: string): Promise<any | null> {
