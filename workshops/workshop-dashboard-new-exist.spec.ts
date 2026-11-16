@@ -1,6 +1,7 @@
 // workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, the
 // Total Enrolled export's Enrollment Date + Tags columns, the Total Enrolled cards' tag chips + Tag filter
-// (2026-11-12), the Total Enrolled sort and the Participant Data tags (2026-11-13).
+// (2026-11-12), the Total Enrolled sort and the Participant Data tags (2026-11-13), and the enrollment-date range on
+// Total / Exist Users / New Users Enrolled (2026-11-16).
 //
 // Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
 //
@@ -10,7 +11,7 @@
 // The participant-metadata `workshoponly` flag no longer decides either (it used to drive "New").
 //
 // Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist`, `wd-side-enrolled-tag` and
-// `wd-side-tag-filter/-option/-clear`, `wd-side-sort-*` and `wd-pd-tag` landed with these rules,
+// `wd-side-tag-filter/-option/-clear`, `wd-side-sort-*`, `wd-pd-tag` and `wd-side-enrolled-*` landed with these rules,
 // so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this file on app branches without it.
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
@@ -324,5 +325,73 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     } finally {
       await setEnrolledTags(wsIds.ENR_A, null);
     }
+  });
+
+  test('WNE-08 Total, Exist Users and New Users Enrolled filter by enrollment date; either end alone works; reopening clears it', async ({ page }) => {
+    const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+    const enrA: any = await getDoc('workshop participant enrolled', wsIds.ENR_A);          // p0, 5 days ago
+    const enrMoved: any = await getDoc('workshop participant enrolled', wsExportIds.ENR_MOVED);   // moved + NU: now
+    const { moved, nu } = wsExportPeople;
+    await loginAsWshopAdmin(page);
+    // Day strings in the browser's own time zone, as the date inputs read them.
+    const dayOf = (ms: number) => page.evaluate((t) => {
+      const d = new Date(t);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }, ms);
+    await openTotalEnrolled(page);
+    const p0Day = await dayOf(enrA.enrollmentdate.toMillis());
+    const newDay = await dayOf(enrMoved.enrollmentdate.toMillis());
+    expect(p0Day, 'WNE-08 precondition: the two enrollment days differ').not.toBe(newDay);
+    const from = page.getByTestId('wd-side-enrolled-from');
+    const to = page.getByTestId('wd-side-enrolled-to');
+    await expect(page.getByTestId('wd-side-enrolled-range'), 'WNE-08: Total Enrolled has the range').toBeVisible();
+    await expect(page.getByTestId('wd-side-enrolled-clear'), 'WNE-08: no Clear while empty').toHaveCount(0);
+
+    // Total Enrolled: p0's day only.
+    await from.fill(p0Day);
+    await to.fill(p0Day);
+    await expect(panelCard(page, p0Meta.name), 'WNE-08: p0 enrolled that day').toBeVisible();
+    await expect(panelCard(page, moved.name), 'WNE-08: the moved person (today) is out').toHaveCount(0);
+    await expect(panelCard(page, nu.name), 'WNE-08: the new user (today) is out').toHaveCount(0);
+    // From alone: today onwards.
+    await from.fill(newDay);
+    await to.fill('');
+    await expect(panelCard(page, moved.name), 'WNE-08: From alone keeps today').toBeVisible();
+    await expect(panelCard(page, nu.name)).toBeVisible();
+    await expect(panelCard(page, p0Meta.name), 'WNE-08: ...and drops 5 days ago').toHaveCount(0);
+    await page.getByTestId('wd-side-enrolled-clear').click();
+    await expect(from, 'WNE-08: Clear empties From').toHaveValue('');
+    await expect(panelCard(page, p0Meta.name), 'WNE-08: Clear brings everyone back').toBeVisible();
+
+    // Reopening the panel starts without a range.
+    await from.fill(newDay);
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await openTotalEnrolled(page);
+    await expect(page.getByTestId('wd-side-enrolled-from'), 'WNE-08: reopened → no range').toHaveValue('');
+
+    // Exist Users Enrolled: p0's day keeps p0, drops the moved person.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wdash-exist-users-card').click();
+    await expect(panelCard(page, moved.name), 'WNE-08: the Exist Users panel opened').toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('wd-side-enrolled-from').fill(p0Day);
+    await page.getByTestId('wd-side-enrolled-to').fill(p0Day);
+    await expect(panelCard(page, p0Meta.name), 'WNE-08: Exist Users keeps p0').toBeVisible();
+    await expect(panelCard(page, moved.name), 'WNE-08: ...and drops the moved person').toHaveCount(0);
+
+    // New Users Enrolled: today keeps the new user, p0's day drops them.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wd-on-metric-click-19').click();
+    await expect(panelCard(page, nu.name), 'WNE-08: the New Users Enrolled panel lists the new user').toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('wd-side-enrolled-from').fill(newDay);
+    await expect(panelCard(page, nu.name), 'WNE-08: enrolled today → kept').toBeVisible();
+    await page.getByTestId('wd-side-enrolled-from').fill(p0Day);
+    await page.getByTestId('wd-side-enrolled-to').fill(p0Day);
+    await expect(panelCard(page, nu.name), 'WNE-08: not enrolled on that day → out').toHaveCount(0);
+
+    // Negative control: Total Started has no enrollment range.
+    await page.getByTestId('wd-close-participant-panel-61').click();
+    await page.getByTestId('wd-on-metric-click-16').click();
+    await expect(page.getByTestId('wd-close-participant-panel-61'), 'WNE-08: the Total Started panel opened').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('wd-side-enrolled-range'), 'WNE-08: only the three enrolled panels have it').toHaveCount(0);
   });
 });
