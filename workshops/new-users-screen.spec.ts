@@ -170,13 +170,13 @@ test.describe('Workshops — new users screen: columns, tag rename, search, sele
     await loginAsWshopAdmin(page);
     await openScreen(page, wsAddNames.nuAlpha);
     const count = page.getByTestId('new-result-count');
-    await expect(count, 'NUS-04: the count reads "N of M users"').toHaveText(/^\s*\d+ of \d+ users\s*$/);
+    await expect(count, 'NUS-04: the count reads "N of M users"').toHaveText(/^\s*[\d,]+ of [\d,]+ users\s*$/);
 
     const search = page.getByTestId('new-search-input');
     await search.fill(wsAddNames.nuCharlie);
     await expect(page.locator(ROW).filter({ hasText: wsAddNames.nuCharlie }), 'NUS-04: the match stays').toHaveCount(1);
     await expect(page.locator(ROW).filter({ hasText: wsAddNames.nuAlpha }), 'NUS-04: others go').toHaveCount(0);
-    await expect(count, 'NUS-04: one shown').toHaveText(/^\s*1 of \d+ users\s*$/);
+    await expect(count, 'NUS-04: one shown').toHaveText(/^\s*1 of [\d,]+ users\s*$/);
     await page.getByTestId('new-search-clear').click();
     await expect(search, 'NUS-04: the clear button empties the search').toHaveValue('');
     await expect(page.locator(ROW).filter({ hasText: wsAddNames.nuAlpha }), 'NUS-04: everyone is back').toHaveCount(1);
@@ -298,7 +298,7 @@ test.describe('Workshops — new users screen: columns, tag rename, search, sele
       const row = page.locator(ROW).filter({ hasText: T.user.name });
       await page.getByTestId('new-search-input').fill(T.name);
       await expect(row, 'NUS-08: the old tag name finds the user').toHaveCount(1);
-      await expect(page.getByTestId('new-result-count'), 'NUS-08: one match').toHaveText(/^\s*1 of \d+ users\s*$/);
+      await expect(page.getByTestId('new-result-count'), 'NUS-08: one match').toHaveText(/^\s*1 of [\d,]+ users\s*$/);
 
       await page.getByTestId('new-open-tags-manager-20').click();
       await page.getByTestId('atd-toggle-4').filter({ hasText: T.name }).click();
@@ -310,7 +310,7 @@ test.describe('Workshops — new users screen: columns, tag rename, search, sele
       // The search text is unchanged; the user no longer carries a tag by that name.
       await expect(page.getByTestId('new-search-input')).toHaveValue(T.name);
       await expect(row, 'NUS-08: the old name no longer matches').toHaveCount(0, { timeout: 30_000 });
-      await expect(page.getByTestId('new-result-count'), 'NUS-08: the count follows').toHaveText(/^\s*0 of \d+ users\s*$/);
+      await expect(page.getByTestId('new-result-count'), 'NUS-08: the count follows').toHaveText(/^\s*0 of [\d,]+ users\s*$/);
       await page.getByTestId('new-search-input').fill(T.renamed);
       await expect(row, 'NUS-08: the new name does').toHaveCount(1);
     } finally {

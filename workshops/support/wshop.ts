@@ -2370,3 +2370,109 @@ export async function clearSecondNewUser(): Promise<void> {
   await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsSecondNewUserEnrolledId)
     .delete().catch(() => undefined);
 }
+
+// =================================================================================================
+// 2026-11-16 — /newusersprofile redesign (new-users-redesign.spec.ts). PRECONDITION writes + TEST-side oracles.
+// =================================================================================================
+
+const WS_MMM = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The local calendar day `seed-workshops.js at(offset)` used, as a Date at 09:00 (same setDate arithmetic). */
+export function wsSeedDate(dayOffset: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+/** 'd MMM yyyy' ("14 Nov 2026"): how the redesigned Created panel shows a day back, and a format it reads. */
+export function wsDayDMY(d: Date): string {
+  return `${d.getDate()} ${WS_MMM[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** The seeded day `at(offset)` in 'd MMM yyyy'. WS-56 (moved to new-users-redesign.spec.ts) types it. */
+export function wsSeedDayDMY(dayOffset: number): string {
+  return wsDayDMY(wsSeedDate(dayOffset));
+}
+
+/**
+ * A crowd of extra new users, created 30+ days ago — older than every other row, so the seeded A/B/C and the
+ * "now" rows stay on page 1 — giving the list a second page of 20 (cross-page selection, the pager).
+ * Run-tagged, and removed by id in clearNewUserCrowd.
+ */
+export const wsCrowd = {
+  count: 22,
+  ids: Array.from({ length: 22 }, (_, i) => `${RUN}_nu_crowd_${String(i + 1).padStart(2, '0')}`),
+  names: Array.from({ length: 22 }, (_, i) => `NU Crowd ${String(i + 1).padStart(2, '0')} ${RUN}`),
+  prefix: 'NU Crowd ',
+};
+
+export async function seedNewUserCrowd(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  await Promise.all(wsCrowd.ids.map((id, i) => db.collection('new_user_data').doc(id).set({
+    docid: id, name: wsCrowd.names[i], email: `${id}@example.com`, phonenumber: '9999900100', countryCode: '+91',
+    enable: true, created: admin.firestore.Timestamp.fromDate(wsSeedDate(-30 - i)), tags: [], ...tag,
+  })));
+}
+
+export async function clearNewUserCrowd(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(wsCrowd.ids.map(id => db.collection('new_user_data').doc(id).delete().catch(() => undefined)));
+}
+
+/** A new user who joined as a subscriber (`subscriber: true`): Referred by shows the Subscriber chip. Created now. */
+export const wsSubscriber = { id: `${RUN}_nu_subscriber`, name: `NU Subscriber ${RUN}` };
+
+export async function seedSubscriberNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsSubscriber.id).set({
+    docid: wsSubscriber.id, name: wsSubscriber.name, email: `${wsSubscriber.id}@example.com`, phonenumber: '9999900011',
+    countryCode: '+91', enable: true, created: admin.firestore.Timestamp.now(), tags: [], subscriber: true,
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function clearSubscriberNewUser(): Promise<void> {
+  await seed.initAdmin().firestore().collection('new_user_data').doc(wsSubscriber.id).delete().catch(() => undefined);
+}
+
+/** One `new_user_data` row as the TEST reads it (oracle input; never a value the test wrote for the assertion). */
+export interface WsNewUserRow { id: string; name: string; email: string; created: Date | null; moved: boolean; tags: string[] }
+
+/** Every `new_user_data` row in the emulator — the population the screen lists (other runs' rows included). */
+export async function newUserRows(): Promise<WsNewUserRow[]> {
+  const snap = await seed.initAdmin().firestore().collection('new_user_data').get();
+  return snap.docs.map((d: any) => {
+    const x = d.data() || {};
+    return {
+      id: d.id, name: (x.name || '').toString(), email: (x.email || '').toString(),
+      created: asDate(x.created), moved: x.movedtoexist === true, tags: Array.isArray(x.tags) ? x.tags : [],
+    };
+  });
+}
+
+/** Ids of the `new_user_data` people enrolled in a workshop (by workshopref) — the Workshops filter's population. */
+export async function newUserIdsEnrolledIn(workshopId: string): Promise<string[]> {
+  const db = seed.initAdmin().firestore();
+  const ref = db.collection('workshopconfiguration').doc(workshopId);
+  const [enr, users] = await Promise.all([
+    db.collection('workshop participant enrolled').where('workshopref', '==', ref).get(),
+    db.collection('new_user_data').get(),
+  ]);
+  const ids = new Set(users.docs.map((d: any) => d.id));
+  return [...new Set(enr.docs.map((d: any) => (d.data()?.profileid || '').toString()))].filter((id: string) => ids.has(id)) as string[];
+}
+
+/** How many workshops the Funnel-only list offers (evergreenWorkshop == true). */
+export async function countFunnelWorkshops(): Promise<number> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').where('evergreenWorkshop', '==', true).get();
+  return snap.size;
+}
+
+/** Names of the tags the New Users screen offers (newusersegments with a name), and their count. */
+export async function newUserSegmentTags(): Promise<{ id: string; name: string }[]> {
+  const snap = await seed.initAdmin().firestore().collection('newusertags').where('type', '==', 'newusersegments').get();
+  return snap.docs.map((d: any) => ({ id: d.id, name: (d.data()?.name || '').toString() })).filter((t: any) => t.name);
+}
