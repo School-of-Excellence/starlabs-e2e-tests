@@ -1,7 +1,7 @@
 // workshop-dashboard-new-exist.spec.ts — the side panel's New / Exist filter, the "New" tag, the
 // Total Enrolled export's Enrollment Date + Tags columns, the Total Enrolled cards' tag chips + Tag filter
 // (2026-11-12), the Total Enrolled sort and the Participant Data tags (2026-11-13), and the enrollment-date range on
-// Total / Exist Users / New Users Enrolled (2026-11-16).
+// Total / Exist Users / New Users Enrolled, and the Tag filter on Exist Users / New Users Enrolled (2026-11-16).
 //
 // Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
 //
@@ -23,7 +23,7 @@ import { test, expect, Page } from '@playwright/test';
 import {
   wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, stampP0Workshoponly,
   seedEnrolledExportCase, clearEnrolledExportCase, tagEnrolledExportCase, wsExportPeople, wsExportIds, wsExportTags,
-  setEnrolledTags,
+  setEnrolledTags, enrollSecondNewUser, clearSecondNewUser, wsAddNames,
   readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -243,13 +243,14 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     await expect(panelCard(page, nu.name)).toBeVisible();
     await expect(panelCard(page, moved.name)).toBeVisible();
 
-    // Negative control: Exist Users Enrolled has the same filter menu, without the Tag filter.
+    // Negative control: Total Started has the same filter menu, without the Tag filter. (Exist Users Enrolled and
+    // New Users Enrolled gained it on 2026-11-16 — WNE-09.)
     await page.getByTestId('wd-close-participant-panel-61').click();
-    await page.getByTestId('wdash-exist-users-card').click();
-    await expect(panelCard(page, moved.name), 'WNE-05: the Exist Users panel opened').toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('wd-on-metric-click-16').click();
+    await expect(page.getByTestId('wd-close-participant-panel-61'), 'WNE-05: the Total Started panel opened').toBeVisible({ timeout: 30_000 });
     await page.getByTestId('wd-button-63').click();
     await expect(page.getByTestId('wd-side-filter-exist'), 'WNE-05: its filter menu opened').toBeVisible();
-    await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-05: only Total Enrolled has the Tag filter').toHaveCount(0);
+    await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-05: no Tag filter there').toHaveCount(0);
   });
 
   test('WNE-06 Total Enrolled opens newest-enrolled first; sorts by date and name; picking the active sort turns it off; other panels have no sort', async ({ page }) => {
@@ -393,5 +394,60 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     await page.getByTestId('wd-on-metric-click-16').click();
     await expect(page.getByTestId('wd-close-participant-panel-61'), 'WNE-08: the Total Started panel opened').toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('wd-side-enrolled-range'), 'WNE-08: only the three enrolled panels have it').toHaveCount(0);
+  });
+
+  test('WNE-09 Exist Users Enrolled and New Users Enrolled filter by enrollment tag too; reopening clears it', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const { segment, venue, ghost } = wsExportTags;
+    // Exist side: the moved person carries Segment (+ a dead id); p0 is untagged.
+    // New side: NU carries Segment + Venue; a second enrolled new user (NU Bravo) carries Venue only.
+    await tagEnrolledExportCase([ghost, segment.id]);
+    await enrollSecondNewUser([venue.id]);
+    try {
+      const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+      await loginAsWshopAdmin(page);
+      await openTotalEnrolled(page);
+      await page.getByTestId('wd-close-participant-panel-61').click();
+
+      // Exist Users Enrolled — the shared filter menu now has Tags.
+      await page.getByTestId('wdash-exist-users-card').click();
+      await expect(panelCard(page, moved.name), 'WNE-09: Exist Users opened').toBeVisible({ timeout: 30_000 });
+      await expect(panelCard(page, p0Meta.name), 'WNE-09: p0 is listed').toBeVisible();
+      await page.getByTestId('wd-button-63').click();
+      await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-09: Exist Users has the Tag filter').toBeVisible({ timeout: 30_000 });
+      const option = page.getByTestId('wd-side-tag-option');
+      await expect(option, 'WNE-09: only the tags of people in this panel (the moved person); dead ids offer nothing')
+        .toHaveText([segment.name]);
+      await option.filter({ hasText: segment.name }).click();
+      await expect(panelCard(page, moved.name), 'WNE-09: the tagged person stays').toBeVisible();
+      await expect(panelCard(page, p0Meta.name), 'WNE-09: the untagged one goes').toHaveCount(0);
+      await page.getByTestId('wd-side-tag-clear').click();
+      await page.keyboard.press('Escape');
+      await expect(panelCard(page, p0Meta.name), 'WNE-09: Clear brings p0 back').toBeVisible();
+
+      // Reopening starts with nothing ticked.
+      await page.getByTestId('wd-button-63').click();
+      await option.filter({ hasText: segment.name }).click();
+      await page.keyboard.press('Escape');
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wdash-exist-users-card').click();
+      await expect(panelCard(page, p0Meta.name), 'WNE-09: reopened → unfiltered').toBeVisible({ timeout: 30_000 });
+
+      // New Users Enrolled — its own filter menu gets the same Tags section.
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wd-on-metric-click-19').click();
+      await expect(panelCard(page, nu.name), 'WNE-09: New Users Enrolled opened').toBeVisible({ timeout: 30_000 });
+      await expect(panelCard(page, wsAddNames.nuBravo), 'WNE-09: the second new user is listed').toBeVisible();
+      await page.getByTestId('wd-button-65').click();
+      await expect(page.getByTestId('wd-side-tag-filter'), 'WNE-09: New Users Enrolled has the Tag filter').toBeVisible({ timeout: 30_000 });
+      await expect(option, 'WNE-09: the new users\' tags, A to Z').toHaveText([segment.name, venue.name]);
+      await option.filter({ hasText: segment.name }).click();
+      await expect(panelCard(page, nu.name), 'WNE-09: Segment keeps NU').toBeVisible();
+      await expect(panelCard(page, wsAddNames.nuBravo), 'WNE-09: ...and drops NU Bravo (Venue only)').toHaveCount(0);
+      await option.filter({ hasText: venue.name }).click();
+      await expect(panelCard(page, wsAddNames.nuBravo), 'WNE-09: any ticked tag matches').toBeVisible();
+    } finally {
+      await clearSecondNewUser();
+    }
   });
 });

@@ -2353,3 +2353,20 @@ export async function clearUpcomingConfirmed(): Promise<void> {
     ...responses.docs.filter((d: any) => ids.some(id => d.id.startsWith(`${id}_`))).map((d: any) => d.ref.delete().catch(() => undefined)),
   ]);
 }
+
+/** A second enrolled NEW user on the dashboard workshop (NU Bravo), with the given tag ids. Workshop dashboard
+ *  Tag filter on New Users Enrolled (2026-11-16): gives the filter someone to drop. */
+export const wsSecondNewUserEnrolledId = `${RUN}_enr_nub`;
+export async function enrollSecondNewUser(tags: string[]): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('workshop participant enrolled').doc(wsSecondNewUserEnrolledId).set({
+    docid: wsSecondNewUserEnrolledId, profileid: wsAddIds.NU_B, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsIds.W_DASH),
+    enrollmentdate: admin.firestore.Timestamp.now(), tags, testrunid: RUN, _testdata: true,
+  });
+}
+export async function clearSecondNewUser(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsSecondNewUserEnrolledId)
+    .delete().catch(() => undefined);
+}
