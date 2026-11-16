@@ -14,17 +14,23 @@
 //   · Manage tags: clicking a tag renames it. Only the tag's name changes; its id, and every user carrying
 //     it, stay. An empty name or another tag's name (any case) is refused, and nothing is written.
 //   · Ticking rows opens a bar UNDER the table; the table keeps its width.
+//   · Review fixes (2026-11-13, NUS-06..11): Escape on the editor's buttons cancels (not the dialog); one rename
+//     at a time; the search re-runs when a tag is renamed; the search matches the date as the column shows it;
+//     Default keeps a sort on Moved On (not a chooser column); workshop pills carry their full title.
 import { test, expect, Page } from '@playwright/test';
 import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetNewUserTags,
   wsReferred, seedReferredNewUsers, clearReferredNewUsers, alignWorkshopMetadataNames, wsMetaNames,
   wsRenameTag, seedRenameTag, clearRenameTag,
+  seedConvertedNewUser, clearConvertedNewUser, seedEnrolledExportCase, clearEnrolledExportCase,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, pollUntil } from '../queue/support/firestore-admin';
 
 const ROW = 'table.users-table tr.mat-mdc-row, table.users-table tr[mat-row]';
 const HEADERS = 'table.users-table th.mat-mdc-header-cell:not(.select-col)';
+const RUN = process.env.WSHOP_RUNID || 'wshop';
+const header = (page: Page, name: string) => page.locator('table.users-table th.mat-mdc-header-cell').filter({ hasText: name });
 
 async function openScreen(page: Page, waitFor: string): Promise<void> {
   await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
@@ -210,5 +216,182 @@ test.describe('Workshops — new users screen: columns, tag rename, search, sele
 
     await page.getByTestId('new-clear-selection-26').click();
     await expect(bar, 'NUS-05: clearing the selection closes the bar').toHaveCount(0);
+  });
+
+  test('NUS-06 Escape on the rename buttons cancels the edit, not the dialog', async ({ page }) => {
+    const T = wsRenameTag;
+    await seedRenameTag();
+    try {
+      await loginAsWshopAdmin(page);
+      await openScreen(page, T.user.name);
+      await page.getByTestId('new-open-tags-manager-20').click();
+      const chip = page.getByTestId('atd-toggle-4').filter({ hasText: T.name });
+      await expect(chip, 'NUS-06: the tag is listed').toBeVisible({ timeout: 20_000 });
+      const input = page.getByTestId('atd-rename-input');
+
+      // A refused save leaves the editor open with focus on ✓; Escape from there must only cancel.
+      await chip.click();
+      await input.fill(wsAddNames.segment);
+      await page.getByTestId('atd-rename-save').click();
+      await expect(page.getByTestId('atd-rename-error'), 'NUS-06 precondition: the save was refused').toBeVisible();
+      await page.getByTestId('atd-rename-save').focus();
+      await page.keyboard.press('Escape');
+      await expect(input, 'NUS-06: Escape on ✓ closes the editor').toHaveCount(0);
+      await expect(page.getByTestId('atd-rename-error'), 'NUS-06: ...and its error').toHaveCount(0);
+      await expect(page.getByTestId('atd-cancel-1'), 'NUS-06: ...but the dialog stays open').toBeVisible();
+
+      // Same from ✕.
+      await chip.click();
+      await page.getByTestId('atd-rename-cancel').focus();
+      await page.keyboard.press('Escape');
+      await expect(input, 'NUS-06: Escape on ✕ closes the editor').toHaveCount(0);
+      await expect(page.getByTestId('atd-cancel-1'), 'NUS-06: ...and the dialog stays open').toBeVisible();
+      expect((await getDoc('newusertags', T.id) as any)?.name, 'NUS-06: nothing was written').toBe(T.name);
+    } finally {
+      await clearRenameTag();
+    }
+  });
+
+  test('NUS-07 while a rename is saving, clicking another tag does nothing', async ({ page }) => {
+    const T = wsRenameTag;
+    await seedRenameTag();
+    try {
+      await loginAsWshopAdmin(page);
+      await openScreen(page, T.user.name);
+      await page.getByTestId('new-open-tags-manager-20').click();
+      const chip = (name: string) => page.getByTestId('atd-toggle-4').filter({ hasText: name });
+      await expect(chip(T.name), 'NUS-07: the tag is listed').toBeVisible({ timeout: 20_000 });
+      const input = page.getByTestId('atd-rename-input');
+      await chip(T.name).click();
+      await input.fill(T.renamed);
+
+      // Hold the write on its way to the server, so the save is still running when the other tag is clicked.
+      await page.route('**/google.firestore.v1.Firestore/Write/**', async route => {
+        await new Promise(r => setTimeout(r, 3_000));
+        await route.continue().catch(() => undefined);
+      });
+      try {
+        await input.press('Enter');
+        await expect(input, 'NUS-07 precondition: the save is in flight (the editor is locked)').toBeDisabled();
+        await chip(T.extras[0].name).click({ force: true });
+        await expect(input, 'NUS-07: the editor still holds the first rename').toHaveValue(T.renamed);
+      } finally {
+        await page.unroute('**/google.firestore.v1.Firestore/Write/**');
+      }
+      await pollUntil(() => getDoc('newusertags', T.id), (d: any) => d?.name === T.renamed,
+        { label: 'NUS-07: the first rename lands', timeoutMs: 30_000 });
+      // Had the click opened the other tag's editor, it would still be open now.
+      await expect(input, 'NUS-07: no second editor was opened').toHaveCount(0);
+      await expect(chip(T.extras[0].name), 'NUS-07: the other tag is untouched').toBeVisible();
+      expect((await getDoc('newusertags', T.extras[0].id) as any)?.name, 'NUS-07: ...in storage too').toBe(T.extras[0].name);
+    } finally {
+      await clearRenameTag();
+    }
+  });
+
+  test('NUS-08 a search on a tag name follows a rename without retyping', async ({ page }) => {
+    const T = wsRenameTag;
+    await seedRenameTag();
+    try {
+      await loginAsWshopAdmin(page);
+      await openScreen(page, T.user.name);
+      const row = page.locator(ROW).filter({ hasText: T.user.name });
+      await page.getByTestId('new-search-input').fill(T.name);
+      await expect(row, 'NUS-08: the old tag name finds the user').toHaveCount(1);
+      await expect(page.getByTestId('new-result-count'), 'NUS-08: one match').toHaveText(/^\s*1 of \d+ users\s*$/);
+
+      await page.getByTestId('new-open-tags-manager-20').click();
+      await page.getByTestId('atd-toggle-4').filter({ hasText: T.name }).click();
+      await page.getByTestId('atd-rename-input').fill(T.renamed);
+      await page.getByTestId('atd-rename-input').press('Enter');
+      await expect(page.getByTestId('atd-rename-input'), 'NUS-08: renamed').toHaveCount(0, { timeout: 30_000 });
+      await page.getByTestId('atd-cancel-1').click();
+
+      // The search text is unchanged; the user no longer carries a tag by that name.
+      await expect(page.getByTestId('new-search-input')).toHaveValue(T.name);
+      await expect(row, 'NUS-08: the old name no longer matches').toHaveCount(0, { timeout: 30_000 });
+      await expect(page.getByTestId('new-result-count'), 'NUS-08: the count follows').toHaveText(/^\s*0 of \d+ users\s*$/);
+      await page.getByTestId('new-search-input').fill(T.renamed);
+      await expect(row, 'NUS-08: the new name does').toHaveCount(1);
+    } finally {
+      await clearRenameTag();
+    }
+  });
+
+  test('NUS-09 searching the Created date as the column shows it finds the row', async ({ page }) => {
+    await resetNewUserTags();
+    await loginAsWshopAdmin(page);
+    await openScreen(page, wsAddNames.nuAlpha);
+    const alpha = page.locator(ROW).filter({ hasText: wsAddNames.nuAlpha });
+    const shown = ((await alpha.locator('td.nowrap-cell').first().textContent()) || '').trim();
+    const day = shown.split(',')[0].trim();                       // e.g. "15 Nov 2026"
+    expect(day, `NUS-09 precondition: the column shows "d MMM yyyy, time". Got "${shown}"`).toMatch(/^\d{1,2} [A-Z][a-z]{2} \d{4}$/);
+    await page.getByTestId('new-search-input').fill(day);
+    await expect(alpha, 'NUS-09: the shown date finds the row').toHaveCount(1);
+    // Bravo was created the day before Alpha (seed at(-2) vs at(-1)).
+    await expect(page.locator(ROW).filter({ hasText: wsAddNames.nuBravo }), 'NUS-09: another day does not match').toHaveCount(0);
+  });
+
+  test('NUS-10 Default keeps a sort on Moved On, but drops a sort on a column it hides', async ({ page }) => {
+    await resetNewUserTags();
+    await seedConvertedNewUser();
+    try {
+      await loginAsWshopAdmin(page);
+      await openScreen(page, wsAddNames.nuAlpha);
+      await page.getByTestId('new-toggle-converted-filter-18').click({ position: { x: 14, y: 22 } });
+      await page.getByTestId('new-set-converted-filter-converted').click();
+      await expect(header(page, 'Moved On'), 'NUS-10: Converted shows Moved On').toHaveCount(1);
+
+      const pickDefault = async () => {
+        await page.getByTestId('new-columns-btn').click();
+        await page.getByTestId('new-columns-reset').click();
+        await page.keyboard.press('Escape');
+      };
+      const statusOn = async () => {
+        await page.getByTestId('new-columns-btn').click();
+        await page.getByTestId('new-column-status').click();
+        await page.keyboard.press('Escape');
+      };
+
+      // Sorted by Moved On (still on screen after Default) → the sort stays.
+      await statusOn();
+      await header(page, 'Moved On').click();
+      await expect(header(page, 'Moved On'), 'NUS-10: sorted by Moved On').toHaveAttribute('aria-sort', 'ascending');
+      await pickDefault();
+      await expect(header(page, 'Moved On'), 'NUS-10: Default keeps the Moved On sort').toHaveAttribute('aria-sort', 'ascending');
+
+      // [NEGATIVE CONTROL] sorted by Status, which Default hides → the sort goes.
+      await statusOn();
+      await header(page, 'Status').click();
+      await expect(header(page, 'Status'), 'NUS-10: sorted by Status').toHaveAttribute('aria-sort', 'ascending');
+      await pickDefault();
+      await expect(header(page, 'Status'), 'NUS-10: Default hides Status').toHaveCount(0);
+      await expect(page.locator('table.users-table th[aria-sort="ascending"], table.users-table th[aria-sort="descending"]'),
+        'NUS-10: ...and its sort with it').toHaveCount(0);
+    } finally {
+      await clearConvertedNewUser();
+    }
+  });
+
+  test('NUS-11 workshop pills carry their full title', async ({ page }) => {
+    const title = `Dashboard Workshop ${RUN}`;
+    await seedEnrolledExportCase();   // enrols NU Alpha in the dashboard workshop
+    try {
+      await loginAsWshopAdmin(page);
+      await openScreen(page, wsAddNames.nuAlpha);
+      await page.getByTestId('new-button-9').click();
+      // The dashboard workshop is not a funnel workshop: show all workshops first.
+      await page.getByTestId('new-change-set-funnel-only-12').locator('button').click();
+      await page.getByTestId('new-toggle-workshop-select-15').filter({ hasText: title }).click();
+      await page.keyboard.press('Escape');
+
+      const pill = page.locator(ROW).filter({ hasText: wsAddNames.nuAlpha }).locator('.workshop-pill');
+      await expect(pill, 'NUS-11: the Workshop column names the workshop').toHaveText(title, { timeout: 30_000 });
+      await expect(pill, 'NUS-11: with the full title on hover').toHaveAttribute('title', title);
+      // [NEGATIVE CONTROL] someone not enrolled there is filtered out.
+      await expect(page.locator(ROW).filter({ hasText: wsAddNames.nuCharlie }), 'NUS-11: not enrolled → not listed').toHaveCount(0);
+    } finally {
+      await clearEnrolledExportCase();
+    }
   });
 });
