@@ -527,6 +527,40 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     expect(page.getByTestId('jchd-ov-plan-cell')).toBeTruthy();
     expect(page.getByTestId('jchd-ov-health-total')).toBeTruthy();
     expect(page.getByTestId('jchd-ov-ah-needsattention-combined')).toBeTruthy();
+    // Overall drill buttons (sales per journey + totals, health states, A&H source pills / cells / minis) — 2026-11-18 hooks
+    expect(page.getByTestId('jchd-ov-ahcell-critical-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-critical-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-critical-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-critical-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-liked-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-liked-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-liked-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-liked-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-opportunity-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-opportunity-both')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-opportunity-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-opportunity-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-tagged-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-tagged-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahcell-tagged-res')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahmini-critattn')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahmini-positive')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahmini-unflagged')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahsrc-ask')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ahsrc-love')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-atrisk')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-critical')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-happy')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-neutral')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-unassessed')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-unhappy')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-add')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-all')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-new')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-tot-add')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-tot-new')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-tot-up')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-up')).toBeTruthy();
   });
 
   // ---- hooks no case drives yet ----
