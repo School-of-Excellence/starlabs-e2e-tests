@@ -294,4 +294,13 @@ test.describe('Journey — Delivery dashboard funnel + Ongoing-by-product strip 
     const mix = page.getByTestId('ddc-stagemix').and(page.locator(`[aria-label*="Ongoing 5, Done"]`));
     await expect(mix.first(), 'DDC-FN-02: a bar reads "Ongoing 5" — the run product\'s five ongoing PPs').toBeAttached({ timeout: 60_000 });
   });
+
+  test.fixme('DDC-ADDR3 stage-mix segments (open the card funnel modal per stage) addressable (deferred behavioral)', async ({ page }) => {
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('ddc-stagemix-awaiting')).toBeTruthy();
+    expect(page.getByTestId('ddc-stagemix-initiated')).toBeTruthy();
+    expect(page.getByTestId('ddc-stagemix-started')).toBeTruthy();
+    expect(page.getByTestId('ddc-stagemix-ongoing')).toBeTruthy();
+    expect(page.getByTestId('ddc-stagemix-completed')).toBeTruthy();
+  });
 });
