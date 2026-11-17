@@ -196,11 +196,11 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
     await expect(panelCard(page, p0Meta.name).getByTestId('wd-side-enrolled-tag'), 'WNE-04: no tags → no chips')
       .toHaveCount(0);
 
-    // Negative control: Exist Users Enrolled lists the same moved person, without chips.
+    // Negative control: Exist Users Enrolled lists the same moved person, without the Total Enrolled chips.
     await page.getByTestId('wd-close-participant-panel-61').click();
     await page.getByTestId('wdash-exist-users-card').click();
     await expect(panelCard(page, moved.name), 'WNE-04: the moved person is in Exist Users').toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('wd-side-enrolled-tag'), 'WNE-04: only Total Enrolled shows tag chips').toHaveCount(0);
+    await expect(page.getByTestId('wd-side-enrolled-tag'), 'WNE-04: Exist Users never draws the Total Enrolled chips (it has its own hook since 2026-11-17, WNE-10)').toHaveCount(0);
   });
 
   test('WNE-05 Total Enrolled filters by enrolment tag, together with New / Exist; other panels have no Tag filter', async ({ page }) => {
