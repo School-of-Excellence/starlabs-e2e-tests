@@ -2610,3 +2610,93 @@ export async function cleanMailWorld(): Promise<void> {
     await db.collection('workshopconfiguration').doc(id).delete().catch(() => { });
   }
 }
+
+// =================================================================================================
+// 2026-11-17 — Share Claimed side panel: "Referred: <names>" (was "Enrolled via code: ..."), WDL-02 in
+// workshop-dashboard-side-chips.spec.ts. Share Clicked / Share Claimed only render on an EVERGREEN workshop
+// (setupWorkshopReferralSnapshot runs only then), so this world has its own evergreen workshop and never
+// touches W_DASH or the WS-49 evergreen world.
+//
+//   workshopreferral (workshopref == W_referral):
+//     REF_USED   p0, claimed 2, code USED   → Share Claimed; NU_A + p2 enrolled with this code
+//     REF_IDLE   p1, claimed 1, code IDLE   → Share Claimed; NOBODY enrolled with it (negative control)
+//     REF_CLICK  p2, claimed 0              → Share Clicked only (never a Share Claimed card)
+//   workshop participant enrolled (workshopref == W_referral). The app lists the referred people in its
+//   snapshot order (doc id), so the ids are numbered to fix that order:
+//     ENR_0_SELF   p0  code USED   — the sharer used their own code: must NOT be listed
+//     ENR_1_NU     NU_A code USED  — a still-new user: name from new_user_data
+//     ENR_2_P2     p2  code USED   — listed once...
+//     ENR_3_P2DUP  p2  code USED   — ...even with a second enrolled doc (dedupe)
+//     ENR_4_ELSE   p1  code ELSE   — a code no sharer owns: listed under nobody
+// PRECONDITION writes only; clearReferralWorld removes every doc by id. No ATC collection is touched.
+// =================================================================================================
+export const wsReferral = {
+  WORKSHOP: `${RUN}_W_referral`,
+  codes: { used: `E2EREF-USED-${RUN}`, idle: `E2EREF-IDLE-${RUN}`, elsewhere: `E2EREF-ELSE-${RUN}` },
+  refs: { used: `${RUN}_wref_used`, idle: `${RUN}_wref_idle`, click: `${RUN}_wref_click` },
+  enrolled: {
+    self: `${RUN}_wref_enr_0_self`,
+    nu: `${RUN}_wref_enr_1_nu`,
+    p2: `${RUN}_wref_enr_2_p2`,
+    p2dup: `${RUN}_wref_enr_3_p2dup`,
+    elsewhere: `${RUN}_wref_enr_4_else`,
+  },
+};
+
+export async function seedReferralWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+  const R = wsReferral;
+
+  const wsRef = db.collection('workshopconfiguration').doc(R.WORKSHOP);
+  await wsRef.set({
+    docid: R.WORKSHOP, active: true, workshopcompleted: false, categorybased: false,
+    atcmodel: null, created: ago(10), payment: false,
+    evergreenWorkshop: true,
+    evergreenWorkshopMeta: { workshopDays: 7 },
+    detailpage: {
+      type: 'workshop', title: `Referral Workshop ${RUN}`, shortdescription: 'seeded evergreen (referrals)',
+      workshopStartDate: ago(10), workshopEndDate: ago(1),
+      registrationStartDate: ago(20), registrationEndDate: ago(11),
+    },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_wref_ch0`, heading: 'Referral Module', subheading: 'One',
+      challenges: [{ type: 'video', challengeid: `${RUN}_wref_ch0_s0`, heading: 'Referral Video', status: '' }],
+    }],
+    ...tag,
+  });
+
+  const referral = (id: string, profileid: string, claimed: number, referralcode?: string) =>
+    db.collection('workshopreferral').doc(id).set({
+      docid: id, workshopref: wsRef, profileid, claimed,
+      ...(referralcode ? { referralcode } : {}), created: ago(3), ...tag,
+    });
+  const enrol = (id: string, profileid: string, referralcode: string) =>
+    db.collection('workshop participant enrolled').doc(id).set({
+      docid: id, profileid, status: 'enrolled', workshopref: wsRef, enrollmentdate: ago(2), referralcode, ...tag,
+    });
+  await Promise.all([
+    referral(R.refs.used, wsProfileIds.p0, 2, R.codes.used),
+    referral(R.refs.idle, wsProfileIds.p1, 1, R.codes.idle),
+    referral(R.refs.click, wsProfileIds.p2, 0),
+    enrol(R.enrolled.self, wsProfileIds.p0, R.codes.used),
+    enrol(R.enrolled.nu, wsAddIds.NU_A, R.codes.used),
+    enrol(R.enrolled.p2, wsProfileIds.p2, R.codes.used),
+    enrol(R.enrolled.p2dup, wsProfileIds.p2, R.codes.used),
+    enrol(R.enrolled.elsewhere, wsProfileIds.p1, R.codes.elsewhere),
+  ]);
+}
+
+/** Remove the referral world (teardown only). */
+export async function clearReferralWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('workshopconfiguration', wsReferral.WORKSHOP),
+    ...Object.values(wsReferral.refs).map(id => drop('workshopreferral', id)),
+    ...Object.values(wsReferral.enrolled).map(id => drop('workshop participant enrolled', id)),
+  ]);
+}
