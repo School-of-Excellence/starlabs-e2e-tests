@@ -21,10 +21,13 @@
 // The seeded world (support/wshop.ts → wsMail), all run-tagged and removed in afterAll:
 //   · a workshop of our own (copy of W_INACTIVE) whose workshopsettings doc carries a Dashboard Access map,
 //     so every save can be checked for leaving that map — and workshopconfiguration — alone;
-//   · five templates: welcome (active+approved; 'name' twice and a #each/each section in its model),
-//     reminder (active+approved; shares 'name'), plain (active+approved; no variables), and two NEGATIVE
-//     controls whose names also say "Reminder" — pending (active, postmark pending) and retired
+//   · six templates: welcome (active+approved; 'name' twice and a #each/each section in its model),
+//     reminder (active+approved; shares 'name'), plain (active+approved; no variables), nomodel
+//     (active+approved with NO templatemodel field — the shape communication.component.ts writes), and two
+//     NEGATIVE controls whose names also say "Reminder" — pending (active, postmark pending) and retired
 //     (approved, inactive) — so a search for "reminder" would show them if the filter let them through.
+//   · two stored ids that resolve to nothing: `gone` (a deleted template) and `unreadableId` (an id the app
+//     cannot read at all), so both failure shapes of the saved-template read are driven for real.
 //
 // Anti-circularity:
 //   · The picker list is compared with the TEST's own query of `email templates` (active == true, then
@@ -175,6 +178,8 @@ test.describe('Workshop Settings — email template mapping (real UI, Firestore 
     await expect(option(page, N.welcome).locator('.c'), 'WMT-01: welcome has 4 distinct variables').toHaveText('4 variables');
     await expect(option(page, N.reminder).locator('.c')).toHaveText('2 variables');
     await expect(option(page, N.plain).locator('.c')).toHaveText('0 variables');
+    // [ASSERT] a template with no variable list at all is not passed off as having none.
+    await expect(option(page, N.nomodel).locator('.c'), 'WMT-01: unrecorded variables are said, not shown as 0').toHaveText('Variables not recorded');
 
     // [REAL-UI] search narrows by name, case-insensitively.
     const search = page.getByTestId('ws-mail-template-search');
@@ -233,7 +238,11 @@ test.describe('Workshop Settings — email template mapping (real UI, Firestore 
     await chooseSource(page, 'signoff', 'Static value');
     await expect(varRow(page, 'signoff').getByTestId('ws-mail-var-static'), 'WMT-02: Static value shows a textarea').toBeVisible();
     await expect(page.getByTestId('ws-mail-var-static'), 'WMT-02: only on the static row').toHaveCount(1);
-    await expect(counter(page)).toHaveText('1 of 4 set');
+    await expect(counter(page), 'WMT-02: a Static value with no text is not set yet').toHaveText('0 of 4 set');
+    await varRow(page, 'signoff').getByTestId('ws-mail-var-static').fill('   ');
+    await expect(counter(page), 'WMT-02: spaces are no text').toHaveText('0 of 4 set');
+    await varRow(page, 'signoff').getByTestId('ws-mail-var-static').fill('Bye');
+    await expect(counter(page), 'WMT-02: with text it counts').toHaveText('1 of 4 set');
 
     // [REAL-UI] a non-static source explains itself instead.
     await chooseSource(page, 'name', 'Name');
@@ -338,6 +347,10 @@ test.describe('Workshop Settings — email template mapping (real UI, Firestore 
     await expect(page.getByTestId('ws-mail-var-pick')).toHaveText(['Name', 'Workshop name', 'Workshop URL', 'Static value']);
     await expect(varRow(page, 'signoff').getByTestId('ws-mail-var-static')).toHaveValue('Team A&H');
     await expect(counter(page)).toHaveText('4 of 4 set');
+    // [ASSERT] a screen reader hears the field and the current choice, not just the variable.
+    await expect(page.getByTestId('ws-mail-template-pick'), 'WMT-04: the picker is named').toHaveAttribute('aria-label', `Email template: ${N.welcome}`);
+    await expect(varRow(page, 'workshop_link').getByTestId('ws-mail-var-pick'), 'WMT-04: the variable picker names its value')
+      .toHaveAttribute('aria-label', 'Value for workshop_link: Workshop URL');
     await expect(page.getByTestId('ws-mail-dirty'), 'WMT-04: a fresh load is not dirty').toHaveCount(0);
     await expect(page.getByTestId('ws-mail-save')).toBeDisabled();
   });
@@ -346,20 +359,19 @@ test.describe('Workshop Settings — email template mapping (real UI, Firestore 
   // WMT-05 — the READ path, against a seeded map the UI never wrote
   // ===========================================================================================
   test('WMT-05 a stored mapping is drawn back: template name, each source, the static text, not dirty', async ({ page }) => {
+    // Exactly what the screen would store for reminder (a stored map with extra keys is WMT-15).
     await resetMailSettings({
       templateid: wsMail.tpl.reminder,
       emailData: {
         name: { type: 'static', value: 'Dear friend' },
         date: { type: 'workshopname' },
-        // A variable the template does not have: it gets no row.
-        retired_var: { type: 'name' },
       },
     });
     await loginAsWshopAdmin(page);
     await openMailSection(page);
 
     await expect(page.getByTestId('ws-mail-template-pick'), 'WMT-05: the picker shows the stored template by name').toContainText(N.reminder);
-    await expect(page.getByTestId('ws-mail-var-name'), 'WMT-05: rows come from the template, not the stored keys')
+    await expect(page.getByTestId('ws-mail-var-name'), 'WMT-05: one row per template variable')
       .toHaveText(['{{name}}', '{{date}}']);
     await expect(varRow(page, 'name').getByTestId('ws-mail-var-pick')).toHaveText('Static value');
     await expect(varRow(page, 'name').getByTestId('ws-mail-var-static'), 'WMT-05: the stored text').toHaveValue('Dear friend');
@@ -601,5 +613,129 @@ test.describe('Workshop Settings — email template mapping (real UI, Firestore 
     await expect(page.getByTestId('ws-mail-templates-error')).toHaveCount(0);    // reference-only: list read error
     await expect(page.getByTestId('ws-mail-templates-retry')).toHaveCount(0);    // reference-only: list read error
     await page.keyboard.press('Escape');
+  });
+
+  // ===========================================================================================
+  // WMT-14 — a saved mapping that is no longer complete (the template gained a variable) says so on arrival
+  // ===========================================================================================
+  test('WMT-14 a saved mapping missing a variable the template now has is flagged without any edit, and can be completed', async ({ page }) => {
+    // Saved when reminder had only 'name'; its model now also has 'date'.
+    await resetMailSettings({ templateid: wsMail.tpl.reminder, emailData: { name: { type: 'name' } } });
+    await loginAsWshopAdmin(page);
+    await openMailSection(page);
+
+    await expect(page.getByTestId('ws-mail-var-name')).toHaveText(['{{name}}', '{{date}}']);
+    await expect(varRow(page, 'name').getByTestId('ws-mail-var-pick')).toHaveText('Name');
+    await expect(varRow(page, 'date').getByTestId('ws-mail-var-pick'), 'WMT-14: the new variable is unchosen').toHaveText('Choose…');
+    await expect(counter(page)).toHaveText('1 of 2 set');
+    // [ASSERT] nothing was edited, yet the gap is said — the stored map would send a blank {{date}}.
+    await expect(page.getByTestId('ws-mail-blocker'), 'WMT-14: an incomplete saved mapping is flagged on arrival')
+      .toHaveText('Choose a value for 1 variable');
+    await expect(page.getByTestId('ws-mail-dirty'), 'WMT-14: nothing was edited, and nothing stored would change').toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-save')).toBeDisabled();
+
+    await chooseSource(page, 'date', 'Workshop name');
+    await expect(page.getByTestId('ws-mail-blocker')).toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-dirty')).toHaveText('Unsaved template changes');
+    await page.getByTestId('ws-mail-save').click();
+    await expect(page.getByTestId('ws-mail-saved')).toBeVisible({ timeout: 30_000 });
+
+    const mail = await storedMail('WMT-14 app write of the completed mail', m => !!m?.emailData?.date);
+    expect(mail, 'WMT-14: the stored map is now complete').toEqual({
+      templateid: wsMail.tpl.reminder,
+      emailData: { name: { type: 'name' }, date: { type: 'workshopname' } },
+    });
+  });
+
+  // ===========================================================================================
+  // WMT-15 — a stored map with entries the template does not have (or the older flat shape) is out of date
+  // ===========================================================================================
+  test('WMT-15 stored entries the template does not have, and the older flat shape, read as out of date and a save writes it clean', async ({ page }) => {
+    await resetMailSettings({
+      templateid: wsMail.tpl.reminder,
+      emailData: {
+        name: { type: 'name' },
+        date: 'workshopname',                   // the older flat shape: not a choice the screen can read
+        retired_var: { type: 'workshopurl' },   // a variable reminder does not have
+      },
+    });
+    await loginAsWshopAdmin(page);
+    await openMailSection(page);
+
+    await expect(page.getByTestId('ws-mail-var-name'), 'WMT-15: rows come from the template, not the stored keys')
+      .toHaveText(['{{name}}', '{{date}}']);
+    await expect(varRow(page, 'name').getByTestId('ws-mail-var-pick')).toHaveText('Name');
+    await expect(varRow(page, 'date').getByTestId('ws-mail-var-pick'), 'WMT-15: a flat entry is not read as a choice').toHaveText('Choose…');
+    await expect(counter(page)).toHaveText('1 of 2 set');
+    await expect(page.getByTestId('ws-mail-dirty'), 'WMT-15: saving now would change what is stored')
+      .toHaveText('Saved choice is out of date');
+    await expect(page.getByTestId('ws-mail-blocker')).toHaveText('Choose a value for 1 variable');
+    await expect(page.getByTestId('ws-mail-save')).toBeDisabled();
+
+    await chooseSource(page, 'date', 'Workshop URL');
+    await expect(page.getByTestId('ws-mail-dirty'), 'WMT-15: an edit is an ordinary unsaved change').toHaveText('Unsaved template changes');
+    await expect(page.getByTestId('ws-mail-save')).toBeEnabled();
+    await page.getByTestId('ws-mail-save').click();
+    await expect(page.getByTestId('ws-mail-saved')).toBeVisible({ timeout: 30_000 });
+
+    // [ASSERT] the whole map was replaced: the stray key and the flat entry are gone from Firestore.
+    const mail = await storedMail('WMT-15 app write of the cleaned mail', m => !('retired_var' in (m?.emailData || {})));
+    expect(mail, 'WMT-15: only the template variables, in the map shape').toEqual({
+      templateid: wsMail.tpl.reminder,
+      emailData: { name: { type: 'name' }, date: { type: 'workshopurl' } },
+    });
+    expect((await workshopSettingsDoc(W)).dashboardaccess).toEqual(wsMailAccess);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.locator('.tabs .tab', { hasText: 'Settings' }).click();
+    await expect(counter(page), 'WMT-15: after reload the mapping is complete').toHaveText('2 of 2 set', { timeout: 30_000 });
+    await expect(page.getByTestId('ws-mail-dirty'), 'WMT-15: and no longer out of date').toHaveCount(0);
+  });
+
+  // ===========================================================================================
+  // WMT-16 — a template whose variables were never recorded cannot be mapped (or saved as "no variables")
+  // ===========================================================================================
+  test('WMT-16 a template with no recorded variable list says so and cannot be saved', async ({ page }) => {
+    await loginAsWshopAdmin(page);
+    await openMailSection(page);
+    await pickTemplate(page, N.nomodel);
+
+    await expect(page.getByTestId('ws-mail-vars-unknown'), 'WMT-16: the screen says the variables are unknown')
+      .toHaveText("This template's variables were not recorded, so they cannot be filled here. Open it in the template editor and save it again, then choose it here.");
+    await expect(page.getByTestId('ws-mail-no-vars'), 'WMT-16: not passed off as a template with no variables').toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-vars')).toHaveCount(0);
+    await expect(counter(page), 'WMT-16: no "0 of 0 set"').toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-blocker')).toHaveText("This template's variables were not recorded");
+    await expect(page.getByTestId('ws-mail-save'), 'WMT-16: an empty map is not saved for it').toBeDisabled();
+    expect((await workshopSettingsDoc(W))?.mail, 'WMT-16: nothing stored').toBeUndefined();
+
+    // [REAL-UI] a template with a variable list takes its place normally.
+    await pickTemplate(page, N.plain);
+    await expect(page.getByTestId('ws-mail-vars-unknown')).toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-no-vars')).toBeVisible();
+  });
+
+  // ===========================================================================================
+  // WMT-17 — a saved template that cannot be read does not lock the section
+  // ===========================================================================================
+  test('WMT-17 a saved template that cannot be read is named as such and can still be removed', async ({ page }) => {
+    await resetMailSettings({ templateid: wsMail.unreadableId, emailData: { name: { type: 'name' } } });
+    await loginAsWshopAdmin(page);
+    await openMailSection(page);
+
+    await expect(page.getByTestId('ws-mail-load-error'), 'WMT-17: the section does not fall back to the load error').toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-template-pick')).toContainText('Saved template (could not be read)');
+    await expect(page.getByTestId('ws-mail-template-warn')).toHaveText('Could not read the saved template. Choose another, or remove it.');
+    await expect(page.getByTestId('ws-mail-vars')).toHaveCount(0);
+    await expect(page.getByTestId('ws-mail-dirty')).toHaveCount(0);
+
+    await page.getByTestId('ws-mail-template-remove').click();
+    await expect(page.getByTestId('ws-mail-template-warn'), 'WMT-17: Remove clears the warning').toHaveCount(0);
+    await page.getByTestId('ws-mail-save').click();
+    await expect(page.getByTestId('ws-mail-saved')).toBeVisible({ timeout: 30_000 });
+    const d = await pollUntil(async () => workshopSettingsDoc(W), (x: any) => !!x && !('mail' in x),
+      { timeoutMs: 30_000, label: 'WMT-17 app deletion of the unreadable mail' });
+    expect('mail' in d, 'WMT-17: the unreadable choice is deleted').toBe(false);
+    expect(d.dashboardaccess, 'WMT-17: Dashboard Access survives').toEqual(wsMailAccess);
   });
 });

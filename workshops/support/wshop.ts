@@ -2494,14 +2494,21 @@ export const wsMail = {
     welcome: `${RUN}_wmt_welcome`,     // active + approved; duplicates and control tags in its model
     reminder: `${RUN}_wmt_reminder`,   // active + approved; shares 'name' with welcome
     plain: `${RUN}_wmt_plain`,         // active + approved; no variables at all
+    nomodel: `${RUN}_wmt_nomodel`,     // active + approved, but no templatemodel field: variables never recorded
     pending: `${RUN}_wmt_pending`,     // NEGATIVE: active, but Postmark has not approved it
     retired: `${RUN}_wmt_retired`,     // NEGATIVE: approved, but no longer active
     gone: `${RUN}_wmt_gone`,           // never seeded: a saved id whose document was deleted
   },
+  /**
+   * Never seeded, and NOT in `tpl` (cleanMailWorld deletes by those ids): a stored templateid the app cannot
+   * even build a reference for ('email templates/<x>/<y>' has an odd number of segments), so its read fails.
+   */
+  unreadableId: `${RUN}_wmt/unreadable`,
   names: {
     welcome: `WMT Alpha Welcome ${RUN}`,
     reminder: `WMT Bravo Reminder ${RUN}`,
     plain: `WMT Charlie Plain ${RUN}`,
+    nomodel: `WMT Foxtrot Unrecorded ${RUN}`,
     // Both negatives carry "Reminder" so a search for it would show them if the filter let them through.
     pending: `WMT Delta Reminder Pending ${RUN}`,
     retired: `WMT Echo Reminder Retired ${RUN}`,
@@ -2522,6 +2529,8 @@ function mailTemplateDocs(): Record<string, any> {
     [wsMail.tpl.welcome]: { templatename: wsMail.names.welcome, templatemodel: wsMail.welcomeModel, active: true, postmarkstatus: 'approved', ...tag },
     [wsMail.tpl.reminder]: { templatename: wsMail.names.reminder, templatemodel: wsMail.reminderModel, active: true, postmarkstatus: 'approved', ...tag },
     [wsMail.tpl.plain]: { templatename: wsMail.names.plain, templatemodel: [], active: true, postmarkstatus: 'approved', ...tag },
+    // The shape communication.component.ts writes: no templatemodel at all (the approval step never adds one).
+    [wsMail.tpl.nomodel]: { templatename: wsMail.names.nomodel, active: true, postmarkstatus: 'approved', ...tag },
     [wsMail.tpl.pending]: { templatename: wsMail.names.pending, templatemodel: ['name'], active: true, postmarkstatus: 'pending', ...tag },
     [wsMail.tpl.retired]: { templatename: wsMail.names.retired, templatemodel: ['name'], active: false, postmarkstatus: 'approved', ...tag },
   };
@@ -2540,7 +2549,7 @@ export async function seedMailWorkshop(): Promise<void> {
   });
 }
 
-/** PRECONDITION: the five `email templates` docs back to their baseline flags (set, not merge). */
+/** PRECONDITION: the six `email templates` docs back to their baseline flags (set, not merge). */
 export async function seedMailTemplates(): Promise<void> {
   const db = seed.initAdmin().firestore();
   const docs = mailTemplateDocs();
