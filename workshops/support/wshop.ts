@@ -2700,3 +2700,164 @@ export async function clearReferralWorld(): Promise<void> {
     ...Object.values(wsReferral.enrolled).map(id => drop('workshop participant enrolled', id)),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-17 — At a glance additions (workshop-dashboard-glance.spec.ts, WDG-*).
+// Five run-tagged workshops of their OWN (W_DASH's counts, which other specs rely on, are untouched):
+//   LIVE  — started 11 days ago, ends in 12 → "Day 12 of 24"; carries the people world below
+//   SOON  — starts in 3 days, 24 days long; one enrolled person whose only tag id is dead (empty Top tags)
+//   DONE  — ran 24 days, ended 4 days ago
+//   EVER  — evergreen, 8-day journey (its dates are ignored)
+//   NOEND — a start date and no end date → the strip is hidden
+// Every time is relative to the seed-time "now" (wsGlanceNow), and the spec's oracle reads it back.
+// =================================================================================================
+
+export const wsGlanceIds = {
+  LIVE: `${RUN}_W_gl_live`,
+  SOON: `${RUN}_W_gl_soon`,
+  DONE: `${RUN}_W_gl_done`,
+  EVER: `${RUN}_W_gl_ever`,
+  NOEND: `${RUN}_W_gl_noend`,
+  ENR_SOON: `${RUN}_gl_enr_soon`,
+};
+
+/** The people on LIVE: who they are and what makes each one a pivot. */
+export const wsGlancePeople = {
+  // joined 1 day ago; 1 of 2 steps, finished 1 day ago; workshopStartedAt 10 days ago → NOT inactive (the step wins)
+  active: { id: `${RUN}_gl_pf_active`, name: `GL Asha Active ${RUN}` },
+  // joined 2 days ago; started, no step finished → stuck (0%)
+  stuck: { id: `${RUN}_gl_pf_stuck`, name: `GL Bala Stuck ${RUN}` },
+  // joined 9 days ago; 1 of 2 steps, finished 5 days ago; workshopStartedAt 1 day ago → inactive (the step wins)
+  idle: { id: `${RUN}_gl_pf_idle`, name: `GL Chitra Idle ${RUN}` },
+  // joined 20 days ago (outside both weeks); 2 of 2 steps → Completed
+  done: { id: `${RUN}_gl_pf_done`, name: `GL Dev Done ${RUN}` },
+  // joined 10 days ago; 1 of 2 steps with NO finish time; workshopStartedAt 6 days ago → inactive via the fallback
+  fallback: { id: `${RUN}_gl_pf_fallback`, name: `GL Esha Fallback ${RUN}` },
+  // joined 3 days ago; enrolled, not started → in neither attention list
+  waiting: { id: `${RUN}_gl_pf_waiting`, name: `GL Farah Waiting ${RUN}` },
+};
+export type GlancePersonKey = keyof typeof wsGlancePeople;
+
+/** newusertags docs for the Top tags ranking (plus a dead id with no doc). */
+export const wsGlanceTags = {
+  alpha: { id: `${RUN}_gl_tag_alpha`, name: `GL Alpha ${RUN}` },
+  beta: { id: `${RUN}_gl_tag_beta`, name: `GL Beta ${RUN}` },
+  delta: { id: `${RUN}_gl_tag_delta`, name: `GL Delta ${RUN}` },
+  gamma: { id: `${RUN}_gl_tag_gamma`, name: `GL Gamma ${RUN}` },
+  epsilon: { id: `${RUN}_gl_tag_epsilon`, name: `GL Epsilon ${RUN}` },
+  long: { id: `${RUN}_gl_tag_long`, name: 'Leadership Accelerator Cohort — Mumbai Corporate 2026' },
+  ghost: `${RUN}_gl_tag_deleted`,
+};
+
+const glEnrId = (k: GlancePersonKey) => `${RUN}_gl_enr_${k}`;
+const glPwId = (k: GlancePersonKey) => `${RUN}_gl_pw_${k}`;
+export const wsGlanceEnrolledIds = Object.fromEntries(
+  (Object.keys(wsGlancePeople) as GlancePersonKey[]).map(k => [k, glEnrId(k)])) as Record<GlancePersonKey, string>;
+
+/** The seed-time clock every glance date was derived from (set by seedGlanceWorld). */
+export let wsGlanceNow = 0;
+
+/**
+ * PRECONDITION writes only: the five workshops, six people (metadata + enrolled doc + participant
+ * workshop doc) on LIVE, one person on SOON, and the tag docs. Removed by clearGlanceWorld.
+ */
+export async function seedGlanceWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = Date.now();
+  wsGlanceNow = now;
+  const DAY = 24 * 60 * 60 * 1000;
+  const ago = (days: number) => T.fromMillis(now - days * DAY);
+  // a local calendar day `d` from today at 09:00 (same shape as seed-workshops.js `at`)
+  const at = (d: number) => { const x = new Date(now); x.setDate(x.getDate() + d); x.setHours(9, 0, 0, 0); return T.fromDate(x); };
+
+  const steps = (prefix: string) => [{
+    type: 'challenge', challengeid: `${prefix}_ch0`, heading: 'Glance Module', subheading: 'One',
+    challenges: [
+      { type: 'video', challengeid: `${prefix}_ch0_s0`, heading: 'Glance Step One', status: '' },
+      { type: 'video', challengeid: `${prefix}_ch0_s1`, heading: 'Glance Step Two', status: '' },
+    ],
+  }];
+  const workshop = (id: string, title: string, dates: Record<string, any>, extra: Record<string, any> = {}) =>
+    db.collection('workshopconfiguration').doc(id).set({
+      docid: id, active: true, workshopcompleted: false, categorybased: false, atcmodel: null, created: ago(30),
+      detailpage: { type: 'workshop', title, shortdescription: 'seeded glance', ...dates },
+      challenges: steps(`${RUN}_gl`), ...extra, ...tag,
+    });
+  await Promise.all([
+    workshop(wsGlanceIds.LIVE, `Glance Live ${RUN}`, { workshopStartDate: at(-11), workshopEndDate: at(12) }),
+    workshop(wsGlanceIds.SOON, `Glance Soon ${RUN}`, { workshopStartDate: at(3), workshopEndDate: at(26) }),
+    workshop(wsGlanceIds.DONE, `Glance Done ${RUN}`, { workshopStartDate: at(-27), workshopEndDate: at(-4) }),
+    workshop(wsGlanceIds.EVER, `Glance Evergreen ${RUN}`, { workshopStartDate: at(-30), workshopEndDate: at(-1) },
+      { evergreenWorkshop: true, evergreenWorkshopMeta: { workshopDays: 8 } }),
+    workshop(wsGlanceIds.NOEND, `Glance No End ${RUN}`, { workshopStartDate: at(-2) }),
+    ...Object.values(wsGlanceTags).filter((t): t is { id: string; name: string } => typeof t !== 'string')
+      .map(t => db.collection('newusertags').doc(t.id).set({ docid: t.id, type: 'newusersegments', name: t.name, ...tag })),
+    ...Object.values(wsGlancePeople).map(p => db.collection('participant metadata').doc(p.id).set({
+      profileid: p.id, name: p.name, email: `${p.id.toLowerCase()}@example.com`, countrycode: '+91', phonenumber: '9000000002', ...tag,
+    })),
+  ]);
+
+  const live = db.collection('workshopconfiguration').doc(wsGlanceIds.LIVE);
+  const G = wsGlanceTags;
+  // [step one, step two] — `true` = finished with no time on record, a number = finished that many days ago
+  type Step = false | true | number;
+  const person: Record<GlancePersonKey, { joined: number; status: string; started?: number; steps: [Step, Step]; tags: string[] }> = {
+    active: { joined: 1, status: 'enrolled', started: 10, steps: [1, false], tags: [G.alpha.id, G.alpha.id, G.beta.id, G.delta.id] },
+    stuck: { joined: 2, status: 'enrolled', started: 2, steps: [false, false], tags: [G.alpha.id, G.beta.id, G.long.id] },
+    idle: { joined: 9, status: 'enrolled', started: 1, steps: [5, false], tags: [G.beta.id, G.alpha.id] },
+    done: { joined: 20, status: 'enrolled', started: 19, steps: [15, 14], tags: [G.gamma.id, G.alpha.id] },
+    fallback: { joined: 10, status: 'enrolled', started: 6, steps: [true, false], tags: [G.ghost, G.gamma.id, G.long.id] },
+    waiting: { joined: 3, status: 'enrollednotstarted', steps: [false, false], tags: [G.delta.id, G.epsilon.id] },
+  };
+  const stepDoc = (k: GlancePersonKey) => {
+    const [a, b] = person[k].steps;
+    const one = (s: Step, i: number) => ({
+      type: 'video', challengeid: `${RUN}_gl_ch0_s${i}`, heading: i ? 'Glance Step Two' : 'Glance Step One',
+      status: s === false ? '' : 'completed',
+      ...(typeof s === 'number' ? { completed: ago(s) } : {}),
+    });
+    return [{ type: 'challenge', challengeid: `${RUN}_gl_ch0`, heading: 'Glance Module', challenges: [one(a, 0), one(b, 1)] }];
+  };
+  await Promise.all((Object.keys(person) as GlancePersonKey[]).flatMap(k => {
+    const p = person[k];
+    const pid = wsGlancePeople[k].id;
+    const pwRef = db.collection('participant workshop').doc(glPwId(k));
+    const enrRef = db.collection('workshop participant enrolled').doc(glEnrId(k));
+    return [
+      enrRef.set({
+        docid: glEnrId(k), profileid: pid, status: p.status, workshopref: live, participantworkshopref: pwRef,
+        enrollmentdate: ago(p.joined), tags: p.tags, ...(p.started !== undefined ? { workshopStartedAt: ago(p.started) } : {}), ...tag,
+      }),
+      pwRef.set({
+        docid: glPwId(k), profileid: pid, workshopref: live, workshopparticipantenrolledRef: enrRef,
+        challenges: stepDoc(k), created: ago(p.joined), ...tag,
+      }),
+    ];
+  }));
+
+  // SOON: one person, tagged only with a dead id → Top tags has nothing to show.
+  await db.collection('workshop participant enrolled').doc(wsGlanceIds.ENR_SOON).set({
+    docid: wsGlanceIds.ENR_SOON, profileid: wsGlancePeople.waiting.id, status: 'enrollednotstarted',
+    workshopref: db.collection('workshopconfiguration').doc(wsGlanceIds.SOON), enrollmentdate: ago(1), tags: [G.ghost], ...tag,
+  });
+}
+
+/** Remove the glance world (teardown only). */
+export async function clearGlanceWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const keys = Object.keys(wsGlancePeople) as GlancePersonKey[];
+  await Promise.all([
+    ...[wsGlanceIds.LIVE, wsGlanceIds.SOON, wsGlanceIds.DONE, wsGlanceIds.EVER, wsGlanceIds.NOEND]
+      .map(id => drop('workshopconfiguration', id)),
+    drop('workshop participant enrolled', wsGlanceIds.ENR_SOON),
+    ...keys.map(k => drop('workshop participant enrolled', glEnrId(k))),
+    ...keys.map(k => drop('participant workshop', glPwId(k))),
+    ...keys.map(k => drop('participant metadata', wsGlancePeople[k].id)),
+    ...Object.values(wsGlanceTags).filter((t): t is { id: string; name: string } => typeof t !== 'string')
+      .map(t => drop('newusertags', t.id)),
+  ]);
+}
