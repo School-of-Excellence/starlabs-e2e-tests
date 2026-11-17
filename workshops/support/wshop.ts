@@ -2705,7 +2705,8 @@ export async function clearReferralWorld(): Promise<void> {
 // 2026-11-17 — At a glance additions (workshop-dashboard-glance.spec.ts, WDG-*).
 // Five run-tagged workshops of their OWN (W_DASH's counts, which other specs rely on, are untouched):
 //   LIVE  — started 11 days ago, ends in 12 → "Day 12 of 24"; carries the people world below
-//   SOON  — starts in 3 days, 24 days long; one enrolled person whose only tag id is dead (empty Top tags)
+//   SOON  — starts in 3 days, 24 days long; one enrolled person whose only tag id is dead (empty Top tags),
+//           and one STARTED person with no participant workshop doc (Started but stuck, no progress row)
 //   DONE  — ran 24 days, ended 4 days ago
 //   EVER  — evergreen, 8-day journey (its dates are ignored)
 //   NOEND — a start date and no end date → the strip is hidden
@@ -2719,7 +2720,11 @@ export const wsGlanceIds = {
   EVER: `${RUN}_W_gl_ever`,
   NOEND: `${RUN}_W_gl_noend`,
   ENR_SOON: `${RUN}_gl_enr_soon`,
+  ENR_SOON_NOREC: `${RUN}_gl_enr_soon_norec`,
 };
+
+/** On SOON: status 'enrolled' (started) with NO participant workshop doc → Started but stuck, no progress row. */
+export const wsGlanceNoRecord = { id: `${RUN}_gl_pf_norecord`, name: `GL Gita NoRecord ${RUN}` };
 
 /** The people on LIVE: who they are and what makes each one a pivot. */
 export const wsGlancePeople = {
@@ -2759,7 +2764,8 @@ export let wsGlanceNow = 0;
 
 /**
  * PRECONDITION writes only: the five workshops, six people (metadata + enrolled doc + participant
- * workshop doc) on LIVE, one person on SOON, and the tag docs. Removed by clearGlanceWorld.
+ * workshop doc) on LIVE, two people on SOON (one with no participant workshop doc), and the tag docs.
+ * Removed by clearGlanceWorld.
  */
 export async function seedGlanceWorld(): Promise<void> {
   const admin = seed.initAdmin();
@@ -2795,7 +2801,7 @@ export async function seedGlanceWorld(): Promise<void> {
     workshop(wsGlanceIds.NOEND, `Glance No End ${RUN}`, { workshopStartDate: at(-2) }),
     ...Object.values(wsGlanceTags).filter((t): t is { id: string; name: string } => typeof t !== 'string')
       .map(t => db.collection('newusertags').doc(t.id).set({ docid: t.id, type: 'newusersegments', name: t.name, ...tag })),
-    ...Object.values(wsGlancePeople).map(p => db.collection('participant metadata').doc(p.id).set({
+    ...[...Object.values(wsGlancePeople), wsGlanceNoRecord].map(p => db.collection('participant metadata').doc(p.id).set({
       profileid: p.id, name: p.name, email: `${p.id.toLowerCase()}@example.com`, countrycode: '+91', phonenumber: '9000000002', ...tag,
     })),
   ]);
@@ -2843,6 +2849,24 @@ export async function seedGlanceWorld(): Promise<void> {
     docid: wsGlanceIds.ENR_SOON, profileid: wsGlancePeople.waiting.id, status: 'enrollednotstarted',
     workshopref: db.collection('workshopconfiguration').doc(wsGlanceIds.SOON), enrollmentdate: ago(1), tags: [G.ghost], ...tag,
   });
+  // SOON: started, but no participant workshop doc was ever written (no tags, so Top tags stays empty).
+  await db.collection('workshop participant enrolled').doc(wsGlanceIds.ENR_SOON_NOREC).set({
+    docid: wsGlanceIds.ENR_SOON_NOREC, profileid: wsGlanceNoRecord.id, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsGlanceIds.SOON), enrollmentdate: ago(2),
+    workshopStartedAt: ago(1), tags: [], ...tag,
+  });
+}
+
+/**
+ * WDG-08's live tick: set one LIVE person's enrolment date (an existing field) and return the value it had,
+ * so the case can put it back. Never adds a field.
+ */
+export async function setGlanceEnrollmentDate(k: GlancePersonKey, value: number | unknown): Promise<unknown> {
+  const admin = seed.initAdmin();
+  const ref = admin.firestore().collection('workshop participant enrolled').doc(glEnrId(k));
+  const prev = (await ref.get()).get('enrollmentdate');
+  await ref.update({ enrollmentdate: typeof value === 'number' ? admin.firestore.Timestamp.fromMillis(value) : value });
+  return prev;
 }
 
 /** Remove the glance world (teardown only). */
@@ -2854,6 +2878,8 @@ export async function clearGlanceWorld(): Promise<void> {
     ...[wsGlanceIds.LIVE, wsGlanceIds.SOON, wsGlanceIds.DONE, wsGlanceIds.EVER, wsGlanceIds.NOEND]
       .map(id => drop('workshopconfiguration', id)),
     drop('workshop participant enrolled', wsGlanceIds.ENR_SOON),
+    drop('workshop participant enrolled', wsGlanceIds.ENR_SOON_NOREC),
+    drop('participant metadata', wsGlanceNoRecord.id),
     ...keys.map(k => drop('workshop participant enrolled', glEnrId(k))),
     ...keys.map(k => drop('participant workshop', glPwId(k))),
     ...keys.map(k => drop('participant metadata', wsGlancePeople[k].id)),

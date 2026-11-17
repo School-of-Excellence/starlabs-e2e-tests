@@ -9,6 +9,12 @@
 //           the zero states (Joined 0, muted Stuck / Inactive)
 //   WDG-06  A Top tags row opens Total Enrolled with ONLY that tag ticked and the list filtered to it
 //   WDG-07  Not gated: a limited-access user sees the same cards (no glance figure is behind a permission)
+//   WDG-08  Top tags never flashes "No tags on enrolled people yet." while the names load on a tagged workshop,
+//           and a live snapshot tick keeps the tag rows and day bars (same DOM nodes, keyboard focus kept)
+//   WDG-09  The date rules move with the clock with no data change: a day later the strip reads Day 13 of 24
+//           and the 14 bars have shifted (the dashboard re-checks every 5 minutes)
+//   WDG-10  Person menu from Started but stuck: a STARTED person with no progress record is disabled with
+//           "Started — no progress recorded yet", never "Not started"; a stuck person with a record opens
 //
 // Recon: starlabs-angular src/app/New-Workshop/workshop-dashboard/
 //   • workshop-dashboard.glance.ts — the pure rules (workshopTimeline, joinedRecently, needsAttention,
@@ -39,7 +45,8 @@
 //         → Stuck = stuck; Inactive = idle (the step wins over a recent start) + fallback (start time used);
 //           active is NOT inactive (its step is 1d old, although it started 10d ago); done is 100% → Completed
 //         → Top tags: Alpha 4, Beta 3, then the three 2s A→Z (Delta, Gamma, Leadership…); Epsilon (1) is 6th, cut
-//   SOON  start = today+3, 24 days long; one person whose only tag id is dead → "No tags on enrolled people yet."
+//   SOON  start = today+3, 24 days long; one person whose only tag id is dead → "No tags on enrolled people yet.";
+//         plus norecord: status 'enrolled', NO participant workshop doc, no tags → Started but stuck = [norecord]
 //   DONE  today-27 → today-4; nobody enrolled → the zero states
 //   EVER  evergreen, workshopDays 8 → "8-day journey"
 //   NOEND a start date and no end date → no strip
@@ -52,6 +59,7 @@ import { test, expect, Page, Locator } from '@playwright/test';
 import {
   wsIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopLimited,
   wsGlanceIds, wsGlancePeople, wsGlanceTags, GlancePersonKey, seedGlanceWorld, clearGlanceWorld,
+  wsGlanceNoRecord, wsGlanceEnrolledIds, setGlanceEnrollmentDate,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { getDoc, queryWhere, db } from '../queue/support/firestore-admin';
@@ -397,5 +405,111 @@ test.describe('Workshop dashboard — At a glance additions', () => {
     await expect(page.getByTestId('wdash-stuck-card'), 'WDG-07: Started but stuck renders for limited').toBeVisible();
     await expect(page.getByTestId('wdash-inactive-card'), 'WDG-07: Inactive renders for limited').toBeVisible();
     await expect(page.getByTestId('wdash-top-tags'), 'WDG-07: Top tags renders for limited').toBeVisible();
+  });
+
+  test('WDG-08 Top tags never flashes the empty line while loading; a live tick keeps the rows and the bars', async ({ page }) => {
+    // From the first byte of each page: was the empty line EVER in the DOM?
+    await page.addInitScript(() => {
+      (window as any).__wdgEmptySeen = false;
+      new MutationObserver(() => {
+        if (document.querySelector('[data-testid="wdash-top-tags-empty"]')) (window as any).__wdgEmptySeen = true;
+      }).observe(document, { childList: true, subtree: true });
+    });
+    const o = await glanceOracle(wsGlanceIds.LIVE, Date.now());
+    expect(o.joined, 'WDG-08 oracle: waiting is one of the joined').toContain(P.waiting.id);
+    expect(o.top.length, 'WDG-08 oracle: LIVE has tags').toBe(5);
+
+    await loginAsWshopAdmin(page);
+    await openDashboard(page, wsGlanceIds.LIVE);
+    await expect(page.getByTestId('wdash-top-tag'), 'WDG-08: rows loaded').toHaveCount(5, { timeout: 30_000 });
+    await expect(page.getByTestId('wdash-joined-count')).toHaveText(`+${o.joined.length}`);
+    await expect(page.getByTestId('wdash-top-tags-empty')).toHaveCount(0);
+    expect(await page.evaluate(() => (window as any).__wdgEmptySeen),
+      'WDG-08: "No tags on enrolled people yet." never showed on a tagged workshop').toBe(false);
+
+    // Mark the live nodes and focus a row, then tick the enrolled snapshot: waiting's enrolment moves out of
+    // the last 14 days (Joined changes, the tags do not). The same nodes must survive the re-render.
+    const row = page.getByTestId('wdash-top-tag').first();
+    await row.evaluate(el => el.setAttribute('data-wdg-probe', 'row'));
+    await page.getByTestId('wdash-joined-card').locator('.wdx-gl-sp-b').last().evaluate(el => el.setAttribute('data-wdg-probe', 'bar'));
+    await row.focus();
+    await expect(row).toBeFocused();
+    const prev = await setGlanceEnrollmentDate('waiting', Date.now() - 20 * DAY);
+    try {
+      await expect(page.getByTestId('wdash-joined-count'), 'WDG-08: the tick landed (+N drops by one)')
+        .toHaveText(`+${o.joined.length - 1}`, { timeout: 30_000 });
+      await expect(page.getByTestId('wdash-top-tag-name'), 'WDG-08: the tags are unchanged').toHaveText(o.top.map(t => t.name));
+      await expect(page.locator('[data-testid="wdash-top-tag"][data-wdg-probe="row"]'), 'WDG-08: the tag row was kept, not rebuilt').toHaveCount(1);
+      await expect(page.locator('.wdx-gl-sp-b[data-wdg-probe="bar"]'), 'WDG-08: the day bars were kept').toHaveCount(1);
+      await expect(page.getByTestId('wdash-top-tag').first(), 'WDG-08: keyboard focus stays on the row').toBeFocused();
+    } finally {
+      await setGlanceEnrollmentDate('waiting', prev);
+    }
+    await expect(page.getByTestId('wdash-joined-count'), 'WDG-08: restored').toHaveText(`+${o.joined.length}`, { timeout: 30_000 });
+  });
+
+  test('WDG-09 the date rules move with the clock, with no data change', async ({ page }) => {
+    const w: any = await getDoc('workshopconfiguration', wsGlanceIds.LIVE);
+    expect(expectedStrip(w, Date.now())?.title, 'WDG-09 precondition: Day 12 today').toBe('Day 12 of 24');
+
+    await page.clock.install();   // the real time, flowing naturally; lets the case jump a day ahead below
+    await loginAsWshopAdmin(page);
+    await openDashboard(page, wsGlanceIds.LIVE);
+    const title = page.getByTestId('wdash-timeline-title');
+    await expect(title, 'WDG-09: today').toHaveText('Day 12 of 24', { timeout: 30_000 });
+    await expect(page.getByTestId('wdash-joined-card').locator('.wdx-gl-sp-b'), 'WDG-09: bars rendered').toHaveCount(14);
+
+    // A day passes and nothing is written. The dashboard's 5-minute re-check comes due once.
+    const t0 = await page.evaluate(() => Date.now());
+    await page.clock.setSystemTime(t0 + DAY);
+    await page.clock.fastForward('05:05');
+    const t1 = await page.evaluate(() => Date.now());
+    const want = expectedStrip(w, t1);
+    expect(want, 'WDG-09 oracle: a day later').toEqual({ title: 'Day 13 of 24', sub: '11 days left', pill: 'Running' });
+    await expect(title, 'WDG-09: the strip moved on a day').toHaveText(want!.title, { timeout: 15_000 });
+    await expect(page.getByTestId('wdash-timeline-sub')).toHaveText(want!.sub);
+    const o = await glanceOracle(wsGlanceIds.LIVE, t1);
+    const bars = page.getByTestId('wdash-joined-card').locator('.wdx-gl-sp-b');
+    await expect.poll(() => bars.evaluateAll(els => els.map(e => e.getAttribute('title'))),
+      { message: 'WDG-09: the 14 bars shifted a day (oldest first, ending on the new today)', timeout: 15_000 }).toEqual(o.barLabels);
+    await expect(page.getByTestId('wdash-joined-count'), 'WDG-09: Joined re-counted at the new time').toHaveText(
+      o.joined.length ? `+${o.joined.length}` : '0');
+  });
+
+  test('WDG-10 person menu from Started but stuck: no progress record reads "Started", not "Not started"', async ({ page }) => {
+    const nr: any = await getDoc('workshop participant enrolled', wsGlanceIds.ENR_SOON_NOREC);
+    expect(nr?.status, 'WDG-10 precondition: norecord has started').toBe('enrolled');
+    expect(await queryWhere('participant workshop', [['profileid', '==', wsGlanceNoRecord.id]]),
+      'WDG-10 precondition: norecord has no participant workshop doc').toHaveLength(0);
+    const st: any = await getDoc('workshop participant enrolled', wsGlanceEnrolledIds.stuck);
+    expect(st?.participantworkshopref, 'WDG-10 precondition: stuck HAS a participant workshop doc').toBeTruthy();
+    const live: any = await getDoc('workshopconfiguration', wsGlanceIds.LIVE);
+    const liveTitle = String(live?.detailpage?.title || '');
+
+    await loginAsWshopAdmin(page);
+    // SOON: norecord is the only stuck person (waiting has not started).
+    await openDashboard(page, wsGlanceIds.SOON);
+    await expect(page.getByTestId('wdash-stuck-count'), 'WDG-10: one stuck on SOON').toHaveText('1', { timeout: 30_000 });
+    await page.getByTestId('wdash-stuck-card').click();
+    const card = page.locator('.participant-panel mat-card.participant-card').filter({ hasText: wsGlanceNoRecord.name });
+    await expect(card, 'WDG-10: norecord is in Started but stuck').toBeVisible({ timeout: 30_000 });
+    await card.getByTestId('wd-side-person-name').click();
+    const view = page.getByTestId('wd-side-person-view');
+    await expect(view, 'WDG-10: nothing to open').toBeDisabled();
+    await expect(view, 'WDG-10: says they started').toContainText('Started — no progress recorded yet');
+    await expect(view, 'WDG-10: never "Not started" for someone counted as started').not.toContainText('Not started');
+    await page.keyboard.press('Escape');
+    await expect(view).toHaveCount(0);
+
+    // [CONTRAST] LIVE: stuck has a record at 0% → the item opens their data.
+    await openDashboard(page, wsGlanceIds.LIVE);
+    await expect(page.getByTestId('wdash-stuck-count')).toHaveText('1', { timeout: 30_000 });
+    await page.getByTestId('wdash-stuck-card').click();
+    const stuckCard = page.locator('.participant-panel mat-card.participant-card').filter({ hasText: P.stuck.name });
+    await expect(stuckCard).toBeVisible({ timeout: 30_000 });
+    await stuckCard.getByTestId('wd-side-person-name').click();
+    await expect(page.getByTestId('wd-side-person-view'), 'WDG-10: a record → enabled').toBeEnabled();
+    await expect(page.getByTestId('wd-side-person-view')).toContainText(`In ${liveTitle}`);
+    await page.keyboard.press('Escape');
   });
 });

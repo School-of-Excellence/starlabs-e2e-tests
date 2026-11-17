@@ -2,7 +2,8 @@
 //   WDP-01  A side-panel row no longer links to /userprofile: no such link, the name is not inside an <a>, and
 //           clicking the name opens no new page and leaves the URL alone (it opens a menu instead)
 //   WDP-02  The menu names the person; "View participant data" closes the panel and opens THAT person's
-//           Participant Data (the same as clicking their row in the progress table), scrolled into view
+//           Participant Data (the same as clicking their row in the progress table), scrolled into view, with
+//           keyboard focus moved to the Participant Data heading (not lost with the closing panel)
 //   WDP-03  A not-started person (Not Started panel) has no data in this workshop: the item is disabled, says
 //           so, and clicking it does nothing
 //   WDP-04  Negative control: without the participant progress right (limited) the name is plain text
@@ -15,7 +16,9 @@
 //     "Not started — no data in this workshop yet".
 //   • workshop-dashboard.component.ts — personHasData(p): the person has a row in participantProgressList
 //     (the table's rows; only status 'enrolled' people get one). viewPersonData(p): closeParticipantPanel()
-//     (the close button's handler), then onParticipantClick(row) → Participant Data + scroll to #participantDataCard.
+//     (the close button's handler), then onParticipantClick(row) → Participant Data + scroll to #participantDataCard;
+//     550 ms later it focuses the section heading `h2.wdx-pd-focus` (tabindex -1). The disabled line's wording is
+//     personMenuNoDataNote (engine): not enrolled / Not started / Started — no progress recorded yet (WDG-10).
 //
 // Hook prefix: `wd-*`. `wd-side-person-name` and `wd-side-person-view` are new with this change, so the hub-ahead
 // guard (scripts/readiness/landed-specs.cjs) skips this FILE on app branches that predate it.
@@ -112,6 +115,7 @@ test.describe('Workshop dashboard — side panel person menu', () => {
     await expect(page.getByTestId('wd-side-person-view'), 'WDP-02: the menu closes').toHaveCount(0);
     await expect(pd.locator('.wdx-pd-name'), 'WDP-02: Participant Data shows THAT person').toContainText(wsMetaNames.p0, { timeout: 30_000 });
     await expect(pd, 'WDP-02: and is scrolled into view').toBeInViewport({ timeout: 10_000 });
+    await expect(pd.locator('h2.wdx-pd-focus'), 'WDP-02: focus moves to the Participant Data heading').toBeFocused({ timeout: 5_000 });
     await expect(page.locator('tr[data-testid="wd-on-participant-click-39"].wdx-is-picked'),
       'WDP-02: the same person is picked in the table, as a row click would').toHaveCount(1);
   });
