@@ -2476,3 +2476,128 @@ export async function newUserSegmentTags(): Promise<{ id: string; name: string }
   const snap = await seed.initAdmin().firestore().collection('newusertags').where('type', '==', 'newusersegments').get();
   return snap.docs.map((d: any) => ({ id: d.id, name: (d.data()?.name || '').toString() })).filter((t: any) => t.name);
 }
+
+// =================================================================================================
+// 2026-11-17 — workshop Settings → Mail template → Email template (workshop-mail-template.spec.ts).
+// The editor stores { templateid, emailData } as `mail` in workshopsettings/{workshop id}. Everything
+// below is a PRECONDITION write or an ORACLE read with the admin SDK; no case asserts a value it set here
+// except where it says it is checking the read path (a seeded shape the screen must draw back).
+// =================================================================================================
+
+/** The run's own workshop (a copy of W_INACTIVE) and `email templates` docs for the mail cases. */
+export const wsMail = {
+  workshopId: `${RUN}_W_mail`,
+  /** Never written by the seed: an id with no workshop document, so the editor opens in new mode. */
+  newWorkshopId: `${RUN}_W_mail_new`,
+  title: `Mail Template Workshop ${RUN}`,
+  tpl: {
+    welcome: `${RUN}_wmt_welcome`,     // active + approved; duplicates and control tags in its model
+    reminder: `${RUN}_wmt_reminder`,   // active + approved; shares 'name' with welcome
+    plain: `${RUN}_wmt_plain`,         // active + approved; no variables at all
+    pending: `${RUN}_wmt_pending`,     // NEGATIVE: active, but Postmark has not approved it
+    retired: `${RUN}_wmt_retired`,     // NEGATIVE: approved, but no longer active
+    gone: `${RUN}_wmt_gone`,           // never seeded: a saved id whose document was deleted
+  },
+  names: {
+    welcome: `WMT Alpha Welcome ${RUN}`,
+    reminder: `WMT Bravo Reminder ${RUN}`,
+    plain: `WMT Charlie Plain ${RUN}`,
+    // Both negatives carry "Reminder" so a search for it would show them if the filter let them through.
+    pending: `WMT Delta Reminder Pending ${RUN}`,
+    retired: `WMT Echo Reminder Retired ${RUN}`,
+  },
+  /** welcome's raw templatemodel: 'name' twice, plus a Mustache section open/close. */
+  welcomeModel: ['name', 'workshop', 'workshop_link', 'signoff', 'name', '#each items', '/each'],
+  /** What the editor must offer for welcome: distinct, in template order, control tags dropped. */
+  welcomeVars: ['name', 'workshop', 'workshop_link', 'signoff'],
+  reminderModel: ['name', 'date'],
+};
+
+/** The seeded Dashboard Access map that shares workshopsettings/{W_MAIL} with `mail`. */
+export const wsMailAccess: Record<string, string[]> = { [wsProfileIds.limited]: [...wsLimitedGrants] };
+
+function mailTemplateDocs(): Record<string, any> {
+  const tag = { testrunid: RUN, _testdata: true };
+  return {
+    [wsMail.tpl.welcome]: { templatename: wsMail.names.welcome, templatemodel: wsMail.welcomeModel, active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.reminder]: { templatename: wsMail.names.reminder, templatemodel: wsMail.reminderModel, active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.plain]: { templatename: wsMail.names.plain, templatemodel: [], active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.pending]: { templatename: wsMail.names.pending, templatemodel: ['name'], active: true, postmarkstatus: 'pending', ...tag },
+    [wsMail.tpl.retired]: { templatename: wsMail.names.retired, templatemodel: ['name'], active: false, postmarkstatus: 'approved', ...tag },
+  };
+}
+
+/** PRECONDITION: the mail workshop (copy of W_INACTIVE, own title, no `active` key) — once per file. */
+export async function seedMailWorkshop(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const base: any = (await db.collection('workshopconfiguration').doc(wsIds.W_INACTIVE).get()).data() || {};
+  delete base.active;   // WS-13 counts active==false docs; list specs find rows by W_INACTIVE's title
+  await db.collection('workshopconfiguration').doc(wsMail.workshopId).set({
+    ...base,
+    docid: wsMail.workshopId,
+    detailpage: { ...(base.detailpage || {}), title: wsMail.title },
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** PRECONDITION: the five `email templates` docs back to their baseline flags (set, not merge). */
+export async function seedMailTemplates(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const docs = mailTemplateDocs();
+  for (const id of Object.keys(docs)) await db.collection('email templates').doc(id).set(docs[id]);
+  await db.collection('email templates').doc(wsMail.tpl.gone).delete().catch(() => { });
+}
+
+/** PRECONDITION: workshopsettings/{W_MAIL} = Dashboard Access only, plus an optional stored `mail`. */
+export async function resetMailSettings(mail?: any): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshopsettings').doc(wsMail.workshopId).set({
+    workshopid: wsMail.workshopId,
+    dashboardaccess: wsMailAccess,
+    ...(mail ? { mail } : {}),
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** PRECONDITION: flip one template's `active` flag (seedMailTemplates restores it). */
+export async function setMailTemplateActive(id: string, active: boolean): Promise<void> {
+  await seed.initAdmin().firestore().collection('email templates').doc(id).set({ active }, { merge: true });
+}
+
+/** ORACLE: one workshopsettings document as stored (null when it does not exist). */
+export async function workshopSettingsDoc(workshopId: string): Promise<any | null> {
+  const snap = await seed.initAdmin().firestore().collection('workshopsettings').doc(workshopId).get();
+  return snap.exists ? (snap.data() || {}) : null;
+}
+
+/** ORACLE: a workshopconfiguration document with its server update time, to prove nothing wrote it. */
+export async function workshopConfigStamp(workshopId: string): Promise<{ exists: boolean; updated: string; data: any }> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').doc(workshopId).get();
+  return {
+    exists: snap.exists,
+    updated: snap.exists && snap.updateTime ? snap.updateTime.toDate().toISOString() + `/${snap.updateTime.nanoseconds}` : '',
+    data: snap.exists ? (snap.data() || {}) : null,
+  };
+}
+
+/**
+ * ORACLE: the template names the picker should offer — the TEST's own read of `email templates` with
+ * active == true, kept when postmarkstatus is 'approved'. Other suites' docs in the shared emulator are
+ * part of this population, so the cases compare against it rather than against a fixed list.
+ */
+export async function activeApprovedTemplateNames(): Promise<string[]> {
+  const snap = await seed.initAdmin().firestore().collection('email templates').where('active', '==', true).get();
+  return snap.docs
+    .map((d: any) => d.data() || {})
+    .filter((x: any) => x.postmarkstatus === 'approved')
+    .map((x: any) => (x.templatename ?? '').toString().trim() || 'Untitled template');
+}
+
+/** Remove everything the mail cases seeded or the app wrote for them. */
+export async function cleanMailWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  for (const id of Object.values(wsMail.tpl)) await db.collection('email templates').doc(id).delete().catch(() => { });
+  for (const id of [wsMail.workshopId, wsMail.newWorkshopId]) {
+    await db.collection('workshopsettings').doc(id).delete().catch(() => { });
+    await db.collection('workshopconfiguration').doc(id).delete().catch(() => { });
+  }
+}
