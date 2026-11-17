@@ -173,6 +173,27 @@ export const jcdAssuredLeads = {
   onboardPerson: `JCD Onboard Remark ${RUN}`,
 };
 
+/** JC Health follow-ups (seed-journey.js step 6, JCH-15/16). Doc id = the app's scheduleId. */
+export const jchFollowUps = {
+  ids: { A: `${RUN}_FU_A`, B: `${RUN}_FU_B`, C: `${RUN}_FU_C`, E: `${RUN}_FU_E`, F: `${RUN}_FU_F`, X: `${RUN}_FU_X` },
+  note: (k: 'A' | 'B' | 'C' | 'E' | 'F' | 'X') => `JCH follow-up FU_${k} ${RUN}`,
+};
+
+/** Ev. Prep board world (seed-journey.js step 9, seedEvprep — own run tag `<run>_evp`). */
+const EVP_RUN = `${RUN}_evp`;
+const evpPerson = (k: string) => ({ pf: `${EVP_RUN}_pf_${k.toLowerCase()}`, name: `EVP ${k[0]}${k.slice(1).toLowerCase()} ${RUN}` });
+export const evpWorld = {
+  RUN: EVP_RUN,
+  VAR: `${EVP_RUN}_VAR`,
+  names: { variation: `EVP Variation ${RUN}`, one: `EVP Stage One ${RUN}`, two: `EVP Stage Two ${RUN}` },
+  /** liveStages() column key: 'st-' + kebab of the stage name (evprep-board.config.ts stageKey). */
+  stageKey: (name: string) => 'st-' + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+  people: {
+    YET: evpPerson('YET'), CAN: evpPerson('CAN'), ACT: evpPerson('ACT'), DONE: evpPerson('DONE'),
+    OLD: evpPerson('OLD'), RET: evpPerson('RET'), REJ: evpPerson('REJ'), NOB: evpPerson('NOB'),
+  },
+};
+
 export const jchTexts = {
   criticalLetter: `JCH critical letter ${RUN}`,
   askQuestion: `JCH ask question ${RUN}`,

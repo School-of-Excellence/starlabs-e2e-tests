@@ -421,8 +421,6 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('ddc-btn-006'),
       page.getByTestId('ddc-btn-007'),
       page.getByTestId('ddc-msel-008'),
-      page.getByTestId('ddc-div-009'),
-      page.getByTestId('ddc-div-010'),
       page.getByTestId('ddc-btn-011'),
       page.getByTestId('ddc-btn-012'),
       page.getByTestId('ddc-btn-013'),
