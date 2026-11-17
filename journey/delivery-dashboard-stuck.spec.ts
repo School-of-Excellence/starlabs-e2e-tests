@@ -40,6 +40,7 @@
 // tables use the same header/row path; Stuck Cases is the one asserted.
 import { test, expect, Page } from '@playwright/test';
 import { installJourneyStubs, attachJourneyGuard, loginAsJourneyAdmin, ddcStuckWorld as W } from './support/journey';
+import { queryWhere } from '../queue/support/firestore-admin';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
 let guard: ConsoleGuard;
@@ -85,16 +86,39 @@ test.describe('Journey — Delivery dashboard Stuck Cases (priority in-delivery,
     await expect(rows.filter({ hasText: W.names.FUTURE }), 'DDC-STK-01: FUTURE has an appointment booked ahead').toHaveCount(0);
     await expect(rows.filter({ hasText: W.names.NONPRIO }), 'DDC-STK-01: NONPRIO is not priority mode').toHaveCount(0);
 
-    // DAYS for STALE comes from the last ATTENDED appointment (18d) — not the newer unattended one (2d), and
-    // not the 20-day statusdate that DAYS STUCK (waitingperiod) shows in the same row.
-    const stale = rows.filter({ hasText: W.names.STALE }).locator('.pm-days-badge');
-    await expect(stale.filter({ hasText: /^\s*18 DAYS\s*$/ }), 'DDC-STK-01: STALE DAYS = since last ATTENDED appointment').toHaveCount(1);
-    await expect(stale.filter({ hasText: /^\s*2 DAYS\s*$/ }), 'DDC-STK-01: the unattended 2-day-old appointment is ignored').toHaveCount(0);
-    // NOAPPT has no attended appointment → DAYS falls back to statusdate.ongoing (20d), so BOTH badges read 20.
-    const noappt = rows.filter({ hasText: W.names.NOAPPT }).locator('.pm-days-badge');
-    await expect(noappt.filter({ hasText: /^\s*20 DAYS\s*$/ }), 'DDC-STK-01: NOAPPT DAYS falls back to the ongoing date').toHaveCount(2);
+    // DAYS STUCK (2026-11-18, Joshua's 0bb85765 columns): ONE badge, `stuckdays`, with data-basis saying where it
+    // counted from. STALE counts from its last ATTENDED appointment (18d) — not the newer unattended one (2d), not
+    // the 20-day statusdate. NOAPPT / UNATT have no attended appointment → status basis (20d) and a '*'.
+    const days = (k: 'STALE' | 'NOAPPT' | 'UNATT') => rows.filter({ hasText: W.names[k] }).getByTestId('ddc-stuck-days');
+    await expect(days('STALE'), 'DDC-STK-01: STALE DAYS STUCK = since last ATTENDED appointment').toHaveText(/^\s*18 DAYS\s*$/);
+    await expect(days('STALE'), 'DDC-STK-01: …on the appointment basis').toHaveAttribute('data-basis', 'appointment');
+    await expect(days('NOAPPT'), 'DDC-STK-01: NOAPPT falls back to the ongoing date, marked *').toHaveText(/^\s*20 DAYS\*\s*$/);
+    await expect(days('NOAPPT')).toHaveAttribute('data-basis', 'status');
+    await expect(days('UNATT'), 'DDC-STK-01: an unattended appointment never resets the clock').toHaveAttribute('data-basis', 'status');
     // Longest stuck first: the 20-day rows sit above STALE's 18.
     await expect(rows.last(), 'DDC-STK-01: sorted longest stuck first').toContainText(W.names.STALE);
+  });
+
+  test('DDC-STK-03 the stuck row shows its last ATTENDED appointment; no attended one says so; the lookup did not fail', async ({ page }) => {
+    const panel = await openStuckCases(page);
+    for (const h of ['APPOINTMENT', 'APPOINTMENT STATUS', 'APPOINTMENT DATE', 'DAYS STUCK', 'ASSIGNED TO']) {
+      await expect(panel.locator('.pm-data-table th').filter({ hasText: new RegExp(`^\\s*${h}\\s*$`) }), `DDC-STK-03: the ${h} column renders`).toHaveCount(1);
+    }
+    for (const gone of ['LAST APPOINTMENT DATE', 'DAYS']) {
+      await expect(panel.locator('.pm-data-table th').filter({ hasText: new RegExp(`^\\s*${gone}\\s*$`) }), `DDC-STK-03: the old ${gone} column is gone (replaced by DAYS STUCK)`).toHaveCount(0);
+    }
+    const rows = panel.locator('tr.pm-table-row');
+    await expect(async () => {
+      await page.getByTestId('ddc-inp-104').fill('');
+      await page.getByTestId('ddc-inp-104').fill(W.tag);
+      await expect(rows.filter({ hasText: W.names.STALE }).getByTestId('ddc-stuck-days')).toHaveAttribute('data-basis', 'appointment', { timeout: 3_000 });
+    }, 'the appointment join lands').toPass({ timeout: 90_000 });
+    await expect(page.getByTestId('ddc-stuck-appointments-error'), 'DDC-STK-03: the attended-appointment lookup succeeded').toHaveCount(0);
+    await expect(rows.filter({ hasText: W.names.STALE }), 'DDC-STK-03: STALE\'s status comes from its attended appointment').toContainText('Attended');
+    await expect(rows.filter({ hasText: W.names.STALE }), 'DDC-STK-03: STALE has one').not.toContainText('No attended appointment');
+    for (const k of ['NOAPPT', 'UNATT'] as const) {
+      await expect(rows.filter({ hasText: W.names[k] }), `DDC-STK-03: ${k} has no attended appointment`).toContainText('No attended appointment');
+    }
   });
 
   test('DDC-STK-02 the stuck row renders the PP subscription start and end dates', async ({ page }) => {
@@ -214,5 +238,60 @@ test.describe('Journey — Delivery dashboard Weekly Report tab (product picker 
     expect(page.getByTestId('ddc-msel-136')).toBeTruthy();
     expect(page.getByTestId('ddc-btn-137')).toBeTruthy();
     expect(page.getByTestId('ddc-btn-138')).toBeTruthy();
+  });
+});
+
+// DDC-FN (2026-11-18, Joshua's v4 layout pulled onto charan-release — journal 2026-11-18-pull-joshua-jc-health-delivery-v4):
+// one Delivery funnel (Awaiting · Ready · In delivery · Delivered + Stuck / Not-consuming flags) replaces the KPI
+// bento, an "Ongoing by product" strip writes the Products filter, and the stage-mix bar + Delivery speed gauge.
+// ORACLE: the DDC world's product has exactly five `ongoing` PPs (STALE, NOAPPT, UNATT, FUTURE, NONPRIO — mode does
+// not matter for In delivery, only for Stuck). Its chip must read that, re-derived here from the PP docs; picking it
+// must scope the whole screen (strip selection, speed caption, funnel = the chip). The All chip must show the same
+// total as In delivery (it printed a hard-coded dash in Joshua's v4).
+test.describe('Journey — Delivery dashboard funnel + Ongoing-by-product strip (v4 layout)', () => {
+  test('DDC-FN-01 the product chip counts its ongoing PPs; picking it scopes the funnel; All restores it', async ({ page }) => {
+    const pps = (await queryWhere('participantsproduct', [['testrunid', '==', W.RUN]])) as any[];
+    const ongoing = pps.filter((d) => d.status === 'ongoing' && String(d.productref?.id ?? d.productref?._path?.segments?.slice(-1)[0] ?? '').endsWith('_P_DFU')).length;
+    expect(ongoing, 'oracle sanity: STALE, NOAPPT, UNATT, FUTURE, NONPRIO are ongoing on the DFU product').toBe(5);
+
+    await loginAsJourneyAdmin(page);
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-delivery-dashboard-clone'), 'ddc must mount').toBeAttached({ timeout: 30_000 });
+    await expect(page.getByTestId('ddc-funnel'), 'DDC-FN-01: the funnel renders').toBeVisible({ timeout: 60_000 });
+    for (const el of [page.getByTestId('ddc-funnel-indelivery'), page.getByTestId('ddc-funnel-delivered'), page.getByTestId('ddc-speed'),
+      page.getByTestId('ddc-kpi-avg-complete'), page.getByTestId('ddc-strip')]) {
+      await expect(el, 'DDC-FN-01: v4 section renders').toBeVisible();
+    }
+
+    const inDelivery = page.getByTestId('ddc-funnel-indelivery').locator('.dd-fnl-step__val');
+    const allChip = page.getByTestId('ddc-strip-all');
+    await expect(allChip, 'DDC-FN-01: nothing narrowed → All products is selected').toHaveClass(/is-sel/);
+    await expect(allChip.locator('.dd-pchip__v'), 'DDC-FN-01: the All chip shows a number, not a dash').toHaveText(/^\s*[\d,]+\s*$/, { timeout: 60_000 });
+    await expect(async () => {
+      expect((await allChip.locator('.dd-pchip__v').textContent())?.trim(), 'DDC-FN-01: All products = In delivery').toBe((await inDelivery.textContent())?.trim());
+    }).toPass({ timeout: 30_000 });
+
+    const chip = page.getByTestId('ddc-strip-chip').filter({ hasText: W.product });
+    await expect(chip.locator('.dd-pchip__v'), `DDC-FN-01: the run product's chip = its ongoing PPs (${ongoing})`).toHaveText(String(ongoing), { timeout: 60_000 });
+    await chip.click();
+    await expect(chip, 'DDC-FN-01: the clicked chip is selected').toHaveClass(/is-sel/, { timeout: 30_000 });
+    await expect(allChip, 'DDC-FN-01: …and All is not').not.toHaveClass(/is-sel/);
+    // the scope caption is the section header next to the gauge (.dd-section-sub), not inside ddc-speed
+    const speedCaption = page.locator('.dd-speed-sec .dd-section-sub');
+    await expect(speedCaption, 'DDC-FN-01: the speed caption names the scope').toHaveText(`Scoped to ${W.product}`);
+    await expect(inDelivery, 'DDC-FN-01: In delivery now counts only that product').toHaveText(String(ongoing), { timeout: 30_000 });
+
+    await allChip.click();
+    await expect(allChip, 'DDC-FN-01: All products clears the narrowing').toHaveClass(/is-sel/, { timeout: 30_000 });
+    await expect(speedCaption, 'DDC-FN-01: …and the caption says so').toHaveText('Across all products');
+  });
+
+  test('DDC-FN-02 the Products Overview stage-mix bar spells out the run product\'s split', async ({ page }) => {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-delivery-dashboard-clone')).toBeAttached({ timeout: 30_000 });
+    await expect(page.getByTestId('ddc-stagemix-legend').first(), 'DDC-FN-02: the stage legend renders').toBeVisible({ timeout: 60_000 });
+    const mix = page.getByTestId('ddc-stagemix').and(page.locator(`[aria-label*="Ongoing 5, Done"]`));
+    await expect(mix.first(), 'DDC-FN-02: a bar reads "Ongoing 5" — the run product\'s five ongoing PPs').toBeAttached({ timeout: 60_000 });
   });
 });

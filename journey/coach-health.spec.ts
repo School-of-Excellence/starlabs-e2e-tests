@@ -36,13 +36,23 @@
 //   Needs attention — E (nothing live), F ('late' alone is not needs-attention), D, X
 //   Schedule        — the cancelled and the attended appointment
 //
+// 2026-11-18 PULL (starlabs-angular specs/journals/2026-11-18-pull-joshua-jc-health-delivery-v4.md): Joshua's
+// Journey tabs (Overall Summary / Onboarding / Ev. Prep / Journey Planning), Overall Summary cards, follow-ups
+// (Schedule card + slide-over + row Due chip), the mini-card Defaulted filter, trend chips. His `jx-*`, `ov-*`,
+// `sched-*` ids were renamed under `jchd-` and the slide-over's `so-*` under `jcso-` (one prefix per component).
+// The embedded Ev. Prep board is its own component (prefix `evp`) and has its own spec, jc-evprep-board.spec.ts.
+//   Needs attention: finance (locked / defaulted) is OUT since Joshua's 3ccd560d — JCH-04 / JCH-10 assert that;
+//   the Defaulted figure moved to the hero finance chip (.ios2-fin-n).
+//   Follow-ups world (seed step 6): A overdue · B today · C in 3 days · E in 20 days (beyond the horizon) ·
+//   F closed by a schedule_done · X off-base. Expected buckets are re-derived from those docs (JCH-15).
+//
 // NOT COVERED HERE: the emulator's Firestore rules are fully permissive (ci/overlay/firestore.rules), so a
 // coach who is DENIED `love letter` / `ask AH` (the dashboard then drops A&H signals silently) cannot be
 // reproduced in this lane.
 import { test, expect, Page } from '@playwright/test';
-import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, journeyProfileIds, jchParticipants as P, jchTexts } from './support/journey';
+import { installJourneyStubs, attachJourneyGuard, loginAsJourneyCoach, journeyProfileIds, jchParticipants as P, jchTexts, jchFollowUps as FU, deleteDocsByField } from './support/journey';
 import { assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { queryWhere } from '../queue/support/firestore-admin';
+import { queryWhere, pollUntil } from '../queue/support/firestore-admin';
 
 const RUN = process.env.JNY_RUNID || 'jny';
 const COACH = journeyProfileIds.journeycoach;
@@ -114,7 +124,7 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     expect(missed, 'oracle sanity: the seed must give exactly two active late participants').toBe(2);
 
     await openDashboard(page);
-    await expect(page.getByTestId('jchd-kpi-defaulted').locator('.ios2-n'),
+    await expect(page.getByTestId('jchd-kpi-defaulted').locator('.ios2-fin-n'),
       `JCH-01: Defaulted = active base with financialstatus 'defaulted' in any case (${defaulted})`).toHaveText(String(defaulted), { timeout: 45_000 });
     await expect(page.getByTestId('jchd-kpi-missed').locator('.ios2-n'),
       `JCH-01: Missed = active base with financialstatus 'late' (${missed})`).toHaveText(String(missed), { timeout: 45_000 });
@@ -122,7 +132,7 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
 
   test('JCH-02 the Defaulted tile opens Participants filtered to exactly the defaulted participant', async ({ page }) => {
     await openDashboard(page);
-    await expect(page.getByTestId('jchd-kpi-defaulted').locator('.ios2-n')).toHaveText('1', { timeout: 45_000 });
+    await expect(page.getByTestId('jchd-kpi-defaulted').locator('.ios2-fin-n')).toHaveText('1', { timeout: 45_000 });
     await page.getByTestId('jchd-kpi-defaulted').click();
 
     const rows = page.getByTestId('jchd-tr-070');
@@ -145,15 +155,17 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     }
   });
 
-  test('JCH-04 Needs attention = lapsed / not started / tickets / locked-or-defaulted / A&H — not late alone', async ({ page }) => {
+  test('JCH-04 Needs attention = lapsed / not started / tickets / A&H — not finance, not late alone', async ({ page }) => {
     const base = (await coachBase()).filter(isActive);
     const ah = await ahFlagged();
-    const expected = base.filter((m) => ['locked', 'defaulted'].includes(fin(m)) || ah.critical.has(m.id) || ah.attention.has(m.id)).length;
-    expect(expected, 'oracle sanity: A (defaulted + A&H), B (A&H only), C (locked) — not E, F, D or X').toBe(3);
+    // Finance is OUT of Needs attention since Joshua's 3ccd560d (2026-11-11, pulled 2026-11-18): locked / defaulted
+    // have their own hero finance chips. C (locked only) is therefore the negative control for that rule now.
+    const expected = base.filter((m) => ah.critical.has(m.id) || ah.attention.has(m.id)).length;
+    expect(expected, 'oracle sanity: A (A&H critical), B (A&H attention) — not C (locked only), E, F, D or X').toBe(2);
 
     await openDashboard(page);
     await expect(page.getByTestId('jchd-btn-014').locator('.ios2-big'),
-      `JCH-04: the Needs-attention hero must count A, B, C (${expected})`).toHaveText(String(expected), { timeout: 45_000 });
+      `JCH-04: the Needs-attention hero must count A and B — C is only locked (${expected})`).toHaveText(String(expected), { timeout: 45_000 });
   });
 
   test('JCH-05 the slide-over lists the participant\'s Love Letter and Ask A&H entries with their tags', async ({ page }) => {
@@ -284,11 +296,11 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await openDashboard(page);
     await openParticipants(page);
     const chipsOf = (name: string) => row(page, name).getByTestId('jchd-na-reason');
-    await expect(chipsOf(P.A.name), 'JCH-10: A is defaulted AND A&H critical — one chip each')
-      .toHaveText(['Payments defaulted', 'Critical'], { timeout: 30_000 });
+    await expect(chipsOf(P.A.name), 'JCH-10: A is A&H critical — its defaulted status is a finance chip, not a Needs-attention reason (3ccd560d)')
+      .toHaveText(['Critical'], { timeout: 30_000 });
     await expect(chipsOf(P.B.name), 'JCH-10: B reaches Needs attention through its Ask A&H tag alone (late is not a condition)')
       .toHaveText(['Needs Attention']);
-    await expect(chipsOf(P.C.name), 'JCH-10: C is locked').toHaveText(['Payments locked']);
+    await expect(chipsOf(P.C.name), 'JCH-10: C is only locked — finance is not a Needs-attention reason').toHaveCount(0);
     await expect(chipsOf(P.F.name), 'JCH-10: F is only late — not a needs-attention condition, so no chips').toHaveCount(0);
     await expect(chipsOf(P.E.name), 'JCH-10: E has nothing live').toHaveCount(0);
   });
@@ -326,6 +338,195 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(page.getByTestId('jchd-btn-025').locator('.jcp-num'),
       `JCH-12: JC done last week = attended COACHING sessions only (${coaching}) — the onboarding call is not one`)
       .toHaveText(String(coaching), { timeout: 60_000 });
+  });
+
+
+  // ===== 2026-11-18: Joshua's Journey tabs, Overall Summary, follow-ups, mini-card filter =====
+
+  test('JCH-13 the Journey tabs mount on first visit; Onboarding and Ev. Prep stay alive off-screen, Overall is rebuilt', async ({ page }) => {
+    await openDashboard(page);
+    await expect(page.getByTestId('jchd-tabbar'), 'JCH-13: the tab bar renders').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-tab-planning'), 'JCH-13: Journey Planning is the default tab').toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('jchd-panel-onboarding'), 'JCH-13: nothing else mounts before its first visit').toHaveCount(0);
+    await expect(page.getByTestId('jchd-panel-evprep')).toHaveCount(0);
+    await expect(page.getByTestId('jchd-panel-overall')).toHaveCount(0);
+
+    await page.getByTestId('jchd-tab-evprep').click();
+    await expect(page.getByTestId('jchd-tab-evprep')).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByTestId('jchd-panel-evprep'), 'JCH-13: Ev. Prep mounts on its first visit').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-evprep-board').getByTestId('evp-root'), 'JCH-13: …with the board inside').toBeAttached();
+    await expect(page.getByTestId('jchd-kpi-defaulted'), 'JCH-13: the Planning screen is not rendered under another tab').toHaveCount(0);
+
+    await page.getByTestId('jchd-tab-planning').click();
+    await expect(page.getByTestId('jchd-kpi-defaulted'), 'JCH-13: back on Planning').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-panel-evprep'), 'JCH-13: Ev. Prep stays mounted (no re-read on the next visit)…').toHaveCount(1);
+    await expect(page.getByTestId('jchd-panel-evprep'), 'JCH-13: …but hidden').toBeHidden();
+
+    await page.getByTestId('jchd-tab-onboarding').click();
+    await expect(page.getByTestId('jchd-panel-onboarding'), 'JCH-13: Onboarding mounts on its first visit').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-onboarding-sales'), 'JCH-13: …the embedded onboarding dashboard').toBeAttached();
+
+    await page.getByTestId('jchd-tab-overall').click();
+    await expect(page.getByTestId('jchd-panel-overall'), 'JCH-13: Overall Summary renders').toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('jchd-panel-onboarding'), 'JCH-13: Overall reads the SAME onboarding instance — kept, hidden').toBeHidden();
+    await expect(page.getByTestId('jchd-panel-onboarding')).toHaveCount(1);
+
+    await page.getByTestId('jchd-tab-planning').click();
+    await expect(page.getByTestId('jchd-panel-overall'), 'JCH-13: Overall is destroyed when you leave it').toHaveCount(0);
+    await expect(page.getByTestId('jchd-panel-onboarding'), 'JCH-13: the onboarding instance survives').toHaveCount(1);
+  });
+
+  test('JCH-14 Overall Summary: schedule tiles match the seeded bookings; plans need a single coach; the month steps', async ({ page }) => {
+    await openDashboard(page);
+    await page.getByTestId('jchd-tab-overall').click();
+    await expect(page.getByTestId('jchd-panel-overall')).toBeVisible({ timeout: 30_000 });
+    for (const card of [page.getByTestId('jchd-ov-sales'), page.getByTestId('jchd-ov-onboarding'), page.getByTestId('jchd-ov-schedule'),
+      page.getByTestId('jchd-ov-plan'), page.getByTestId('jchd-ov-health'), page.getByTestId('jchd-ov-ah')]) {
+      await expect(card, 'JCH-14: every Overall card renders').toBeVisible({ timeout: 60_000 });
+    }
+
+    // Same seed and predicates as JCH-07 (coach scope): JC tomorrow (A) — the cancelled one is dropped; onboarding tomorrow (B).
+    const sched = page.getByTestId('jchd-ov-schedule');
+    await expect(sched.getByText('loading…'), 'JCH-14: the appointments read completes').toHaveCount(0, { timeout: 60_000 });
+    await expect(page.getByTestId('jchd-ov-jc-today').locator('.jcp-num'), 'JCH-14: no JC session today').toHaveText('0');
+    await expect(page.getByTestId('jchd-ov-jc-week').locator('.jcp-num'), 'JCH-14: JC next 7 days = A tomorrow (cancelled dropped)').toHaveText('1');
+    await expect(page.getByTestId('jchd-ov-jc-month').locator('.jcp-num'), 'JCH-14: next 30 days includes the next 7').toHaveText('1');
+    await expect(page.getByTestId('jchd-ov-obs-today').locator('.jcp-num')).toHaveText('0');
+    await expect(page.getByTestId('jchd-ov-obs-week').locator('.jcp-num'), 'JCH-14: onboarding tomorrow (B) counts on the Onboarding row').toHaveText('1');
+    await expect(page.getByTestId('jchd-ov-obs-month').locator('.jcp-num')).toHaveText('1');
+
+    // Plans read only for ONE coach's roster: the coach's own scope shows the grid, the All scope asks for a coach.
+    await expect(page.getByTestId('jchd-ov-plan-pick'), 'JCH-14: coach scope → no "pick a coach" note').toHaveCount(0);
+    await expect(page.getByTestId('jchd-ov-plan-grid'), 'JCH-14: the plan grid loads for the coach').toBeVisible({ timeout: 45_000 });
+    await page.getByTestId('jchd-ov-viewing-select').selectOption({ label: 'All participants' });
+    await expect(page.getByTestId('jchd-ov-plan-pick'), 'JCH-14: All scope → plans are not read; the card asks for a coach').toBeVisible({ timeout: 45_000 });
+
+    // The month picker is the shared onboarding dashboard's range: next month moves the label, previous brings it back.
+    const label = page.getByTestId('jchd-ov-date-label');
+    await expect(label).toBeVisible({ timeout: 30_000 });
+    const before = (await label.textContent())?.trim();
+    await page.getByTestId('jchd-ov-date-next').click();
+    await expect(label, 'JCH-14: › moves the range a month on').not.toHaveText(before ?? '', { timeout: 15_000 });
+    await page.getByTestId('jchd-ov-date-prev').click();
+    await expect(label, 'JCH-14: ‹ brings it back').toHaveText(before ?? '', { timeout: 15_000 });
+  });
+
+  test('JCH-15 follow-ups: the Schedule card buckets OPEN dated follow-ups of the coach\'s base; rows carry a Due chip', async ({ page }) => {
+    // Re-arm B (JCH-16 marks it done; a retry of this case must not see that close).
+    await deleteDocsByField('healthtracker_activity', 'scheduleId', FU.ids.B);
+
+    // [ORACLE] open = type 'schedule' with no schedule_done pointing at it; on the coach's base; bucket by due day.
+    const base = new Set((await coachBase()).map((m) => m.id));
+    const evs = (await queryWhere('healthtracker_activity', [['testrunid', '==', RUN]])) as any[];
+    const closed = new Set(evs.filter((e) => e.type === 'schedule_done').map((e) => e.scheduleId));
+    const day0 = new Date(); day0.setHours(0, 0, 0, 0);
+    const t0 = day0.getTime();
+    const dayOf = (e: any) => { const d = e.dueDate.toDate(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const open = evs.filter((e) => e.type === 'schedule' && !closed.has(e.id) && base.has(e.profileid));
+    const expected = {
+      overdue: open.filter((e) => dayOf(e) < t0).length,
+      today: open.filter((e) => dayOf(e) === t0).length,
+      week: open.filter((e) => dayOf(e) > t0 && dayOf(e) <= t0 + 7 * 86400e3).length,
+    };
+    expect(expected, 'oracle sanity: A overdue, B today, C in 3 days — E beyond 7 days, F closed, X off-base').toEqual({ overdue: 1, today: 1, week: 1 });
+
+    await openDashboard(page);
+    await expect(page.getByTestId('jchd-sched-fu'), 'JCH-15: the Follow-ups column renders on the Schedule card').toBeVisible({ timeout: 45_000 });
+    await expect(page.getByTestId('jchd-sched-fu-overdue').locator('.jcp-num'), 'JCH-15: Overdue = A').toHaveText(String(expected.overdue), { timeout: 45_000 });
+    await expect(page.getByTestId('jchd-sched-fu-today').locator('.jcp-num'), 'JCH-15: Today = B').toHaveText(String(expected.today));
+    await expect(page.getByTestId('jchd-sched-fu-week').locator('.jcp-num'), 'JCH-15: Next 7 days = C (E is 20 days out)').toHaveText(String(expected.week));
+
+    const items = page.getByTestId('jchd-sched-fu-list').getByTestId('jchd-sched-fu-item');
+    await expect(items, 'JCH-15: the list holds the three in-horizon follow-ups').toHaveCount(3);
+    await expect(items.first(), 'JCH-15: earliest due first (A, overdue)').toContainText(P.A.name);
+    for (const who of [P.E, P.F, P.X]) {
+      await expect(items.filter({ hasText: who.name }), `JCH-15: ${who.name} must not be listed`).toHaveCount(0);
+    }
+    await page.getByTestId('jchd-sched-fu-overdue').click();
+    await expect(items, 'JCH-15: the Overdue tile filters the list to A').toHaveCount(1);
+    await expect(items.first()).toContainText(FU.note('A'));
+    await page.getByTestId('jchd-sched-fu-overdue').click();
+    await expect(items, 'JCH-15: clicking the active tile again shows all three').toHaveCount(3);
+
+    // Row chip: the earliest OPEN DATED follow-up, whatever the horizon (E's 20-day one still shows); none for F (closed).
+    await openParticipants(page);
+    await expect(row(page, P.A.name).getByTestId('jchd-row-due'), 'JCH-15: A\'s chip is overdue').toHaveClass(/is-overdue/, { timeout: 30_000 });
+    await expect(row(page, P.B.name).getByTestId('jchd-row-due'), 'JCH-15: B\'s chip (due today) is not overdue').not.toHaveClass(/is-overdue/);
+    await expect(row(page, P.E.name).getByTestId('jchd-row-due'), 'JCH-15: E has a chip — the horizon only limits the card').toHaveCount(1);
+    await expect(row(page, P.F.name).getByTestId('jchd-row-due'), 'JCH-15: F\'s only follow-up is closed').toHaveCount(0);
+  });
+
+  test('JCH-16 the slide-over lists a participant\'s open follow-ups and Mark done closes one', async ({ page }) => {
+    await deleteDocsByField('healthtracker_activity', 'scheduleId', FU.ids.B);
+    await openDashboard(page);
+    await openParticipants(page);
+
+    await row(page, P.F.name).click();
+    const so = page.locator('app-participant-slideover');
+    await expect(so.getByTestId('jcso-fu-empty'), 'JCH-16: F\'s only follow-up is closed → "No open follow-ups"').toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press('Escape');
+    await expect(so).toHaveCount(0, { timeout: 10_000 });
+
+    await row(page, P.B.name).click();
+    const item = so.getByTestId('jcso-fu-list').getByTestId('jcso-fu-item');
+    await expect(item, 'JCH-16: B has one open follow-up').toHaveCount(1, { timeout: 30_000 });
+    await expect(item).toContainText(FU.note('B'));
+    await item.getByTestId('jcso-fu-done').click();
+    await expect(so.getByTestId('jcso-fu-empty'), 'JCH-16: Mark done removes it from the list').toBeVisible({ timeout: 30_000 });
+
+    // [ORACLE] the close is a schedule_done event pointing at B's follow-up — written by the app, read back here.
+    const done = await pollUntil(async () => (await queryWhere('healthtracker_activity', [['scheduleId', '==', FU.ids.B]])).filter((d: any) => d.type === 'schedule_done'),
+      (rows) => rows.length === 1, { timeoutMs: 30_000 });
+    expect(done.length, 'JCH-16: exactly one schedule_done for B').toBe(1);
+
+    await page.keyboard.press('Escape');
+    await expect(row(page, P.B.name).getByTestId('jchd-row-due'), 'JCH-16: B\'s row chip goes with it').toHaveCount(0, { timeout: 15_000 });
+    await deleteDocsByField('healthtracker_activity', 'scheduleId', FU.ids.B);   // leave the world as seeded
+  });
+
+  test('JCH-17 the Defaulted mini card filters Participants to the defaulted participant and says how many show', async ({ page }) => {
+    await openDashboard(page);
+    await openParticipants(page);
+    const card = page.getByTestId('jchd-mc-defaulted');
+    await expect(card.locator('.mc-num'), 'JCH-17: same population as the Defaulted tile (JCH-01)').toHaveText('1', { timeout: 45_000 });
+    await card.click();
+    await expect(page.getByTestId('jchd-tr-070'), 'JCH-17: only A remains').toHaveCount(1, { timeout: 30_000 });
+    await expect(page.getByTestId('jchd-tr-070').first()).toContainText(P.A.name);
+    await expect(page.getByTestId('jchd-diag-showing'), 'JCH-17: the diag line reports the filtered count').toContainText('showing 1');
+    await card.click();
+    await expect(page.getByTestId('jchd-diag-showing'), 'JCH-17: clicking the active card clears the filter').toHaveCount(0);
+  });
+
+  test.fixme('JCH-ADDR2 trend / "new since yesterday" chips, finance hero, Overall drill tiles, range inputs, sales / onboarding / plan / health rows addressable (deferred behavioral)', async ({ page }) => {
+    await page.goto('/journey-coach-health', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('jchd-new-na')).toBeTruthy();
+    expect(page.getByTestId('jchd-new-gq')).toBeTruthy();
+    expect(page.getByTestId('jchd-mc-new-na')).toBeTruthy();
+    expect(page.getByTestId('jchd-mc-new-gq')).toBeTruthy();
+    expect(page.getByTestId('jchd-row-new')).toBeTruthy();
+    expect(page.getByTestId('jchd-trend')).toBeTruthy();
+    expect(page.getByTestId('jchd-trend-delta')).toBeTruthy();
+    expect(page.getByTestId('jchd-trend-spark')).toBeTruthy();
+    expect(page.getByTestId('jchd-hero-finance')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-date-month-mode')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-date-range-mode')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-date-month')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-date-start')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-date-end')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-row')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-sales-total')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ob-tobe')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ob-le7')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ob-gt7')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ob-onboarded')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ob-avg')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-jc-done')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-obs-done')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-plan-error')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-plan-row')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-plan-cell')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-health-total')).toBeTruthy();
+    expect(page.getByTestId('jchd-ov-ah-needsattention-combined')).toBeTruthy();
   });
 
   // ---- hooks no case drives yet ----
