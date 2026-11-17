@@ -311,8 +311,10 @@ test.describe('Workshops deep — dashboard enroll + metrics (real UI, anti-circ
     await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
 
+    // The 2026-11-17 dashboard redesign draws the clickable metric cards as <button class="metric-card">
+    // instead of <mat-card>: accept either element (the number still sits in .metric-value).
     const cardValue = async (label: string): Promise<number> => {
-      const card = page.locator('mat-card.metric-card').filter({ hasText: label });
+      const card = page.locator('mat-card.metric-card, button.metric-card').filter({ hasText: label });
       await expect(card, `metric card "${label}" must render`).toBeVisible({ timeout: 30_000 });
       const txt = (await card.locator('.metric-value, h2').first().innerText()).trim();
       return parseInt(txt.replace(/[^0-9]/g, ''), 10);
@@ -353,7 +355,8 @@ test.describe('Workshops deep — comms safety (no production cloud-function esc
 
     // The Send-Email button lives in the participant panel that opens on a metric click. Open the
     // "Total Enrolled" panel first (onMetricClick('totalEnrolled') → showParticipantPanel=true).
-    const enrolledCard = page.locator('mat-card.metric-card').filter({ hasText: 'Total Enrolled' });
+    // <mat-card> before the 2026-11-17 dashboard redesign, <button> after it.
+    const enrolledCard = page.locator('mat-card.metric-card, button.metric-card').filter({ hasText: 'Total Enrolled' });
     await expect(enrolledCard, 'WS-14: the Total Enrolled card must render').toBeVisible({ timeout: 30_000 });
     await enrolledCard.click();
 

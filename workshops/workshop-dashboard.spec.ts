@@ -74,8 +74,9 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
 
     // [REAL-UI] the "Total Enrolled" metric card renders {{ totalEnrolled }} = the length of the live
     // `workshop participant enrolled where workshopref==ref` stream (updateMetrics, ts:1054). Wait for
-    // the card the app built, then read the number it computed.
-    const card = page.locator('mat-card.metric-card').filter({ hasText: 'Total Enrolled' });
+    // the card the app built, then read the number it computed. The 2026-11-17 redesign draws the clickable
+    // metric cards as <button class="metric-card"> instead of <mat-card>: accept either element.
+    const card = page.locator('mat-card.metric-card, button.metric-card').filter({ hasText: 'Total Enrolled' });
     await expect(card, 'WS-07: the Total Enrolled metric card must render').toBeVisible({ timeout: 30_000 });
 
     // [ASSERT] independent Firestore count of enrolled docs for the dashboard workshop. Every enrolled
