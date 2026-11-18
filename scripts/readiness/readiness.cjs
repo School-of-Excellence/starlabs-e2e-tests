@@ -110,8 +110,10 @@ function main() {
   const drift = rawDrift.drifted.length
     ? lib.splitByBase(rawDrift, baseDeclares(rawDrift.drifted.map((d) => d.id)))
     : rawDrift;
-  const newComponents = added.length
-    ? lib.findUntestedNewComponents(APP_ROOT, HUB_ROOT, manifest, added)
+  // Retired (deprecated) files never participate — same rule as coverage and element checks.
+  const addedLive = lib.withoutDeprecated(added, classified);
+  const newComponents = addedLive.length
+    ? lib.findUntestedNewComponents(APP_ROOT, HUB_ROOT, manifest, addedLive)
     : [];
 
   // Element-level: what did this diff add, and does any spec exercise it?

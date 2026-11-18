@@ -215,6 +215,15 @@ fs.writeFileSync(path.join(app, 'src', 'app', 'queue system', 'known.component.h
   const r = lib.findUntestedNewComponents(app, hub, manifest, added);
   eq('flags the component no spec references', r.map((c) => c.file), ['src/app/queue system/fresh.component.ts']);
 }
+{
+  // 2026-11-19: a brand-new component the operator RETIRED must not be flagged as untested.
+  const added = ['src/app/old-screen/new-sandbox.component.ts', 'src/app/queue system/fresh.component.ts'];
+  const classified = lib.classifyChanges(manifest, added);
+  const live = lib.withoutDeprecated(added, classified);
+  eq('retired new file is dropped before the new-component check', live, ['src/app/queue system/fresh.component.ts']);
+  eq('  nothing else is dropped', lib.withoutDeprecated(['a.ts', 'b.ts'], { deprecated: [] }), ['a.ts', 'b.ts']);
+  eq('  tolerates a classification without a deprecated bucket', lib.withoutDeprecated(['a.ts'], {}), ['a.ts']);
+}
 
 console.log('\nanalyzeElements (new vs pre-existing, against a base version)');
 {

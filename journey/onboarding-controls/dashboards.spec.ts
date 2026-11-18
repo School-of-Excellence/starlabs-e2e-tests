@@ -868,6 +868,14 @@ test.describe('Journey Onboarding — routable screens: controls addressable', (
       page.getByTestId('jpl-msel-025'),
       page.getByTestId('jpl-btn-026'),
       page.getByTestId('jpl-btn-027'),
+      // past-months section (added 2026-11-12, f91f6a48 "ATC Notes")
+      page.getByTestId('jpl-div-028'),
+      page.getByTestId('jpl-div-029'),
+      page.getByTestId('jpl-div-030'),
+      page.getByTestId('jpl-div-031'),
+      page.getByTestId('jpl-div-032'),
+      page.getByTestId('jpl-div-033'),
+      page.getByTestId('jpl-div-034'),
     ];
     for (const c of controls) {
       expect(c, 'jpl: interactive control must be addressable and visible').toBeTruthy();

@@ -53,8 +53,15 @@ test.describe('ATC — compact brief player (real UI, emulator only)', () => {
     await expect(player.getByTestId('aa-play')).toBeVisible();
     await expect(player.getByTestId('aa-seek'), 'seek disabled until the clip loads').toBeDisabled();
     await expect(player.getByTestId('aa-rate')).toHaveText('1x');
-    await expect(player.locator('audio')).not.toHaveAttribute('controls', /.*/);
-    await expect(player.locator('audio')).toHaveAttribute('controlslist', /nodownload/);
+    // The <audio> element itself (aa-player) is always in the DOM, hidden, with no native controls.
+    const audio = player.getByTestId('aa-player');
+    await expect(audio).toHaveCount(1);
+    await expect(audio).not.toHaveAttribute('controls', /.*/);
+    await expect(audio).toHaveAttribute('controlslist', /nodownload/);
+    // aa-start is the NATIVE-mode start button — compact mode replaces it with aa-play.
+    await expect(player.getByTestId('aa-start'), 'compact mode has no native start button').toHaveCount(0);
+    // aa-retry only appears after a failed load — nothing has been played yet.
+    await expect(player.getByTestId('aa-retry'), 'no retry before any failure').toHaveCount(0);
   });
 
   test('AAP-02 warm ping on mount; Play sends the PATH and the fence accepts it', async ({ page }) => {

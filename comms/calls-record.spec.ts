@@ -23,8 +23,15 @@ import { test, expect, Page, Request } from '@playwright/test';
 import { installCommsStubs, loginAsCommsAdmin } from './support/comms';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { selectMatOption } from '../_shared/mat-select';
-import { db } from '../queue/support/firestore-admin';
 import { Timestamp } from 'firebase-admin/firestore';
+
+// Writes go through the SHARED emulator-aware admin (lib/seed-common — same as seed-comms.js):
+// emulator-pinned when FIRESTORE_EMULATOR_HOST is set, else the allowlist-guarded test project.
+// NOT queue/support/firestore-admin's db(): that handle is typed READ-ONLY (doc() exposes only
+// get()), so .set()/.delete() on it are type errors even though they work at runtime.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { initAdminAuto } = require('../lib/seed-common');
+const db = () => initAdminAuto().firestore();
 
 const RUN = process.env.COMM_RUNID || 'comm';
 const CALLS = 'myoperator calls';
@@ -106,8 +113,9 @@ test.describe('Comms — Calls tab (MyOperator recordings, real UI, emulator onl
     await openCalls(page);
     await expect(row(page, AGENT_ID)).toHaveCount(1);
     await expect(row(page, NUM.old), 'a 10-day-old call is outside the default 7-day range').toHaveCount(0);
+    // Asserted by role, not by the removed test id: the readiness check treats any id a spec names
+    // as "must exist in the app", so naming a deleted id is reported as drift.
     await expect(page.getByRole('button', { name: /Start Live|Stop Live/ })).toHaveCount(0);
-    await expect(page.getByTestId('aeclr-btn-12')).toHaveCount(0);
   });
 
   test('CR-02 a call written while the tab is open appears without a reload, flagged new', async ({ page }) => {
@@ -131,8 +139,7 @@ test.describe('Comms — Calls tab (MyOperator recordings, real UI, emulator onl
     await expect(player.getByTestId('aa-rate')).toHaveText('1x');
     await expect(player.locator('audio')).not.toHaveAttribute('controls', /.*/);
     await expect(player.locator('audio')).toHaveAttribute('controlslist', /nodownload/);
-    await expect(page.getByTestId('aeclr-btn-23'), 'the old download button is gone').toHaveCount(0);
-    await expect(page.getByRole('button', { name: /download/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /download/i }), 'the old download button is gone').toHaveCount(0);
   });
 
   test('CR-04 warm ping on mount; Play asks getMediaUrls to sign the stored path, and the fence accepts it', async ({ page }) => {

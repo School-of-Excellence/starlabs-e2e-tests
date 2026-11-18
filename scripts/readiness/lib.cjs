@@ -417,6 +417,17 @@ function analyzeElements({ appRoot, hubRoot, manifest, changedFiles, readBase })
 }
 
 /**
+ * Drop files the manifest RETIRED (`retired.appPaths`) — they "simply do not participate"
+ * (manifest `_appPathsWhy`). classifyChanges already keeps them out of coverage and element
+ * checks; this applies the same rule to the new-component check, which previously received every
+ * added file and so blocked a commit for a brand-new screen the operator had just retired.
+ */
+function withoutDeprecated(files, classified) {
+  const dead = new Set(((classified && classified.deprecated) || []).map((d) => d.file));
+  return files.filter((f) => !dead.has(f));
+}
+
+/**
  * Components added in this diff whose hooks no spec references — a new screen inside an
  * already-covered folder passes the coverage check while nothing actually tests it.
  */
@@ -500,6 +511,7 @@ module.exports = {
   appSelectorIndex,
   isDeclared,
   findUntestedNewComponents,
+  withoutDeprecated,
   hooksIn,
   allSpecHookRefs,
   unhookedInteractive,
