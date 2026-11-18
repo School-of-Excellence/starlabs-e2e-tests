@@ -21,8 +21,8 @@
 //     instead — so typing in the box threw, MatTableDataSource aborted the filter pass, and the
 //     table silently stopped responding. The console guard catches the throw; the negative-control-
 //     first ordering catches the silence.
-//   • WS-44: the tag's condition (`workshoponly`) is a precondition write; the assertion is on what
-//     the app RENDERED from it — a text element with a painted background, and no new.png anywhere.
+//   • WS-44 and WS-77 moved to workshop-dashboard-new-exist.spec.ts (2026-11-12): the New tag now follows
+//     new_user_data (not `workshoponly`), and the Total Enrolled export gained Enrollment Date + Tags.
 //
 // Hook prefix: this screen's hooks are `wd-*` (workshop-dashboard.component.html).
 //
@@ -32,7 +32,7 @@ import { test, expect, Locator } from '@playwright/test';
 import {
   wsActors, wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, loginAsWshopMover,
   resetParticipantWorkshopP0, alignWorkshopMetadataNames, p0MetadataEmail, stampP0DistinctName,
-  stampP0Workshoponly, wsP0SearchName,
+  wsP0SearchName,
   WS_EVERGREEN_DAYS_LEFT, clearEvergreenExtended, seedEvergreenExtended, wsEvergreenIds, wsMetaNames,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -74,8 +74,9 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
 
     // [REAL-UI] the "Total Enrolled" metric card renders {{ totalEnrolled }} = the length of the live
     // `workshop participant enrolled where workshopref==ref` stream (updateMetrics, ts:1054). Wait for
-    // the card the app built, then read the number it computed.
-    const card = page.locator('mat-card.metric-card').filter({ hasText: 'Total Enrolled' });
+    // the card the app built, then read the number it computed. The 2026-11-17 redesign draws the clickable
+    // metric cards as <button class="metric-card"> instead of <mat-card>: accept either element.
+    const card = page.locator('mat-card.metric-card, button.metric-card').filter({ hasText: 'Total Enrolled' });
     await expect(card, 'WS-07: the Total Enrolled metric card must render').toBeVisible({ timeout: 30_000 });
 
     // [ASSERT] independent Firestore count of enrolled docs for the dashboard workshop. Every enrolled
@@ -293,39 +294,6 @@ test.describe('Workshop dashboard — enrolled metric + progress + move-next (re
       await expect(rows, 'WS-43: the row returns, matched on its email alone').toHaveCount(baseline, { timeout: 15_000 });
     } finally {
       await alignWorkshopMetadataNames();
-    }
-  });
-
-  // ===========================================================================================
-  // WS-44 — the "New" marker is a highlighted text tag, not the assets/new.png image
-  // ===========================================================================================
-  test('WS-44 a new participant is marked with a highlighted "New" text tag, no image', async ({ page }) => {
-    // Precondition: `workshoponly` is the flag the tag renders on. Not CF-owned, so this write stands.
-    await stampP0Workshoponly(true);
-    try {
-      await loginAsWshopAdmin(page);
-      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
-      await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${wsIds.W_DASH}`), { timeout: 30_000 });
-
-      const p0Row = page.locator('table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]').first();
-      await expect(p0Row, 'WS-44: the enrolled participant row must render').toBeVisible({ timeout: 90_000 });
-
-      // [ASSERT] the tag is text the app rendered from the flag, in the participant cell.
-      const badge = p0Row.locator('.new-badge');
-      await expect(badge, 'WS-44: the flagged participant carries a New tag').toBeVisible({ timeout: 30_000 });
-      await expect(badge, 'WS-44: the tag is the word New').toHaveText(/^New$/i);
-
-      // [ASSERT] it is a real element, not an <img> — the old marker was assets/new.png, and the point of
-      // the change is that the tag no longer depends on an image loading.
-      expect(await badge.evaluate((el) => el.tagName.toLowerCase()), 'WS-44: the tag is not an image').not.toBe('img');
-      await expect(p0Row.locator('img[src*="new.png"]'), 'WS-44: no new.png image anywhere in the row').toHaveCount(0);
-
-      // [ASSERT] and it is actually highlighted — a background the app painted, not the default
-      // transparent. Read from the live computed style, not from the stylesheet.
-      const bg = await badge.evaluate((el) => getComputedStyle(el).backgroundColor);
-      expect(bg, `WS-44: the tag has a highlight background. Got "${bg}"`).not.toMatch(/rgba\(0,\s*0,\s*0,\s*0\)|transparent/);
-    } finally {
-      await stampP0Workshoponly(false);
     }
   });
 });

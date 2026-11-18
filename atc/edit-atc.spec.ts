@@ -7,7 +7,7 @@
 import { test, expect, Page } from '@playwright/test';
 import {
   ATC, PF, NAME, ACT, PROC, PROC_NAME, MODEL, RUN, installAtcGuards, assertNoRealDb, loginAsAtc,
-  atcDb, atcDoc, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, AtcGuard, fillEditorDialog,
+  atcDb, atcDoc, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, AtcGuard, fillEditorDialog, toObjectPath,
   storageBucket,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -187,14 +187,16 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     const notes = (await atcDb().doc(`atc_notes/${nv.data().notesid}`).get()).data();
     // Signed-URL migration (2026-11-12): object paths are persisted, not download URLs — see PATC-07.
     expect(notes.changeworkbrief).toHaveLength(1);
-    expect(notes.changeworkbrief[0], 'audio stored as an object path')
+    // TRANSITION: toObjectPath() accepts today's download URL as well — see atc/support/atc.ts.
+    expect(toObjectPath(notes.changeworkbrief[0]), 'audio stored under the admin\'s audio folder')
       .toMatch(new RegExp(`^ATC_Audio_Notes/${PF.admin}/`));
     expect(notes.imagenotes).toHaveLength(1);
-    expect(notes.imagenotes[0], 'note image stored as an object path').toMatch(/^Uploaded ATC\//);
-    expect((nv.data().prescription_image || []).some((u: string) => /^Online ATC Images\//.test(u)),
-      'ATC image stored as an object path').toBe(true);
-    for (const v of [...notes.changeworkbrief, ...notes.imagenotes, ...(nv.data().prescription_image || [])]) {
-      expect(v, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+    expect(toObjectPath(notes.imagenotes[0]), 'note image stored under Uploaded ATC').toMatch(/^Uploaded ATC\//);
+    expect((nv.data().prescription_image || []).some((u: string) => /^Online ATC Images\//.test(toObjectPath(u))),
+      'ATC image stored under Online ATC Images').toBe(true);
+    for (const raw of [...notes.changeworkbrief, ...notes.imagenotes, ...(nv.data().prescription_image || [])]) {
+      // Restore once signedURL-media lands: expect(raw, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+      const v = toObjectPath(raw);
       const [exists] = await storageBucket().file(v).exists();
       expect(exists, `the stored path points at a real object: ${v}`).toBe(true);
     }

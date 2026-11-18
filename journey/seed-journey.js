@@ -548,11 +548,38 @@ async function seedJourney() {
   //    excludes onboarding (fix 2026-09-23) — this is the doc that must be left OUT of the count.
   await appt('APT_OB_DONE', HC.A.pf, { starttime: noon(-1), attended: true, onboarding: true });
 
+  //    FOLLOW-UPS (JCH-15/16, Joshua's item 5 — 2026-11-18 pull). The slide-over's "New log > Schedule" writes
+  //    healthtracker_activity {type:'schedule', dueDate}; a {type:'schedule_done', scheduleId} closes it. The
+  //    dashboard buckets OPEN, DATED follow-ups of the viewed roster: overdue (< today) / today / next 7 days.
+  //    Each bucket gets one, and every rule gets something it must drop:
+  //      A due 2 days ago → Overdue · B due today → Today · C due in 3 days → Next 7 days
+  //      E due in 20 days → beyond the 7-day horizon: no tile, no card row (the slide-over still lists it)
+  //      F due tomorrow but CLOSED by a schedule_done → nowhere
+  //      X due today but OFF-BASE → never in this coach's numbers
+  //    Doc id = scheduleId (the app keys open follow-ups by the event's doc id).
+  const fu = (id, pf, dayOffset, extra = {}) => db.collection('healthtracker_activity').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, type: 'schedule', profileid: pf, dueDate: noon(dayOffset),
+    note: `JCH follow-up ${id} ${TESTRUNID}`, actorName: 'JCH Seed Coach', createdAt: days(-1), ...extra, ...tag,
+  });
+  await fu('FU_A', HC.A.pf, -2);
+  await fu('FU_B', HC.B.pf, 0);
+  await fu('FU_C', HC.C.pf, 3);
+  await fu('FU_E', HC.E.pf, 20);
+  await fu('FU_F', HC.F.pf, 1);
+  await fu('FU_X', HC.X.pf, 0);
+  await db.collection('healthtracker_activity').doc(`${TESTRUNID}_FU_F_DONE`).set({
+    docid: `${TESTRUNID}_FU_F_DONE`, type: 'schedule_done', profileid: HC.F.pf, scheduleId: `${TESTRUNID}_FU_F`,
+    createdAt: days(-1), ...tag,
+  });
+
   // 7) FTO / TEAM EVOLUTION world (journey/team-evolution.spec.ts, JTED-*) ==========================
   await seedFto(db, T);
 
   // 8) DELIVERY DASHBOARD STUCK CASES world (journey/delivery-dashboard-stuck.spec.ts, DDC-STK-*) ======
   await seedDdcStuck(db, T);
+
+  // 9) EV. PREP BOARD world (journey/jc-evprep-board.spec.ts, EVP-*) — own run tag, see seedEvprep() ===
+  await seedEvprep(db, T);
 
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
@@ -696,17 +723,20 @@ const FTO_SEEDED = [
 ];
 
 // ── DELIVERY DASHBOARD — STUCK CASES (DDC-STK-*) ─────────────────────────────────────────────────────
-// Rule under test (app bb5bca74, mahalakshmi 2026-09-29): an initiated|ongoing participantsproduct is a
-// Stuck Case when its most recent ATTENDED appointment (appointments.participantproductid == the PP's
-// docid, attended == true, newest endtime) ended >= 15 days ago. Before bb5bca74 it was "15 days since
-// statusdate" — so EVERY PP here carries a 20-day-old statusdate: under the old rule all five would be
-// stuck, and the four controls below are what prove the new rule ran.
-//   STALE   ongoing   · attended appt ended 18d ago + a NEWER UNattended appt (2d) → STUCK, DAYS "18";
-//                       carries subscriptionstart/end so the two new columns have something to render
-//   RECENT  initiated · attended appt ended 3d ago                                → not stuck
-//   NOAPPT  ongoing   · no appointment at all                                    → not stuck (dropped)
-//   UNATT   ongoing   · only an UNattended appt 30d ago                          → not stuck
-//   DONE    completed · attended appt ended 40d ago                              → not stuck (status)
+// Rule under test (starlabs-angular charan-release 2026-11-12 — the Stuck rule of mahalakshmi-development's
+// delivery-dashboard-new): a participantsproduct is a Stuck Case when it is IN DELIVERY (status 'ongoing'
+// AND its own `mode` is 'priority mode'), more than 15 days have passed since its last ATTENDED appointment
+// (appointments.participantproductid == the PP's docid; no attended appointment → since statusdate.ongoing),
+// AND no future appointment is booked (not cancelled, not attended, start > now). Every PP carries a
+// 20-day-old statusdate.
+//   STALE   ongoing · priority · attended 18d ago + a NEWER UNattended appt (2d, past) → STUCK, DAYS "18";
+//                     carries subscriptionstart/end so the two columns have something to render
+//   NOAPPT  ongoing · priority · no appointment at all       → STUCK, DAYS "20" (counted from statusdate.ongoing)
+//   UNATT   ongoing · priority · only an UNattended appt 30d → STUCK, DAYS "20" (unattended never counts)
+//   RECENT  initiated · priority · attended 3d ago           → not stuck (status — it is the Not-Consuming row)
+//   DONE    completed · priority · attended 40d ago          → not stuck (status)
+//   FUTURE  ongoing · priority · attended 25d ago + an appt booked 3d AHEAD → not stuck (future booking)
+//   NONPRIO ongoing · Journey Mode · attended 18d ago        → not stuck (not priority mode)
 // Own run tag + own product, so the FTO world's JTED counts are untouched. CF-consistent like seedFto:
 // every PP has sequenceorder + statusdate; metadata.activeproduct is what productsdata_to_pmd derives.
 const DDC_RUN = `${TESTRUNID}_ddc`;
@@ -714,7 +744,7 @@ const DDC = {
   P: `${DDC_RUN}_P_DFU`,
   P2: `${DDC_RUN}_P_PARALLEL`,
   names: { product: `DDC Stuck Product ${TESTRUNID}`, parallel: `DDC Parallel Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
-  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE'],
+  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE', 'FUTURE', 'NONPRIO'],
   subStart: Date.UTC(2026, 0, 15, 12), subEnd: Date.UTC(2027, 0, 14, 12),
 };
 const ddcPf = (k) => `${DDC_RUN}_pf_${k.toLowerCase()}`;
@@ -731,7 +761,7 @@ async function seedDdcStuck(db, T) {
   // "parallel product" (activeproduct minus the row's product). NDFU so it never becomes a dashboard row itself.
   await set('products', DDC.P2, { id: DDC.P2, product: DDC.names.parallel, type: 'NDFU', atcmodel: null, mode: 'online' });
 
-  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed' };
+  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed', FUTURE: 'ongoing', NONPRIO: 'ongoing' };
   // DDC-FLT filter axes: STALE = active · regular · has a parallel product; RECENT = non active · defaulted · none.
   // (RECENT is the "Initiated – Not Consuming" row, STALE the "Stuck" row — the two rows the All tab shows.)
   const custStatus = { RECENT: 'non active' };
@@ -745,6 +775,8 @@ async function seedDdcStuck(db, T) {
     await set('participantsproduct', ddcPp(k), {
       profileid: ddcPf(k), productref: db.collection('products').doc(DDC.P), status: status[k], sequenceorder: 0,
       statusdate: { [status[k]]: ago(20) },
+      // the PRODUCT's mode decides "in delivery" for the Stuck rule; NONPRIO is the mode negative control
+      mode: k === 'NONPRIO' ? 'Journey Mode' : 'Priority Mode',
       ...(k === 'STALE' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
     });
   }
@@ -764,9 +796,72 @@ async function seedDdcStuck(db, T) {
   await appt('APT_RECENT', 'RECENT', 3, true);
   await appt('APT_UNATT', 'UNATT', 30, false);
   await appt('APT_DONE', 'DONE', 40, true);
+  await appt('APT_FUTURE_DONE', 'FUTURE', 25, true);    // stale by days alone …
+  await appt('APT_FUTURE_NEXT', 'FUTURE', -3, false);   // … but a call is booked 3 days ahead → not stuck
+  await appt('APT_NONPRIO', 'NONPRIO', 18, true);       // same shape as STALE, wrong mode → not stuck
 }
 
 const DDC_SEEDED = ['products', 'participant metadata', 'participantsproduct', 'appointments'];
+
+// ---- Ev. Prep board world (JC Health → Ev. Prep tab, app jc-evprep-board, Joshua 2026-11) ----------------
+// The live "New Participants" board reads: `evolution prep variation` (its stage columns), `journey` (names),
+// participantjourneyproduct with onboardedtime >= EVPREP_LIVE_FROM (2026-10-01 IST; onboarded + journeytype
+// 'new' filtered client-side), the salesleads behind them (exclusion rule), and a LIVE `evolution prep`
+// stream (status initiated|ongoing|completed). Columns: Onboarded (yet to start) | each variation stage | Ready for SE.
+//
+// OWN RUN TAG (`<run>_evp`): coach-health counts `participant metadata` by the suite tag, and catalog / JE specs
+// count PJPs by it — a separate tag keeps all of them untouched, with its own teardown pass.
+//
+//   YET  onboarded · new · 5 days ago                         → Onboarded column (the card EVP-02 starts)
+//   CAN  onboarded · new · 10 days ago + a CANCELLED prep      → Onboarded column (cancelling returns a card)
+//   ACT  prep ongoing at stage Two, in stage 4 days            → Stage Two column, "In stage 4d", its variation chip
+//   DONE prep completed, created 3 days ago                    → Ready for SE
+//   OLD  onboarded · new · 2026-09-15 (before the live date)   → nowhere
+//   RET  onboarded · journeytype 'returning'                   → nowhere
+//   REJ  onboarded · new · its sale is REJECTED                → nowhere (isRemovedSale)
+//   NOB  journeytype new but onboarded:false                   → nowhere
+const EVP_RUN = `${TESTRUNID}_evp`;
+const EVP = {
+  VAR: `${EVP_RUN}_VAR`,
+  names: { variation: `EVP Variation ${TESTRUNID}`, one: `EVP Stage One ${TESTRUNID}`, two: `EVP Stage Two ${TESTRUNID}` },
+  people: ['YET', 'CAN', 'ACT', 'DONE', 'OLD', 'RET', 'REJ', 'NOB'],
+};
+const evpPf = (k) => `${EVP_RUN}_pf_${k.toLowerCase()}`;
+const evpName = (k) => `EVP ${k[0]}${k.slice(1).toLowerCase()} ${TESTRUNID}`;
+
+async function seedEvprep(db, T) {
+  const tag = TAG(EVP_RUN);
+  const set = (coll, id, data) => db.collection(coll).doc(id).set({ docid: id, ...data, ...tag });
+  const ago = (d) => T.fromMillis(Date.now() - d * 86400e3 - 2 * 3600e3);
+
+  await set('evolution prep variation', EVP.VAR, {
+    variationid: EVP.VAR, variationname: EVP.names.variation,
+    stages: [{ stagename: EVP.names.one }, { stagename: EVP.names.two }],
+  });
+  for (const k of EVP.people) {
+    await set('participant metadata', evpPf(k), { profileid: evpPf(k), name: evpName(k), email: `${evpPf(k)}@example.com`, customerstatus: 'active' });
+  }
+  await set('salesleads', `${EVP_RUN}_SL_REJ`, { status: 'rejected', profileid: evpPf('REJ'), email: `${evpPf('REJ')}@example.com` });
+  const pjp = (k, extra) => set('participantjourneyproduct', `${EVP_RUN}_PJP_${k}`, {
+    profileid: evpPf(k), onboarded: true, journeytype: 'new', onboardedtime: ago(5), journeystatus: 'ongoing',
+    journeyref: db.collection('journey').doc(ID.J1), paymentplan: 'full', ...extra,
+  });
+  await pjp('YET', {});
+  await pjp('CAN', { onboardedtime: ago(10) });
+  await pjp('OLD', { onboardedtime: T.fromDate(new Date('2026-09-15T12:00:00+05:30')) });
+  await pjp('RET', { journeytype: 'returning' });
+  await pjp('REJ', { salesleadsref: db.collection('salesleads').doc(`${EVP_RUN}_SL_REJ`) });
+  await pjp('NOB', { onboarded: false });
+
+  const prep = (k, extra) => set('evolution prep', `${EVP_RUN}_PREP_${k}`, {
+    profileid: evpPf(k), variationid: EVP.VAR, completedstages: [], createdby: 'seed', notes: [], ...extra,
+  });
+  await prep('CAN', { status: 'cancelled', currentstage: EVP.names.one, createdon: ago(5), stagesince: ago(5) });
+  await prep('ACT', { status: 'ongoing', currentstage: EVP.names.two, completedstages: [EVP.names.one], createdon: ago(6), stagesince: ago(4) });
+  await prep('DONE', { status: 'completed', currentstage: EVP.names.two, completedstages: [EVP.names.one, EVP.names.two], createdon: ago(3), stagesince: ago(1) });
+}
+
+const EVP_SEEDED = ['evolution prep variation', 'evolution prep', 'participant metadata', 'participantjourneyproduct', 'salesleads'];
 
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
 const SEEDED = [
@@ -784,6 +879,8 @@ const SEEDED = [
   // JC Health world (JCH-*): A&H feedback + journey-coach appointments
   // clientissue: the JE dashboard's Participant Health tickets tile (JCD-01)
   'love letter', 'ask AH', 'appointments', 'clientissue',
+  // follow-ups (JCH-15/16): seeded schedule / schedule_done events
+  'healthtracker_activity',
   // auth-chain + dashboard (shared shape; testrunid-scoped so queue 'run1' is untouched)
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
@@ -798,7 +895,8 @@ async function teardownJourney() {
   const db = admin.firestore();
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID)
     + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN)
-    + await seed.teardownCollections(db, DDC_SEEDED, DDC_RUN);
+    + await seed.teardownCollections(db, DDC_SEEDED, DDC_RUN)
+    + await seed.teardownCollections(db, EVP_SEEDED, EVP_RUN);
 
   // APP-written docs (no testrunid) — delete by their natural key (profileid). Covers JP-06's new
   // journeyproductpurchase / participant purchase logs and JP-09's email archive doc.
@@ -812,6 +910,16 @@ async function teardownJourney() {
     }
   }
 
+  // App-written follow-up closes (JCH-16 "Mark done" → schedule_done, no testrunid) and the prep EVP-02 starts.
+  for (const pf of ['a', 'b', 'c', 'd', 'e', 'f', 'x'].map((k) => `${TESTRUNID}_pf_hc_${k}`)) {
+    const snap = await db.collection('healthtracker_activity').where('profileid', '==', pf).get().catch(() => ({ docs: [] }));
+    for (const d of snap.docs) { await d.ref.delete().catch(() => {}); appDeleted++; }
+  }
+  for (const k of EVP.people) {
+    const snap = await db.collection('evolution prep').where('profileid', '==', evpPf(k)).get().catch(() => ({ docs: [] }));
+    for (const d of snap.docs) { await d.ref.delete().catch(() => {}); appDeleted++; }
+  }
+
   // Also delete the Auth users (emails carry the run id).
   const auth = admin.auth();
   for (const key of Object.keys(PF)) {
@@ -820,7 +928,7 @@ async function teardownJourney() {
   return n + appDeleted;
 }
 
-module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, DDC_RUN, DDC, seedJourney, teardownJourney };
+module.exports = { TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1, ROUTES, SEEDED, FTO_RUN, FTO, DDC_RUN, DDC, EVP_RUN, EVP, seedJourney, teardownJourney };
 
 if (require.main === module) {
   const mode = process.argv[2];

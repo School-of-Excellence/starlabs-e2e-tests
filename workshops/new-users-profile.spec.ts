@@ -13,8 +13,7 @@
 import { test, expect } from '@playwright/test';
 import {
   wsAddIds, wsAddNames, installWshopStubs, loginAsWshopAdmin, resetNewUserTags,
-  wsReferred, seedReferredNewUsers, clearReferredNewUsers, alignWorkshopMetadataNames, wsMetaNames,
-  seedConvertedNewUser, clearConvertedNewUser, wsSeedDayMDY,
+  seedConvertedNewUser, clearConvertedNewUser,
   seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
@@ -67,8 +66,8 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
 
     // [REAL-UI] open the tag filter menu and pick the seeded segment by NAME (the menu resolves tag ids
     // to names, so clicking by name also exercises that lookup).
-    await page.locator('button.tag-select-btn').first().click();
-    await page.locator('button.tfm-item').filter({ hasText: wsAddNames.segment }).click();
+    await page.getByTestId('new-button-1').click();
+    await page.getByTestId('new-toggle-tag-select-8').filter({ hasText: wsAddNames.segment }).click();
 
     // [ASSERT] the two tagged users survive the filter...
     await expect(
@@ -105,13 +104,13 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
 
     // [REAL-UI] select the row → the bulk side panel appears → "Edit tags" opens the assign dialog.
     await row.locator('mat-checkbox input[type="checkbox"], mat-checkbox').first().click();
-    await page.getByRole('button', { name: /Edit tags/i }).click();
+    await page.getByTestId('new-open-bulk-tags-27').click();
 
     // Pick the seeded segment chip, then Apply (bulk mode's confirm label).
-    const chip = page.locator('button.chip').filter({ hasText: wsAddNames.segment });
+    const chip = page.getByTestId('atd-toggle-4').filter({ hasText: wsAddNames.segment });
     await expect(chip, 'WS-23: the segment chip must be offered in the dialog').toBeVisible({ timeout: 20_000 });
     await chip.click();
-    await page.getByRole('button', { name: /^Apply$/ }).click();
+    await page.getByTestId('atd-save-10').click();
 
     // [ASSERT] the app's writeBatch (ts:633) put the tag ID on the doc. We compare the persisted array
     // to the KNOWN seeded tag id — app output vs known input. The test never wrote this value.
@@ -126,67 +125,8 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
     ).toContain(wsAddIds.NUT_SEGMENT);
   });
 
-  // ===========================================================================================
-  // WS-56 — the created-date range filter keeps only rows created inside the window
-  //
-  // The three seeded users sit on three different days (-1d / -2d / -3d, seed-workshops.js at()).
-  // Narrowing to the MIDDLE day puts a negative control on BOTH sides of the window, so a filter
-  // that ignored the start bound and one that ignored the end bound both fail.
-  //
-  // Why the toHaveCount(0) assertions are sound: all three rows are asserted VISIBLE TOGETHER first,
-  // which also proves they share page 1 of the 20-row paginator. Filtering only removes rows, so a
-  // row that was on page 1 and is now absent was excluded by the filter, not paged away.
-  //
-  // The negative halves are asserted FIRST (and carry the wait). A filterPredicate that THROWS leaves
-  // every row in place, so leading with "the row must be gone" catches that; leading with the positive
-  // would pass on a broken predicate (the WS-43 lesson).
-  // ===========================================================================================
-  test('WS-56 the created-date range narrows the table to the chosen window', async ({ page }) => {
-    await loginAsWshopAdmin(page);
-    await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
-
-    const rowFor = (name: string) => page.locator(ROW).filter({ hasText: name });
-
-    // [PRECONDITION] all three days render, on one page, before any filtering.
-    await expect(rowFor(wsAddNames.nuAlpha), 'WS-56: the -1d user must render').toHaveCount(1, { timeout: 30_000 });
-    await expect(rowFor(wsAddNames.nuBravo), 'WS-56: the -2d user must render').toHaveCount(1);
-    await expect(rowFor(wsAddNames.nuCharlie), 'WS-56: the -3d user must render').toHaveCount(1);
-
-    // [REAL-UI] type the SAME day into both bounds — a one-day window on the -2d user. Both bounds are
-    // real inputs now, so this exercises the app's own parse. Tab blurs, which is what fires dateChange
-    // (fill() alone dispatches `input`, and the component re-filters on `change`).
-    const middleDay = wsSeedDayMDY(-2);
-    const start = page.getByTestId('new-created-start-date');
-    const end = page.getByTestId('new-created-end-date');
-    await start.fill(middleDay);
-    await start.press('Tab');
-    await end.fill(middleDay);
-    await end.press('Tab');
-
-    // [ASSERT] negative controls first — one newer than the end bound, one older than the start bound.
-    await expect(
-      rowFor(wsAddNames.nuAlpha),
-      `WS-56: the -1d user is NEWER than the window end (${middleDay}) and must be filtered out`,
-    ).toHaveCount(0, { timeout: 15_000 });
-    await expect(
-      rowFor(wsAddNames.nuCharlie),
-      `WS-56: the -3d user is OLDER than the window start (${middleDay}) and must be filtered out`,
-    ).toHaveCount(0);
-
-    // ...and the row inside the window survives.
-    await expect(
-      rowFor(wsAddNames.nuBravo),
-      'WS-56: the user created inside the window must remain visible',
-    ).toHaveCount(1);
-
-    // [REAL-UI] the clear (x) on the range control drops both bounds and the full table comes back.
-    await page.getByTestId('new-event-17').click();
-    await expect(
-      rowFor(wsAddNames.nuAlpha),
-      'WS-56: clearing the dates restores the rows outside the window',
-    ).toHaveCount(1, { timeout: 15_000 });
-    await expect(rowFor(wsAddNames.nuCharlie), 'WS-56: clearing restores the oldest row too').toHaveCount(1);
-  });
+  // WS-56 (Created range) moved to new-users-redesign.spec.ts as NUR-01 on 2026-11-16: the redesign puts the
+  // From/To inputs in the Created panel (opened from its pill) and reads D/M/Y / "14 Nov 2026" instead of M/D/Y.
 
   // ===========================================================================================
   // WS-57 — the conversion filter's two options split the table, and the pair SWAPS
@@ -298,30 +238,6 @@ test.describe('Workshops — new users profile (real UI, anti-circular)', () => 
       await clearWatiConfig();
     }
   });
+  // WS-73 (Referred by) moved to new-users-screen.spec.ts as NUS-02 on 2026-11-12: the column is opt-in now.
 
-  // ===========================================================================================
-  // WS-73 — "Referred by" names a referrer from new_user_data too, not only from participant metadata
-  // (2026-11-04). Before, a new-user referrer showed as a raw profile id.
-  // ===========================================================================================
-  test('WS-73 Referred by shows the referrer\'s name whether they are a participant or a new user', async ({ page }) => {
-    await alignWorkshopMetadataNames();   // p0's metadata name is CF-owned (its actor email) — make it known first
-    await seedReferredNewUsers();
-    try {
-      await loginAsWshopAdmin(page);
-      await page.goto('/newusersprofile', { waitUntil: 'domcontentloaded' });
-      const R = wsReferred;
-      const referredBy = (name: string) => page.locator(ROW).filter({ hasText: name }).getByTestId('new-referred-by');
-      await expect(page.locator(ROW).filter({ hasText: R.byNew.name }), 'WS-73: the referred users render').toHaveCount(1, { timeout: 30_000 });
-
-      // [NEGATIVE CONTROL] a referrer nobody knows still falls back to the raw id — the lookup is not inventing names.
-      await expect(referredBy(R.byUnknown.name), 'WS-73: unknown referrer -> the id').toHaveText(R.UNKNOWN_REFERRER);
-      // A participant referrer: participant metadata's name, as before.
-      await expect(referredBy(R.byMeta.name), 'WS-73: participant referrer -> metadata name').toHaveText(wsMetaNames.p0);
-      // A new-user referrer — by id, and by document reference — now shows their new_user_data name.
-      await expect(referredBy(R.byNew.name), 'WS-73: new-user referrer (id) -> their name, not the id').toHaveText(wsAddNames.nuAlpha);
-      await expect(referredBy(R.byNewRef.name), 'WS-73: new-user referrer (reference) -> their name').toHaveText(wsAddNames.nuBravo);
-    } finally {
-      await clearReferredNewUsers();
-    }
-  });
 });

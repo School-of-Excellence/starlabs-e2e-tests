@@ -159,7 +159,7 @@ export const ddcStuckWorld = {
   tag: DDC_TAG,
   product: `DDC Stuck Product ${RUN}`,
   parallel: `DDC Parallel Product ${RUN}`,
-  names: { STALE: `${DDC_TAG} Stale`, RECENT: `${DDC_TAG} Recent`, NOAPPT: `${DDC_TAG} Noappt`, UNATT: `${DDC_TAG} Unatt`, DONE: `${DDC_TAG} Done` },
+  names: { STALE: `${DDC_TAG} Stale`, RECENT: `${DDC_TAG} Recent`, NOAPPT: `${DDC_TAG} Noappt`, UNATT: `${DDC_TAG} Unatt`, DONE: `${DDC_TAG} Done`, FUTURE: `${DDC_TAG} Future`, NONPRIO: `${DDC_TAG} Nonprio` },
   // seedDdcStuck writes these as UTC noon, so the app's 'MMM dd, yyyy' renders the same day in any TZ.
   subscription: { start: 'Jan 15, 2026', end: 'Jan 14, 2027' },
 };
@@ -171,6 +171,27 @@ export const jcdAssuredLeads = {
   pjpProduct: `JCD Assured PJP Product ${RUN}`,
   note: `JCD sale note ${RUN}`,
   onboardPerson: `JCD Onboard Remark ${RUN}`,
+};
+
+/** JC Health follow-ups (seed-journey.js step 6, JCH-15/16). Doc id = the app's scheduleId. */
+export const jchFollowUps = {
+  ids: { A: `${RUN}_FU_A`, B: `${RUN}_FU_B`, C: `${RUN}_FU_C`, E: `${RUN}_FU_E`, F: `${RUN}_FU_F`, X: `${RUN}_FU_X` },
+  note: (k: 'A' | 'B' | 'C' | 'E' | 'F' | 'X') => `JCH follow-up FU_${k} ${RUN}`,
+};
+
+/** Ev. Prep board world (seed-journey.js step 9, seedEvprep — own run tag `<run>_evp`). */
+const EVP_RUN = `${RUN}_evp`;
+const evpPerson = (k: string) => ({ pf: `${EVP_RUN}_pf_${k.toLowerCase()}`, name: `EVP ${k[0]}${k.slice(1).toLowerCase()} ${RUN}` });
+export const evpWorld = {
+  RUN: EVP_RUN,
+  VAR: `${EVP_RUN}_VAR`,
+  names: { variation: `EVP Variation ${RUN}`, one: `EVP Stage One ${RUN}`, two: `EVP Stage Two ${RUN}` },
+  /** liveStages() column key: 'st-' + kebab of the stage name (evprep-board.config.ts stageKey). */
+  stageKey: (name: string) => 'st-' + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+  people: {
+    YET: evpPerson('YET'), CAN: evpPerson('CAN'), ACT: evpPerson('ACT'), DONE: evpPerson('DONE'),
+    OLD: evpPerson('OLD'), RET: evpPerson('RET'), REJ: evpPerson('REJ'), NOB: evpPerson('NOB'),
+  },
 };
 
 export const jchTexts = {

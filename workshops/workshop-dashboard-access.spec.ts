@@ -5,8 +5,13 @@
 //
 // THE RULE UNDER TEST (starlabs-angular src/app/New-Workshop/workshop-access/workshop-access.model.ts):
 // nothing is open by default and there is no hard-coded bypass. A profileid can do something only if
-//   · "static meta data"/"Workshop Admin".workshopdashboardadmin names it (everything, every workshop), or
+//   · "static meta data"/"Workshop Admin".workshopdashboardadmin names it (everything EXCEPT Clear, every
+//     workshop), or
 //   · workshopsettings/{workshop id}.dashboardaccess[profileid] ticks that action for that workshop.
+// Clear (2026-11-12) comes ONLY from "Workshop Admin".clearworkshop (every dashboard the person can
+// already open) or that workshop's own Clear tick — never from full dashboard access. Those cases live in
+// workshop-dashboard-clear-access.spec.ts, gated on the hook that lands with that rule, so this file
+// asserts nothing about Clear for a full-access person and passes on app branches either side of it.
 // Editing workshops and the new users screen have their own lists in the same shared document.
 //
 // THE PIVOT (seed-workshops.js §6c): two admins with identical roles and identical route grants.
@@ -31,6 +36,7 @@ import {
   wsIds, wsMetaNames, wsProfileIds, wsAccessKeys, wsLimitedGrants,
   installWshopStubs, loginAsWshopAdmin, loginAsWshopLimited, alignWorkshopMetadataNames,
   workshopAdminLists, workshopDashboardAccess, resetDashboardAccess, resetWorkshopAdminLists,
+  setWorkshopClearList,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { pollUntil } from '../queue/support/firestore-admin';
@@ -92,6 +98,8 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     expect(lists.editAccess, 'WDA-00: admin may edit workshops').toContain(wsProfileIds.admin);
     expect(lists.newUsersAccess, 'WDA-00: admin may open the new users screen').toContain(wsProfileIds.admin);
     expect(lists.dashboardAdmins, 'WDA-00: limited is NOT a dashboard admin').not.toContain(wsProfileIds.limited);
+    expect(lists.clearWorkshop, 'WDA-00: mover is on the Clear list').toEqual([wsProfileIds.mover]);
+    expect(lists.dashboardAdmins, 'WDA-00: mover also has full dashboard access').toContain(wsProfileIds.mover);
     expect(lists.editAccess, 'WDA-00: limited may NOT edit workshops').not.toContain(wsProfileIds.limited);
     expect(lists.newUsersAccess, 'WDA-00: limited may NOT open the new users screen').not.toContain(wsProfileIds.limited);
 
@@ -267,15 +275,15 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
   // ===========================================================================================
   // WDA-09 — the same screens, for someone on the full-access list
   // ===========================================================================================
-  test('WDA-09 a dashboard admin sees every action on the same workshop', async ({ page }) => {
+  test('WDA-09 a dashboard admin sees the header actions and every section on the same workshop', async ({ page }) => {
     await loginAsWshopAdmin(page);
     await openDashboard(page, wsIds.W_DASH);
 
     await expect(page.getByTestId('wdash-comm-open-btn'), 'WDA-09: Communication').toBeVisible({ timeout: 45_000 });
     await expect(page.getByTestId('wd-open-qadialog-2'), 'WDA-09: Q & A').toBeVisible();
     await expect(page.getByTestId('wd-open-diagnose-dialog-3'), 'WDA-09: Diagnose').toBeVisible();
-    await expect(page.getByTestId('wd-open-clear-dialog-4'), 'WDA-09: Clear').toBeVisible();
     await expect(page.getByTestId('wd-manualenroll-5'), 'WDA-09: Enroll').toBeVisible();
+    // Clear is deliberately not asserted here — see workshop-dashboard-clear-access.spec.ts (WCA-02).
     // [ASSERT] full access is not "limited", so the notice stays away.
     await expect(page.getByTestId('wdash-access-notice'), 'WDA-09: full access carries no limited notice').toHaveCount(0);
     // [ASSERT] and the sections WDA-02 found missing are present for this actor.
@@ -449,6 +457,9 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     await resetWorkshopAdminLists();
     await loginAsWshopAdmin(page);
     await openDashboardAccessSection(page);
+    // The Clear list is managed only in Firestore. Change it AFTER the editor loaded its copy, so a save
+    // that wrote that stale copy back would be caught below.
+    await setWorkshopClearList([wsProfileIds.mover, wsProfileIds.p2]);
 
     // [REAL-UI] take the mover off the editing list and save.
     const editChip = page.getByTestId('ws-access-edit-picker').locator('.chip', { hasText: wsMetaNames.mover });
@@ -464,6 +475,8 @@ test.describe('Workshop Dashboard Access — deny by default (real UI, anti-circ
     );
     const after = await workshopAdminLists();
     expect(after.dashboardAdmins, 'WDA-14: only the list that was edited changed').toContain(wsProfileIds.mover);
+    // [ASSERT] the editor never manages the Clear list, so its save leaves it exactly as stored.
+    expect(after.clearWorkshop, 'WDA-14: the save keeps the Clear list as stored').toEqual([wsProfileIds.mover, wsProfileIds.p2]);
 
     await resetWorkshopAdminLists();
   });

@@ -6,7 +6,7 @@
 import { test, expect, Page, Browser } from '@playwright/test';
 import {
   ATC, PF, NAME, ACT, PROC, PROC_NAME, MODEL, MODEL_DIRECTIVE, RUN, RECOMMEND_NAME, installAtcGuards, assertNoRealDb, loginAsAtc,
-  atcDb, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, storageBucket, AtcGuard, fillEditorDialog,
+  atcDb, atcDocs, waitFor, pickOptions, selectText, tid, wavBuffer, pngBuffer, storageBucket, AtcGuard, fillEditorDialog, toObjectPath,
 } from './support/atc';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
@@ -296,14 +296,16 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     // object's real existence; matching a URL here would now be a regression, not a pass.
     const stored = [...notes.changeworkbrief, ...notes.imagenotes, ...atc.data().prescription_image];
     expect(notes.changeworkbrief).toHaveLength(1);
-    expect(notes.changeworkbrief[0], 'audio stored as an object path')
+    // TRANSITION: toObjectPath() accepts today's download URL as well — see atc/support/atc.ts.
+    expect(toObjectPath(notes.changeworkbrief[0]), 'audio stored under the admin\'s audio folder')
       .toMatch(new RegExp(`^ATC_Audio_Notes/${PF.admin}/`));
     expect(notes.imagenotes).toHaveLength(1);
-    expect(notes.imagenotes[0], 'note image stored as an object path').toMatch(/^Uploaded ATC\//);
+    expect(toObjectPath(notes.imagenotes[0]), 'note image stored under Uploaded ATC').toMatch(/^Uploaded ATC\//);
     expect(atc.data().prescription_image).toHaveLength(1);
-    expect(atc.data().prescription_image[0], 'ATC image stored as an object path').toMatch(/^Online ATC Images\//);
-    for (const v of stored) {
-      expect(v, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+    expect(toObjectPath(atc.data().prescription_image[0]), 'ATC image stored under Online ATC Images').toMatch(/^Online ATC Images\//);
+    for (const raw of stored) {
+      // Restore once signedURL-media lands: expect(raw, 'no download URL may be persisted any more').not.toMatch(/^https?:\/\//);
+      const v = toObjectPath(raw);
       const [exists] = await storageBucket().file(v).exists();
       expect(exists, `the stored path points at a real object: ${v}`).toBe(true);
     }

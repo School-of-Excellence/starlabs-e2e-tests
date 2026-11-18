@@ -165,9 +165,15 @@ test.describe('Participants Evolution Summary (/participant-evolution-summary) â
   // SIR-ADDR below). The per-chip unflag buttons carry [attr.data-testid] and are dynamic, so they are
   // intentionally NOT referenced here.
   test('participants-flag modal controls are addressable', async ({ page }) => {
+    // This group has no beforeEach login (unlike the analytics group above), so log in here â€” without it
+    // the page is the login screen and the Actions click below waited out the whole test timeout
+    // (CI 2026-11-16, starlabs-angular run 43759608967).
+    await installProfileStubs(page);
+    await loginAsProfileAdmin(page);
     await page.goto('/participants-analytics', { waitUntil: 'domcontentloaded' });
     await expect(page).toHaveURL(/participants-analytics/, { timeout: 30_000 });
-    await page.getByTestId('pa-menu-actions').click().catch(() => {}); // best-effort (addressable)
+    // best-effort (addressable): bounded, so a missing/disabled menu can never stall the case
+    await page.getByTestId('pa-menu-actions').click({ timeout: 10_000 }).catch(() => {});
     expect(page.getByTestId('pa-act-participants-flag')).toBeTruthy(); // reference-only (disabled until a row is selected)
     expect(page.getByTestId('pa-flag-backdrop')).toBeTruthy(); // reference-only (renders only while the modal is open)
     expect(page.getByTestId('pa-flag-close')).toBeTruthy(); // reference-only (renders only while the modal is open)

@@ -112,7 +112,9 @@ test.describe('Workshop dashboard — Exist Users Enrolled card + Communication 
     await openDashboard(page);
     const card = page.getByTestId('wdash-exist-users-card');
     await expect(card, 'WDC-01: the Exist Users Enrolled card must render').toBeVisible({ timeout: 30_000 });
-    await expect(card, 'WDC-01: it sits before New Users Enrolled').toContainText('Exist Users Enrolled');
+    // Renamed "Existing Participants" on 2026-11-17 (WDL-01 pins the new wording); either label passes here so this
+    // ungated file stays green on app branches without the rename.
+    await expect(card, 'WDC-01: the Exist Users / Existing Participants card').toContainText(/Exist Users Enrolled|Existing Participants/);
     await expect(page.getByTestId('wdash-exist-users-count'), `WDC-01: app-computed count == ${expected}`)
       .toHaveText(String(expected), { timeout: 30_000 });
   });

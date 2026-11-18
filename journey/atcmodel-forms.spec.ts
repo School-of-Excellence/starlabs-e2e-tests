@@ -78,6 +78,11 @@ test.describe('Product Designer — ATC model forms config (real UI, emulator)',
     await expect(options.filter({ hasText: NAME.c }), 'soft-deleted → not offered').toHaveCount(0);
     await page.getByTestId('ca-form-input').fill('zzz-no-such-form');
     await expect(options).toHaveCount(0);
+    // Close the "Add a form" dropdown before Cancel: its overlay pane sits over the footer, so on a slow
+    // runner a direct Cancel click retried for the whole timeout ("cdk-overlay-1 intercepts pointer
+    // events", CI 2026-11-12). Not Escape — if the panel has already closed, Escape closes the dialog.
+    await page.locator('.ca-title').click();                              // outside click → panel closes
+    await expect(page.locator('.mat-mdc-autocomplete-panel')).toBeHidden();
     await page.getByTestId('ca-dialog-ref-1').click();
   });
 

@@ -570,6 +570,9 @@ async function seedWorkshops() {
     workshopdashboardadmin: [PF.admin, PF.mover],
     workshopeditaccess: [PF.admin, PF.mover],
     workshopnewusersaccess: [PF.admin, PF.mover],
+    // Clear comes only from this list or a workshop's own Clear tick (2026-11-12): mover has it, admin
+    // (full dashboard access too) deliberately does not — WDA-09 / WDA-17 tell the two apart.
+    clearworkshop: [PF.mover],
     ...tag,
   });
   //  `workshopsettings/{workshop id}` — one document per workshop, carrying the workshop's own id.

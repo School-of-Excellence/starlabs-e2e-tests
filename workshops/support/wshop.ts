@@ -643,7 +643,7 @@ export const wsAccessKeys = [
 export const wsLimitedGrants = ['qanda', 'export'];
 
 /** The three shared lists, as the app stores them. */
-export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[] }> {
+export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[]; editAccess: string[]; newUsersAccess: string[]; clearWorkshop: string[] }> {
   const admin = seed.initAdmin();
   const snap = await admin.firestore().collection('static meta data').doc('Workshop Admin').get();
   const d: any = snap.exists ? (snap.data() || {}) : {};
@@ -652,6 +652,7 @@ export async function workshopAdminLists(): Promise<{ dashboardAdmins: string[];
     dashboardAdmins: list(d.workshopdashboardadmin),
     editAccess: list(d.workshopeditaccess),
     newUsersAccess: list(d.workshopnewusersaccess),
+    clearWorkshop: list(d.clearworkshop),
   };
 }
 
@@ -690,6 +691,24 @@ export async function resetWorkshopAdminLists(): Promise<void> {
     workshopdashboardadmin: [wsProfileIds.admin, wsProfileIds.mover],
     workshopeditaccess: [wsProfileIds.admin, wsProfileIds.mover],
     workshopnewusersaccess: [wsProfileIds.admin, wsProfileIds.mover],
+    clearworkshop: [wsProfileIds.mover],
+    testrunid: RUN,
+    _testdata: true,
+  });
+}
+
+/** PRECONDITION write: replace only the shared Clear list (reset with resetWorkshopAdminLists). */
+export async function setWorkshopClearList(ids: string[]): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('static meta data').doc('Workshop Admin').set({ clearworkshop: ids }, { merge: true });
+}
+
+/** PRECONDITION write: replace W_DASH's whole grants map, profileid -> actions (reset with resetDashboardAccess). */
+export async function setDashboardGrants(grants: Record<string, string[]>): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopsettings').doc(wsIds.W_DASH).set({
+    workshopid: wsIds.W_DASH,
+    dashboardaccess: grants,
     testrunid: RUN,
     _testdata: true,
   });
@@ -1910,6 +1929,27 @@ export async function seedEnrolledExportCase(): Promise<void> {
   ]);
 }
 
+/** Two of the seeded newusertags docs (seed-workshops.js §tagDoc), by id and the name the app exports. */
+export const wsExportTags = {
+  segment: { id: `${RUN}_nut_seg`, name: `WS Segment ${RUN}` },
+  venue: { id: `${RUN}_nut_loc`, name: `WS Venue ${RUN}` },
+  ghost: `${RUN}_nut_deleted`,   // an id with no newusertags doc — must export as nothing
+};
+
+/**
+ * PRECONDITION (on top of seedEnrolledExportCase): tag the enrolled docs. NU gets both real tags; the
+ * moved person gets only an id whose tag doc does not exist. Removed with the docs by clearEnrolledExportCase.
+ */
+export async function tagEnrolledExportCase(movedTags: string[] = [wsExportTags.ghost]): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_NU)
+      .set({ tags: [wsExportTags.segment.id, wsExportTags.venue.id] }, { merge: true }),
+    db.collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED)
+      .set({ tags: movedTags }, { merge: true }),
+  ]);
+}
+
 export async function clearEnrolledExportCase(): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all([
@@ -2199,4 +2239,987 @@ export async function clearReferredNewUsers(): Promise<void> {
   const db = admin.firestore();
   await Promise.all([wsReferred.byNew, wsReferred.byNewRef, wsReferred.byMeta, wsReferred.byUnknown]
     .map(p => db.collection('new_user_data').doc(p.id).delete().catch(() => undefined)));
+}
+
+// ---------------------------------------------------------------------------------------------------
+// New Users screen (2026-11-12): a tag of this run's own to rename in the Tags dialog, plus one user who
+// carries it and three more tags (so the row shows 3 pills + "+1"). Never the shared seeded segment:
+// campaign-dashboard and workshop-dashboard specs assert that one's name.
+// ---------------------------------------------------------------------------------------------------
+export const wsRenameTag = {
+  id: `${RUN}_nut_rename`,
+  name: `WS Rename Me ${RUN}`,
+  renamed: `WS Renamed ${RUN}`,
+  extras: [
+    { id: `${RUN}_nut_extra1`, name: `WS Extra One ${RUN}` },
+    { id: `${RUN}_nut_extra2`, name: `WS Extra Two ${RUN}` },
+    { id: `${RUN}_nut_extra3`, name: `WS Extra Three ${RUN}` },
+  ],
+  user: { id: `${RUN}_nu_tagged`, name: `NU Tagged ${RUN}` },
+};
+
+export async function seedRenameTag(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  const T = wsRenameTag;
+  const tagDoc = (id: string, name: string) =>
+    db.collection('newusertags').doc(id).set({ docid: id, type: 'newusersegments', name, ...tag });
+  await Promise.all([
+    tagDoc(T.id, T.name),
+    ...T.extras.map(e => tagDoc(e.id, e.name)),
+    db.collection('new_user_data').doc(T.user.id).set({
+      docid: T.user.id, name: T.user.name, email: `${T.user.id}@example.com`, phonenumber: '9999900010', countryCode: '+91',
+      enable: true, created: admin.firestore.Timestamp.now(), tags: [T.id, ...T.extras.map(e => e.id)], ...tag,
+    }),
+  ]);
+}
+
+export async function clearRenameTag(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const T = wsRenameTag;
+  await Promise.all([
+    db.collection('newusertags').doc(T.id).delete(),
+    ...T.extras.map(e => db.collection('newusertags').doc(e.id).delete()),
+    db.collection('new_user_data').doc(T.user.id).delete(),
+  ].map(p => p.catch(() => undefined)));
+}
+
+/** Put tag ids on a seeded enrolled doc, or (null) remove the field again. Workshop dashboard, 2026-11-13. */
+export async function setEnrolledTags(enrolledId: string, tags: string[] | null): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshop participant enrolled').doc(enrolledId)
+    .set({ tags: tags === null ? admin.firestore.FieldValue.delete() : tags }, { merge: true });
+}
+
+// ---------------------------------------------------------------------------------------------------
+// /eiflixhomeconfig Upcoming Workshops, Confirmed column (2026-11-13): it counts the responses, not the number
+// stored on the widget. Two widgets of this run's own, each with a stored `confirmed` that is deliberately
+// wrong, so the column can only pass by counting.
+//   counted: stored 99, two real responses (p0, p1)            → shows 2
+//   empty:   stored 5, one response whose ref is a plain string → shows 0 (neither the column nor View counts it)
+// ---------------------------------------------------------------------------------------------------
+export const wsUpcomingConfirmed = {
+  counted: { id: `${RUN}_hw_conf_a`, title: `HC Confirmed Counted ${RUN}`, stored: 99 },
+  empty: { id: `${RUN}_hw_conf_b`, title: `HC Confirmed Empty ${RUN}`, stored: 5 },
+};
+
+const upcomingResponseId = (widgetId: string, profileId: string) => `${widgetId}_${profileId}`;
+
+export async function seedUpcomingConfirmed(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = admin.firestore.Timestamp.now();
+  const inDays = (d: number) => admin.firestore.Timestamp.fromMillis(Date.now() + d * 86_400_000);
+  const W = wsUpcomingConfirmed;
+  const widget = (w: { id: string; title: string; stored: number }, order: number) =>
+    db.collection('eiflixhomewidgets').doc(w.id).set({
+      docid: w.id, widgettype: 'comingsoon', order, title: w.title, with: 'Coach Count', type: 'Workshop',
+      cost: '0', location: 'Online', totalseats: 50, unlimitedseat: false, confirmed: w.stored,
+      showconfirmedseat: true, show: true, eventdate: inDays(10), ...tag,
+    });
+  const response = (widgetId: string, profileId: string, ref: any) =>
+    db.collection('upcomingworkshopsresponse').doc(upcomingResponseId(widgetId, profileId))
+      .set({ upcomingworkshopref: ref, created: now, profileid: profileId, ...tag });
+  const countedRef = db.collection('eiflixhomewidgets').doc(W.counted.id);
+  await Promise.all([
+    widget(W.counted, 100),
+    widget(W.empty, 101),
+    response(W.counted.id, wsProfileIds.p0, countedRef),
+    response(W.counted.id, wsProfileIds.p1, countedRef),
+    response(W.empty.id, wsProfileIds.p0, `eiflixhomewidgets/${W.empty.id}`),   // a string, not a reference
+  ]);
+}
+
+/** One more real response on the counted widget, as EiFlix would write it (no change to the stored number). */
+export async function addUpcomingResponse(profileId: string): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const W = wsUpcomingConfirmed;
+  await db.collection('upcomingworkshopsresponse').doc(upcomingResponseId(W.counted.id, profileId)).set({
+    upcomingworkshopref: db.collection('eiflixhomewidgets').doc(W.counted.id),
+    created: seed.initAdmin().firestore.Timestamp.now(), profileid: profileId, testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function clearUpcomingConfirmed(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const W = wsUpcomingConfirmed;
+  const ids = [W.counted.id, W.empty.id];
+  const responses = await db.collection('upcomingworkshopsresponse').where('testrunid', '==', RUN).get()
+    .catch(() => ({ docs: [] as any[] }));
+  await Promise.all([
+    ...ids.map(id => db.collection('eiflixhomewidgets').doc(id).delete().catch(() => undefined)),
+    ...responses.docs.filter((d: any) => ids.some(id => d.id.startsWith(`${id}_`))).map((d: any) => d.ref.delete().catch(() => undefined)),
+  ]);
+}
+
+/** A second enrolled NEW user on the dashboard workshop (NU Bravo), with the given tag ids. Workshop dashboard
+ *  Tag filter on New Users Enrolled (2026-11-16): gives the filter someone to drop. */
+export const wsSecondNewUserEnrolledId = `${RUN}_enr_nub`;
+export async function enrollSecondNewUser(tags: string[]): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('workshop participant enrolled').doc(wsSecondNewUserEnrolledId).set({
+    docid: wsSecondNewUserEnrolledId, profileid: wsAddIds.NU_B, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsIds.W_DASH),
+    enrollmentdate: admin.firestore.Timestamp.now(), tags, testrunid: RUN, _testdata: true,
+  });
+}
+export async function clearSecondNewUser(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsSecondNewUserEnrolledId)
+    .delete().catch(() => undefined);
+}
+
+/**
+ * WNU-01 (2026-11-18) PRECONDITION: mark the still-new user (NU Alpha) AND the moved person "referred, not
+ * subscribed" in new_user_data. The New Users panel's Referred filter rebuilds its list from EVERY new_user_data
+ * doc, so this gives that rebuild a moved candidate it must drop and a still-new one it must keep. Write it before
+ * the page loads: the dashboard reads new_user_data once. clearNewUsersReferred takes it off NU Alpha again (the
+ * moved doc itself goes with clearEnrolledExportCase).
+ */
+export const wsNewUsersReferralCode = `${RUN}_wnu01_ref`;
+export async function markNewUsersReferred(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([wsAddIds.NU_A, wsExportIds.MOVED].map(id =>
+    db.collection('new_user_data').doc(id).set({ refferedby: wsNewUsersReferralCode }, { merge: true })));
+}
+export async function clearNewUsersReferred(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_A)
+    .set({ refferedby: admin.firestore.FieldValue.delete() }, { merge: true }).catch(() => undefined);
+}
+
+/** WNU-01: take the moved person's enrolment off the dashboard workshop WHILE the page is open (a live update).
+ *  They stay in new_user_data, moved, and now not enrolled. clearEnrolledExportCase deletes it again (harmless). */
+export async function unenrollMovedPerson(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).delete();
+}
+
+/**
+ * WNU-02 (2026-11-18) PRECONDITION: a SECOND enrolled doc for the still-new user (NU Alpha) on the dashboard
+ * workshop — the shape a double enrolment leaves behind. The New Users card counts people, so the panel must list
+ * NU Alpha once. The id sorts after ENR_NU, so ENR_NU stays the person's first enrolled doc. Run-tagged.
+ */
+export const wsDuplicateNewUserEnrolledId = `${RUN}_enr_nu_a_dup`;
+export async function enrollNewUserTwice(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('workshop participant enrolled').doc(wsDuplicateNewUserEnrolledId).set({
+    docid: wsDuplicateNewUserEnrolledId, profileid: wsAddIds.NU_A, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsIds.W_DASH),
+    enrollmentdate: admin.firestore.Timestamp.now(), tags: [], testrunid: RUN, _testdata: true,
+  });
+}
+export async function clearNewUserTwice(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsDuplicateNewUserEnrolledId)
+    .delete().catch(() => undefined);
+}
+
+// =================================================================================================
+// 2026-11-16 — /newusersprofile redesign (new-users-redesign.spec.ts). PRECONDITION writes + TEST-side oracles.
+// =================================================================================================
+
+const WS_MMM = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** The local calendar day `seed-workshops.js at(offset)` used, as a Date at 09:00 (same setDate arithmetic). */
+export function wsSeedDate(dayOffset: number): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + dayOffset);
+  d.setHours(9, 0, 0, 0);
+  return d;
+}
+
+/** 'd MMM yyyy' ("14 Nov 2026"): how the redesigned Created panel shows a day back, and a format it reads. */
+export function wsDayDMY(d: Date): string {
+  return `${d.getDate()} ${WS_MMM[d.getMonth()]} ${d.getFullYear()}`;
+}
+
+/** The seeded day `at(offset)` in 'd MMM yyyy'. WS-56 (moved to new-users-redesign.spec.ts) types it. */
+export function wsSeedDayDMY(dayOffset: number): string {
+  return wsDayDMY(wsSeedDate(dayOffset));
+}
+
+/**
+ * A crowd of extra new users, created 30+ days ago — older than every other row, so the seeded A/B/C and the
+ * "now" rows stay on page 1 — giving the list a second page of 20 (cross-page selection, the pager).
+ * Run-tagged, and removed by id in clearNewUserCrowd.
+ */
+export const wsCrowd = {
+  count: 22,
+  ids: Array.from({ length: 22 }, (_, i) => `${RUN}_nu_crowd_${String(i + 1).padStart(2, '0')}`),
+  names: Array.from({ length: 22 }, (_, i) => `NU Crowd ${String(i + 1).padStart(2, '0')} ${RUN}`),
+  prefix: 'NU Crowd ',
+};
+
+export async function seedNewUserCrowd(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  await Promise.all(wsCrowd.ids.map((id, i) => db.collection('new_user_data').doc(id).set({
+    docid: id, name: wsCrowd.names[i], email: `${id}@example.com`, phonenumber: '9999900100', countryCode: '+91',
+    enable: true, created: admin.firestore.Timestamp.fromDate(wsSeedDate(-30 - i)), tags: [], ...tag,
+  })));
+}
+
+export async function clearNewUserCrowd(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all(wsCrowd.ids.map(id => db.collection('new_user_data').doc(id).delete().catch(() => undefined)));
+}
+
+/** A new user who joined as a subscriber (`subscriber: true`): Referred by shows the Subscriber chip. Created now. */
+export const wsSubscriber = { id: `${RUN}_nu_subscriber`, name: `NU Subscriber ${RUN}` };
+
+export async function seedSubscriberNewUser(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsSubscriber.id).set({
+    docid: wsSubscriber.id, name: wsSubscriber.name, email: `${wsSubscriber.id}@example.com`, phonenumber: '9999900011',
+    countryCode: '+91', enable: true, created: admin.firestore.Timestamp.now(), tags: [], subscriber: true,
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function clearSubscriberNewUser(): Promise<void> {
+  await seed.initAdmin().firestore().collection('new_user_data').doc(wsSubscriber.id).delete().catch(() => undefined);
+}
+
+/** One `new_user_data` row as the TEST reads it (oracle input; never a value the test wrote for the assertion). */
+export interface WsNewUserRow { id: string; name: string; email: string; created: Date | null; moved: boolean; tags: string[] }
+
+/** Every `new_user_data` row in the emulator — the population the screen lists (other runs' rows included). */
+export async function newUserRows(): Promise<WsNewUserRow[]> {
+  const snap = await seed.initAdmin().firestore().collection('new_user_data').get();
+  return snap.docs.map((d: any) => {
+    const x = d.data() || {};
+    return {
+      id: d.id, name: (x.name || '').toString(), email: (x.email || '').toString(),
+      created: asDate(x.created), moved: x.movedtoexist === true, tags: Array.isArray(x.tags) ? x.tags : [],
+    };
+  });
+}
+
+/** Ids of the `new_user_data` people enrolled in a workshop (by workshopref) — the Workshops filter's population. */
+export async function newUserIdsEnrolledIn(workshopId: string): Promise<string[]> {
+  const db = seed.initAdmin().firestore();
+  const ref = db.collection('workshopconfiguration').doc(workshopId);
+  const [enr, users] = await Promise.all([
+    db.collection('workshop participant enrolled').where('workshopref', '==', ref).get(),
+    db.collection('new_user_data').get(),
+  ]);
+  const ids = new Set(users.docs.map((d: any) => d.id));
+  return [...new Set(enr.docs.map((d: any) => (d.data()?.profileid || '').toString()))].filter((id: string) => ids.has(id)) as string[];
+}
+
+/** How many workshops the Funnel-only list offers (evergreenWorkshop == true). */
+export async function countFunnelWorkshops(): Promise<number> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').where('evergreenWorkshop', '==', true).get();
+  return snap.size;
+}
+
+/** Names of the tags the New Users screen offers (newusersegments with a name), and their count. */
+export async function newUserSegmentTags(): Promise<{ id: string; name: string }[]> {
+  const snap = await seed.initAdmin().firestore().collection('newusertags').where('type', '==', 'newusersegments').get();
+  return snap.docs.map((d: any) => ({ id: d.id, name: (d.data()?.name || '').toString() })).filter((t: any) => t.name);
+}
+
+// =================================================================================================
+// 2026-11-17 — workshop Settings → Mail template → Email template (workshop-mail-template.spec.ts).
+// The editor stores { templateid, emailData } as `mail` in workshopsettings/{workshop id}. Everything
+// below is a PRECONDITION write or an ORACLE read with the admin SDK; no case asserts a value it set here
+// except where it says it is checking the read path (a seeded shape the screen must draw back).
+// =================================================================================================
+
+/** The run's own workshop (a copy of W_INACTIVE) and `email templates` docs for the mail cases. */
+export const wsMail = {
+  workshopId: `${RUN}_W_mail`,
+  /** Never written by the seed: an id with no workshop document, so the editor opens in new mode. */
+  newWorkshopId: `${RUN}_W_mail_new`,
+  title: `Mail Template Workshop ${RUN}`,
+  tpl: {
+    welcome: `${RUN}_wmt_welcome`,     // active + approved; duplicates and control tags in its model
+    reminder: `${RUN}_wmt_reminder`,   // active + approved; shares 'name' with welcome
+    plain: `${RUN}_wmt_plain`,         // active + approved; no variables at all
+    nomodel: `${RUN}_wmt_nomodel`,     // active + approved, but no templatemodel field: variables never recorded
+    pending: `${RUN}_wmt_pending`,     // NEGATIVE: active, but Postmark has not approved it
+    retired: `${RUN}_wmt_retired`,     // NEGATIVE: approved, but no longer active
+    gone: `${RUN}_wmt_gone`,           // never seeded: a saved id whose document was deleted
+  },
+  /**
+   * Never seeded, and NOT in `tpl` (cleanMailWorld deletes by those ids): a stored templateid the app cannot
+   * even build a reference for ('email templates/<x>/<y>' has an odd number of segments), so its read fails.
+   */
+  unreadableId: `${RUN}_wmt/unreadable`,
+  names: {
+    welcome: `WMT Alpha Welcome ${RUN}`,
+    reminder: `WMT Bravo Reminder ${RUN}`,
+    plain: `WMT Charlie Plain ${RUN}`,
+    nomodel: `WMT Foxtrot Unrecorded ${RUN}`,
+    // Both negatives carry "Reminder" so a search for it would show them if the filter let them through.
+    pending: `WMT Delta Reminder Pending ${RUN}`,
+    retired: `WMT Echo Reminder Retired ${RUN}`,
+  },
+  /** welcome's raw templatemodel: 'name' twice, plus a Mustache section open/close. */
+  welcomeModel: ['name', 'workshop', 'workshop_link', 'signoff', 'name', '#each items', '/each'],
+  /** What the editor must offer for welcome: distinct, in template order, control tags dropped. */
+  welcomeVars: ['name', 'workshop', 'workshop_link', 'signoff'],
+  reminderModel: ['name', 'date'],
+};
+
+/** The seeded Dashboard Access map that shares workshopsettings/{W_MAIL} with `mail`. */
+export const wsMailAccess: Record<string, string[]> = { [wsProfileIds.limited]: [...wsLimitedGrants] };
+
+function mailTemplateDocs(): Record<string, any> {
+  const tag = { testrunid: RUN, _testdata: true };
+  return {
+    [wsMail.tpl.welcome]: { templatename: wsMail.names.welcome, templatemodel: wsMail.welcomeModel, active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.reminder]: { templatename: wsMail.names.reminder, templatemodel: wsMail.reminderModel, active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.plain]: { templatename: wsMail.names.plain, templatemodel: [], active: true, postmarkstatus: 'approved', ...tag },
+    // The shape communication.component.ts writes: no templatemodel at all (the approval step never adds one).
+    [wsMail.tpl.nomodel]: { templatename: wsMail.names.nomodel, active: true, postmarkstatus: 'approved', ...tag },
+    [wsMail.tpl.pending]: { templatename: wsMail.names.pending, templatemodel: ['name'], active: true, postmarkstatus: 'pending', ...tag },
+    [wsMail.tpl.retired]: { templatename: wsMail.names.retired, templatemodel: ['name'], active: false, postmarkstatus: 'approved', ...tag },
+  };
+}
+
+/** PRECONDITION: the mail workshop (copy of W_INACTIVE, own title, no `active` key) — once per file. */
+export async function seedMailWorkshop(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const base: any = (await db.collection('workshopconfiguration').doc(wsIds.W_INACTIVE).get()).data() || {};
+  delete base.active;   // WS-13 counts active==false docs; list specs find rows by W_INACTIVE's title
+  await db.collection('workshopconfiguration').doc(wsMail.workshopId).set({
+    ...base,
+    docid: wsMail.workshopId,
+    detailpage: { ...(base.detailpage || {}), title: wsMail.title },
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** PRECONDITION: the six `email templates` docs back to their baseline flags (set, not merge). */
+export async function seedMailTemplates(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const docs = mailTemplateDocs();
+  for (const id of Object.keys(docs)) await db.collection('email templates').doc(id).set(docs[id]);
+  await db.collection('email templates').doc(wsMail.tpl.gone).delete().catch(() => { });
+}
+
+/** PRECONDITION: workshopsettings/{W_MAIL} = Dashboard Access only, plus an optional stored `mail`. */
+export async function resetMailSettings(mail?: any): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshopsettings').doc(wsMail.workshopId).set({
+    workshopid: wsMail.workshopId,
+    dashboardaccess: wsMailAccess,
+    ...(mail ? { mail } : {}),
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** PRECONDITION: flip one template's `active` flag (seedMailTemplates restores it). */
+export async function setMailTemplateActive(id: string, active: boolean): Promise<void> {
+  await seed.initAdmin().firestore().collection('email templates').doc(id).set({ active }, { merge: true });
+}
+
+/** ORACLE: one workshopsettings document as stored (null when it does not exist). */
+export async function workshopSettingsDoc(workshopId: string): Promise<any | null> {
+  const snap = await seed.initAdmin().firestore().collection('workshopsettings').doc(workshopId).get();
+  return snap.exists ? (snap.data() || {}) : null;
+}
+
+/** ORACLE: a workshopconfiguration document with its server update time, to prove nothing wrote it. */
+export async function workshopConfigStamp(workshopId: string): Promise<{ exists: boolean; updated: string; data: any }> {
+  const snap = await seed.initAdmin().firestore().collection('workshopconfiguration').doc(workshopId).get();
+  return {
+    exists: snap.exists,
+    updated: snap.exists && snap.updateTime ? snap.updateTime.toDate().toISOString() + `/${snap.updateTime.nanoseconds}` : '',
+    data: snap.exists ? (snap.data() || {}) : null,
+  };
+}
+
+/**
+ * ORACLE: the template names the picker should offer — the TEST's own read of `email templates` with
+ * active == true, kept when postmarkstatus is 'approved'. Other suites' docs in the shared emulator are
+ * part of this population, so the cases compare against it rather than against a fixed list.
+ */
+export async function activeApprovedTemplateNames(): Promise<string[]> {
+  const snap = await seed.initAdmin().firestore().collection('email templates').where('active', '==', true).get();
+  return snap.docs
+    .map((d: any) => d.data() || {})
+    .filter((x: any) => x.postmarkstatus === 'approved')
+    .map((x: any) => (x.templatename ?? '').toString().trim() || 'Untitled template');
+}
+
+/** Remove everything the mail cases seeded or the app wrote for them. */
+export async function cleanMailWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  for (const id of Object.values(wsMail.tpl)) await db.collection('email templates').doc(id).delete().catch(() => { });
+  for (const id of [wsMail.workshopId, wsMail.newWorkshopId]) {
+    await db.collection('workshopsettings').doc(id).delete().catch(() => { });
+    await db.collection('workshopconfiguration').doc(id).delete().catch(() => { });
+  }
+}
+
+// =================================================================================================
+// 2026-11-17 — Share Claimed side panel: "Referred: <names>" (was "Enrolled via code: ..."), WDL-02 in
+// workshop-dashboard-side-chips.spec.ts. Share Clicked / Share Claimed only render on an EVERGREEN workshop
+// (setupWorkshopReferralSnapshot runs only then), so this world has its own evergreen workshop and never
+// touches W_DASH or the WS-49 evergreen world.
+//
+//   workshopreferral (workshopref == W_referral):
+//     REF_USED   p0, claimed 2, code USED   → Share Claimed; NU_A + p2 enrolled with this code
+//     REF_IDLE   p1, claimed 1, code IDLE   → Share Claimed; NOBODY enrolled with it (negative control)
+//     REF_CLICK  p2, claimed 0              → Share Clicked only (never a Share Claimed card)
+//   workshop participant enrolled (workshopref == W_referral). The app lists the referred people in its
+//   snapshot order (doc id), so the ids are numbered to fix that order:
+//     ENR_0_SELF   p0  code USED   — the sharer used their own code: must NOT be listed
+//     ENR_1_NU     NU_A code USED  — a still-new user: name from new_user_data
+//     ENR_2_P2     p2  code USED   — listed once...
+//     ENR_3_P2DUP  p2  code USED   — ...even with a second enrolled doc (dedupe)
+//     ENR_4_ELSE   p1  code ELSE   — a code no sharer owns: listed under nobody
+// PRECONDITION writes only; clearReferralWorld removes every doc by id. No ATC collection is touched.
+// =================================================================================================
+export const wsReferral = {
+  WORKSHOP: `${RUN}_W_referral`,
+  codes: { used: `E2EREF-USED-${RUN}`, idle: `E2EREF-IDLE-${RUN}`, elsewhere: `E2EREF-ELSE-${RUN}` },
+  refs: { used: `${RUN}_wref_used`, idle: `${RUN}_wref_idle`, click: `${RUN}_wref_click` },
+  enrolled: {
+    self: `${RUN}_wref_enr_0_self`,
+    nu: `${RUN}_wref_enr_1_nu`,
+    p2: `${RUN}_wref_enr_2_p2`,
+    p2dup: `${RUN}_wref_enr_3_p2dup`,
+    elsewhere: `${RUN}_wref_enr_4_else`,
+  },
+};
+
+export async function seedReferralWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+  const R = wsReferral;
+
+  const wsRef = db.collection('workshopconfiguration').doc(R.WORKSHOP);
+  await wsRef.set({
+    docid: R.WORKSHOP, active: true, workshopcompleted: false, categorybased: false,
+    atcmodel: null, created: ago(10), payment: false,
+    evergreenWorkshop: true,
+    evergreenWorkshopMeta: { workshopDays: 7 },
+    detailpage: {
+      type: 'workshop', title: `Referral Workshop ${RUN}`, shortdescription: 'seeded evergreen (referrals)',
+      workshopStartDate: ago(10), workshopEndDate: ago(1),
+      registrationStartDate: ago(20), registrationEndDate: ago(11),
+    },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_wref_ch0`, heading: 'Referral Module', subheading: 'One',
+      challenges: [{ type: 'video', challengeid: `${RUN}_wref_ch0_s0`, heading: 'Referral Video', status: '' }],
+    }],
+    ...tag,
+  });
+
+  const referral = (id: string, profileid: string, claimed: number, referralcode?: string) =>
+    db.collection('workshopreferral').doc(id).set({
+      docid: id, workshopref: wsRef, profileid, claimed,
+      ...(referralcode ? { referralcode } : {}), created: ago(3), ...tag,
+    });
+  const enrol = (id: string, profileid: string, referralcode: string) =>
+    db.collection('workshop participant enrolled').doc(id).set({
+      docid: id, profileid, status: 'enrolled', workshopref: wsRef, enrollmentdate: ago(2), referralcode, ...tag,
+    });
+  await Promise.all([
+    referral(R.refs.used, wsProfileIds.p0, 2, R.codes.used),
+    referral(R.refs.idle, wsProfileIds.p1, 1, R.codes.idle),
+    referral(R.refs.click, wsProfileIds.p2, 0),
+    enrol(R.enrolled.self, wsProfileIds.p0, R.codes.used),
+    enrol(R.enrolled.nu, wsAddIds.NU_A, R.codes.used),
+    enrol(R.enrolled.p2, wsProfileIds.p2, R.codes.used),
+    enrol(R.enrolled.p2dup, wsProfileIds.p2, R.codes.used),
+    enrol(R.enrolled.elsewhere, wsProfileIds.p1, R.codes.elsewhere),
+  ]);
+}
+
+/** Remove the referral world (teardown only). */
+export async function clearReferralWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    drop('workshopconfiguration', wsReferral.WORKSHOP),
+    ...Object.values(wsReferral.refs).map(id => drop('workshopreferral', id)),
+    ...Object.values(wsReferral.enrolled).map(id => drop('workshop participant enrolled', id)),
+  ]);
+}
+
+// =================================================================================================
+// 2026-11-17 — At a glance additions (workshop-dashboard-glance.spec.ts, WDG-*).
+// Five run-tagged workshops of their OWN (W_DASH's counts, which other specs rely on, are untouched):
+//   LIVE  — started 11 days ago, ends in 12 → "Day 12 of 24"; carries the people world below
+//   SOON  — starts in 3 days, 24 days long; one enrolled person whose only tag id is dead (empty Top tags),
+//           and one STARTED person with no participant workshop doc (Started but stuck, no progress row)
+//   DONE  — ran 24 days, ended 4 days ago
+//   EVER  — evergreen, 8-day journey (its dates are ignored)
+//   NOEND — a start date and no end date → the strip is hidden
+// Every time is relative to the seed-time "now" (wsGlanceNow), and the spec's oracle reads it back.
+// =================================================================================================
+
+export const wsGlanceIds = {
+  LIVE: `${RUN}_W_gl_live`,
+  SOON: `${RUN}_W_gl_soon`,
+  DONE: `${RUN}_W_gl_done`,
+  EVER: `${RUN}_W_gl_ever`,
+  NOEND: `${RUN}_W_gl_noend`,
+  ENR_SOON: `${RUN}_gl_enr_soon`,
+  ENR_SOON_NOREC: `${RUN}_gl_enr_soon_norec`,
+};
+
+/** On SOON: status 'enrolled' (started) with NO participant workshop doc → Started but stuck, no progress row. */
+export const wsGlanceNoRecord = { id: `${RUN}_gl_pf_norecord`, name: `GL Gita NoRecord ${RUN}` };
+
+/** The people on LIVE: who they are and what makes each one a pivot. */
+export const wsGlancePeople = {
+  // joined 1 day ago; 1 of 2 steps, finished 1 day ago; workshopStartedAt 10 days ago → NOT inactive (the step wins)
+  active: { id: `${RUN}_gl_pf_active`, name: `GL Asha Active ${RUN}` },
+  // joined 2 days ago; started, no step finished → stuck (0%)
+  stuck: { id: `${RUN}_gl_pf_stuck`, name: `GL Bala Stuck ${RUN}` },
+  // joined 9 days ago; 1 of 2 steps, finished 5 days ago; workshopStartedAt 1 day ago → inactive (the step wins)
+  idle: { id: `${RUN}_gl_pf_idle`, name: `GL Chitra Idle ${RUN}` },
+  // joined 20 days ago (outside both weeks); 2 of 2 steps → Completed
+  done: { id: `${RUN}_gl_pf_done`, name: `GL Dev Done ${RUN}` },
+  // joined 10 days ago; 1 of 2 steps with NO finish time; workshopStartedAt 6 days ago → inactive via the fallback
+  fallback: { id: `${RUN}_gl_pf_fallback`, name: `GL Esha Fallback ${RUN}` },
+  // joined 3 days ago; enrolled, not started → in neither attention list
+  waiting: { id: `${RUN}_gl_pf_waiting`, name: `GL Farah Waiting ${RUN}` },
+};
+export type GlancePersonKey = keyof typeof wsGlancePeople;
+
+/** newusertags docs for the Top tags ranking (plus a dead id with no doc). */
+export const wsGlanceTags = {
+  alpha: { id: `${RUN}_gl_tag_alpha`, name: `GL Alpha ${RUN}` },
+  beta: { id: `${RUN}_gl_tag_beta`, name: `GL Beta ${RUN}` },
+  delta: { id: `${RUN}_gl_tag_delta`, name: `GL Delta ${RUN}` },
+  gamma: { id: `${RUN}_gl_tag_gamma`, name: `GL Gamma ${RUN}` },
+  epsilon: { id: `${RUN}_gl_tag_epsilon`, name: `GL Epsilon ${RUN}` },
+  long: { id: `${RUN}_gl_tag_long`, name: 'Leadership Accelerator Cohort — Mumbai Corporate 2026' },
+  ghost: `${RUN}_gl_tag_deleted`,
+};
+
+const glEnrId = (k: GlancePersonKey) => `${RUN}_gl_enr_${k}`;
+const glPwId = (k: GlancePersonKey) => `${RUN}_gl_pw_${k}`;
+export const wsGlanceEnrolledIds = Object.fromEntries(
+  (Object.keys(wsGlancePeople) as GlancePersonKey[]).map(k => [k, glEnrId(k)])) as Record<GlancePersonKey, string>;
+
+/** The seed-time clock every glance date was derived from (set by seedGlanceWorld). */
+export let wsGlanceNow = 0;
+
+/**
+ * PRECONDITION writes only: the five workshops, six people (metadata + enrolled doc + participant
+ * workshop doc) on LIVE, two people on SOON (one with no participant workshop doc), and the tag docs.
+ * Removed by clearGlanceWorld.
+ */
+export async function seedGlanceWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const now = Date.now();
+  wsGlanceNow = now;
+  const DAY = 24 * 60 * 60 * 1000;
+  const ago = (days: number) => T.fromMillis(now - days * DAY);
+  // a local calendar day `d` from today at 09:00 (same shape as seed-workshops.js `at`)
+  const at = (d: number) => { const x = new Date(now); x.setDate(x.getDate() + d); x.setHours(9, 0, 0, 0); return T.fromDate(x); };
+
+  const steps = (prefix: string) => [{
+    type: 'challenge', challengeid: `${prefix}_ch0`, heading: 'Glance Module', subheading: 'One',
+    challenges: [
+      { type: 'video', challengeid: `${prefix}_ch0_s0`, heading: 'Glance Step One', status: '' },
+      { type: 'video', challengeid: `${prefix}_ch0_s1`, heading: 'Glance Step Two', status: '' },
+    ],
+  }];
+  const workshop = (id: string, title: string, dates: Record<string, any>, extra: Record<string, any> = {}) =>
+    db.collection('workshopconfiguration').doc(id).set({
+      docid: id, active: true, workshopcompleted: false, categorybased: false, atcmodel: null, created: ago(30),
+      detailpage: { type: 'workshop', title, shortdescription: 'seeded glance', ...dates },
+      challenges: steps(`${RUN}_gl`), ...extra, ...tag,
+    });
+  await Promise.all([
+    workshop(wsGlanceIds.LIVE, `Glance Live ${RUN}`, { workshopStartDate: at(-11), workshopEndDate: at(12) }),
+    workshop(wsGlanceIds.SOON, `Glance Soon ${RUN}`, { workshopStartDate: at(3), workshopEndDate: at(26) }),
+    workshop(wsGlanceIds.DONE, `Glance Done ${RUN}`, { workshopStartDate: at(-27), workshopEndDate: at(-4) }),
+    workshop(wsGlanceIds.EVER, `Glance Evergreen ${RUN}`, { workshopStartDate: at(-30), workshopEndDate: at(-1) },
+      { evergreenWorkshop: true, evergreenWorkshopMeta: { workshopDays: 8 } }),
+    workshop(wsGlanceIds.NOEND, `Glance No End ${RUN}`, { workshopStartDate: at(-2) }),
+    ...Object.values(wsGlanceTags).filter((t): t is { id: string; name: string } => typeof t !== 'string')
+      .map(t => db.collection('newusertags').doc(t.id).set({ docid: t.id, type: 'newusersegments', name: t.name, ...tag })),
+    ...[...Object.values(wsGlancePeople), wsGlanceNoRecord].map(p => db.collection('participant metadata').doc(p.id).set({
+      profileid: p.id, name: p.name, email: `${p.id.toLowerCase()}@example.com`, countrycode: '+91', phonenumber: '9000000002', ...tag,
+    })),
+  ]);
+
+  const live = db.collection('workshopconfiguration').doc(wsGlanceIds.LIVE);
+  const G = wsGlanceTags;
+  // [step one, step two] — `true` = finished with no time on record, a number = finished that many days ago
+  type Step = false | true | number;
+  const person: Record<GlancePersonKey, { joined: number; status: string; started?: number; steps: [Step, Step]; tags: string[] }> = {
+    active: { joined: 1, status: 'enrolled', started: 10, steps: [1, false], tags: [G.alpha.id, G.alpha.id, G.beta.id, G.delta.id] },
+    stuck: { joined: 2, status: 'enrolled', started: 2, steps: [false, false], tags: [G.alpha.id, G.beta.id, G.long.id] },
+    idle: { joined: 9, status: 'enrolled', started: 1, steps: [5, false], tags: [G.beta.id, G.alpha.id] },
+    done: { joined: 20, status: 'enrolled', started: 19, steps: [15, 14], tags: [G.gamma.id, G.alpha.id] },
+    fallback: { joined: 10, status: 'enrolled', started: 6, steps: [true, false], tags: [G.ghost, G.gamma.id, G.long.id] },
+    waiting: { joined: 3, status: 'enrollednotstarted', steps: [false, false], tags: [G.delta.id, G.epsilon.id] },
+  };
+  const stepDoc = (k: GlancePersonKey) => {
+    const [a, b] = person[k].steps;
+    const one = (s: Step, i: number) => ({
+      type: 'video', challengeid: `${RUN}_gl_ch0_s${i}`, heading: i ? 'Glance Step Two' : 'Glance Step One',
+      status: s === false ? '' : 'completed',
+      ...(typeof s === 'number' ? { completed: ago(s) } : {}),
+    });
+    return [{ type: 'challenge', challengeid: `${RUN}_gl_ch0`, heading: 'Glance Module', challenges: [one(a, 0), one(b, 1)] }];
+  };
+  await Promise.all((Object.keys(person) as GlancePersonKey[]).flatMap(k => {
+    const p = person[k];
+    const pid = wsGlancePeople[k].id;
+    const pwRef = db.collection('participant workshop').doc(glPwId(k));
+    const enrRef = db.collection('workshop participant enrolled').doc(glEnrId(k));
+    return [
+      enrRef.set({
+        docid: glEnrId(k), profileid: pid, status: p.status, workshopref: live, participantworkshopref: pwRef,
+        enrollmentdate: ago(p.joined), tags: p.tags, ...(p.started !== undefined ? { workshopStartedAt: ago(p.started) } : {}), ...tag,
+      }),
+      pwRef.set({
+        docid: glPwId(k), profileid: pid, workshopref: live, workshopparticipantenrolledRef: enrRef,
+        challenges: stepDoc(k), created: ago(p.joined), ...tag,
+      }),
+    ];
+  }));
+
+  // SOON: one person, tagged only with a dead id → Top tags has nothing to show.
+  await db.collection('workshop participant enrolled').doc(wsGlanceIds.ENR_SOON).set({
+    docid: wsGlanceIds.ENR_SOON, profileid: wsGlancePeople.waiting.id, status: 'enrollednotstarted',
+    workshopref: db.collection('workshopconfiguration').doc(wsGlanceIds.SOON), enrollmentdate: ago(1), tags: [G.ghost], ...tag,
+  });
+  // SOON: started, but no participant workshop doc was ever written (no tags, so Top tags stays empty).
+  await db.collection('workshop participant enrolled').doc(wsGlanceIds.ENR_SOON_NOREC).set({
+    docid: wsGlanceIds.ENR_SOON_NOREC, profileid: wsGlanceNoRecord.id, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsGlanceIds.SOON), enrollmentdate: ago(2),
+    workshopStartedAt: ago(1), tags: [], ...tag,
+  });
+}
+
+/**
+ * WDG-08's live tick: set one LIVE person's enrolment date (an existing field) and return the value it had,
+ * so the case can put it back. Never adds a field.
+ */
+export async function setGlanceEnrollmentDate(k: GlancePersonKey, value: number | unknown): Promise<unknown> {
+  const admin = seed.initAdmin();
+  const ref = admin.firestore().collection('workshop participant enrolled').doc(glEnrId(k));
+  const prev = (await ref.get()).get('enrollmentdate');
+  await ref.update({ enrollmentdate: typeof value === 'number' ? admin.firestore.Timestamp.fromMillis(value) : value });
+  return prev;
+}
+
+/** Remove the glance world (teardown only). */
+export async function clearGlanceWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const keys = Object.keys(wsGlancePeople) as GlancePersonKey[];
+  await Promise.all([
+    ...[wsGlanceIds.LIVE, wsGlanceIds.SOON, wsGlanceIds.DONE, wsGlanceIds.EVER, wsGlanceIds.NOEND]
+      .map(id => drop('workshopconfiguration', id)),
+    drop('workshop participant enrolled', wsGlanceIds.ENR_SOON),
+    drop('workshop participant enrolled', wsGlanceIds.ENR_SOON_NOREC),
+    drop('participant metadata', wsGlanceNoRecord.id),
+    ...keys.map(k => drop('workshop participant enrolled', glEnrId(k))),
+    ...keys.map(k => drop('participant workshop', glPwId(k))),
+    ...keys.map(k => drop('participant metadata', wsGlancePeople[k].id)),
+    ...Object.values(wsGlanceTags).filter((t): t is { id: string; name: string } => typeof t !== 'string')
+      .map(t => drop('newusertags', t.id)),
+  ]);
+}
+
+// =================================================================================================
+// 2026-11-18 — Person menu: who reads "Not enrolled in this workshop" (workshop-dashboard-side-person.spec.ts,
+// WDP-05/06). Two run-tagged workshops of their OWN (W_DASH and the glance worlds are untouched):
+//   PMENU  evergreen (7 days) + paid, so the Share Clicked and Purchase panels exist
+//            workshopreferral, claimed 0, for outsider / waiting / started   → Share Clicked lists all three
+//            workshoppaymentlog, captured, for outsider only                → Purchase lists only the outsider
+//            workshop participant enrolled:
+//              outsider  NONE here                                            → "Not enrolled in this workshop"
+//              waiting   'enrollednotstarted', no participant workshop doc   → "Not started — no data …"
+//              started   'enrolled' + participant workshop doc (1 of 2 steps) → a progress row: "In <title>"
+//   OTHER  the outsider IS enrolled and started there, so the wording is about THIS workshop, not "never enrolled".
+// New Users Not Enrolled on PMENU also lists the base seed's still-new NU Alpha (never enrolled here).
+// Each person has profile_data AND participant metadata with the SAME name/email/phone: the sharer and buyer
+// names come from profile_data, and the CF that copies profile_data → participant metadata (when the functions
+// emulator loads) then writes the values already there. PRECONDITION writes only; clearPersonMenuWorld removes
+// every doc by id. No ATC collection is touched.
+// =================================================================================================
+export const wsPmenu = {
+  WORKSHOP: `${RUN}_W_pmenu`,
+  OTHER: `${RUN}_W_pmenu_other`,
+  title: `Person Menu Workshop ${RUN}`,
+  otherTitle: `Person Menu Other ${RUN}`,
+  people: {
+    outsider: { id: `${RUN}_pm_pf_outsider`, name: `PM Omar Outsider ${RUN}` },
+    waiting: { id: `${RUN}_pm_pf_waiting`, name: `PM Wren Waiting ${RUN}` },
+    started: { id: `${RUN}_pm_pf_started`, name: `PM Sana Started ${RUN}` },
+  },
+  enrolled: {
+    waiting: `${RUN}_pm_enr_waiting`,
+    started: `${RUN}_pm_enr_started`,
+    outsiderOther: `${RUN}_pm_enr_outsider_other`,
+  },
+  pw: {
+    started: `${RUN}_pm_pw_started`,
+    outsiderOther: `${RUN}_pm_pw_outsider_other`,
+  },
+  referrals: {
+    outsider: `${RUN}_pm_ref_outsider`,
+    waiting: `${RUN}_pm_ref_waiting`,
+    started: `${RUN}_pm_ref_started`,
+  },
+  payment: `${RUN}_pm_wpl_outsider`,
+};
+export type PmenuPersonKey = keyof typeof wsPmenu.people;
+
+export async function seedPersonMenuWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+  const P = wsPmenu;
+
+  const steps = (prefix: string, done: boolean) => [{
+    type: 'challenge', challengeid: `${prefix}_ch0`, heading: 'Menu Module', subheading: 'One',
+    challenges: [
+      { type: 'video', challengeid: `${prefix}_ch0_s0`, heading: 'Menu Step One', status: done ? 'completed' : '' },
+      { type: 'video', challengeid: `${prefix}_ch0_s1`, heading: 'Menu Step Two', status: '' },
+    ],
+  }];
+  const workshop = (id: string, title: string, extra: Record<string, any>) =>
+    db.collection('workshopconfiguration').doc(id).set({
+      docid: id, active: true, workshopcompleted: false, categorybased: false, atcmodel: null, created: ago(10),
+      detailpage: {
+        type: 'workshop', title, shortdescription: 'seeded person menu',
+        workshopStartDate: ago(10), workshopEndDate: ago(1), registrationStartDate: ago(20), registrationEndDate: ago(11),
+      },
+      challenges: steps(`${RUN}_pm`, false), ...extra, ...tag,
+    });
+  const wsRef = db.collection('workshopconfiguration').doc(P.WORKSHOP);
+  const otherRef = db.collection('workshopconfiguration').doc(P.OTHER);
+  const email = (id: string) => `${id.toLowerCase()}@example.com`;
+
+  await Promise.all([
+    workshop(P.WORKSHOP, P.title, { evergreenWorkshop: true, evergreenWorkshopMeta: { workshopDays: 7 }, payment: true }),
+    workshop(P.OTHER, P.otherTitle, { payment: false }),
+    ...Object.values(P.people).flatMap(p => [
+      db.collection('profile_data').doc(p.id).set({
+        docid: p.id, profileid: p.id, name: p.name, email: email(p.id), number: '9000000004', countrycode: '+91', ...tag,
+      }),
+      db.collection('participant metadata').doc(p.id).set({
+        profileid: p.id, name: p.name, email: email(p.id), countrycode: '+91', phonenumber: '9000000004', ...tag,
+      }),
+    ]),
+  ]);
+
+  const referral = (id: string, profileid: string) =>
+    db.collection('workshopreferral').doc(id).set({ docid: id, workshopref: wsRef, profileid, claimed: 0, created: ago(3), ...tag });
+  const enrRef = (id: string) => db.collection('workshop participant enrolled').doc(id);
+  const pwRef = (id: string) => db.collection('participant workshop').doc(id);
+  await Promise.all([
+    referral(P.referrals.outsider, P.people.outsider.id),
+    referral(P.referrals.waiting, P.people.waiting.id),
+    referral(P.referrals.started, P.people.started.id),
+    db.collection('workshoppaymentlog').doc(P.payment).set({
+      docid: P.payment, status: 'captured', profileid: P.people.outsider.id, amountRupees: 1499, datetime: ago(2), workshopref: wsRef, ...tag,
+    }),
+    // PMENU: waiting enrolled, not started (no participant workshop doc).
+    enrRef(P.enrolled.waiting).set({
+      docid: P.enrolled.waiting, profileid: P.people.waiting.id, status: 'enrollednotstarted', workshopref: wsRef,
+      enrollmentdate: ago(3), tags: [], ...tag,
+    }),
+    // PMENU: started, with a participant workshop doc → a progress row.
+    enrRef(P.enrolled.started).set({
+      docid: P.enrolled.started, profileid: P.people.started.id, status: 'enrolled', workshopref: wsRef,
+      participantworkshopref: pwRef(P.pw.started), enrollmentdate: ago(4), workshopStartedAt: ago(3), tags: [], ...tag,
+    }),
+    pwRef(P.pw.started).set({
+      docid: P.pw.started, profileid: P.people.started.id, workshopref: wsRef, workshopparticipantenrolledRef: enrRef(P.enrolled.started),
+      challenges: steps(`${RUN}_pm`, true), created: ago(4), ...tag,
+    }),
+    // OTHER: the outsider is enrolled AND started there — never on PMENU.
+    enrRef(P.enrolled.outsiderOther).set({
+      docid: P.enrolled.outsiderOther, profileid: P.people.outsider.id, status: 'enrolled', workshopref: otherRef,
+      participantworkshopref: pwRef(P.pw.outsiderOther), enrollmentdate: ago(5), workshopStartedAt: ago(4), tags: [], ...tag,
+    }),
+    pwRef(P.pw.outsiderOther).set({
+      docid: P.pw.outsiderOther, profileid: P.people.outsider.id, workshopref: otherRef,
+      workshopparticipantenrolledRef: enrRef(P.enrolled.outsiderOther), challenges: steps(`${RUN}_pm`, true), created: ago(5), ...tag,
+    }),
+  ]);
+}
+
+/** Remove the person-menu world (teardown only). */
+export async function clearPersonMenuWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const P = wsPmenu;
+  await Promise.all([
+    drop('workshopconfiguration', P.WORKSHOP),
+    drop('workshopconfiguration', P.OTHER),
+    ...Object.values(P.people).flatMap(p => [drop('profile_data', p.id), drop('participant metadata', p.id)]),
+    ...Object.values(P.enrolled).map(id => drop('workshop participant enrolled', id)),
+    ...Object.values(P.pw).map(id => drop('participant workshop', id)),
+    ...Object.values(P.referrals).map(id => drop('workshopreferral', id)),
+    drop('workshoppaymentlog', P.payment),
+  ]);
+}
+
+// =================================================================================================
+// 2026-11-18 — /newusersprofile person details dialog with "Delivery on hold" (new-users-details.spec.ts, NUD-*).
+// Plan: starlabs-angular specs/plans/2026-11-18-new-user-details-dialog.md.
+//
+// PRECONDITION writes and TEST-side oracles only. Every doc is run-scoped by id and run-tagged (the teardown sweep
+// is the backstop); clearNewUserDetails() removes them after the file, so the people and tags below never reach the
+// counts other New Users files take from Firestore (tag panels, Converted, the ops dashboard's movedon window).
+//
+//   full       every field the dialog shows: phone, status, enable, last_login and movedon at FIXED instants,
+//              converted, and six tag ids in a deliberate order — four of this run's own segment tags (doc order
+//              is NOT alphabetical), a calendar-type tag (not a segment: the table drops it) and an id with no
+//              tag doc (dropped too). The table shows three pills and "+1".
+//   bare       a name and created only — every other value is the dialog's empty wording.
+//   control    an untouched person: never opened, never toggled. NUD-05 proves the write landed on ONE doc.
+//   throwaway  deleted by NUD-07 while its dialog is open; re-seeded by seedNewUserDetailsThrowaway() each run.
+//   holder     a second staff-like profile id with a known name, in `participant metadata` ONLY (no profile_data),
+//              so the caption's name lookup is also proven on its fallback branch. No CF triggers on that
+//              collection, so nothing rewrites the name (unlike profile_data → participant metadata).
+// Every person is created a few minutes before the seed runs, so they are the newest rows (page 1 of the list).
+// =================================================================================================
+export const wsDetails = {
+  tags: [
+    { id: `${RUN}_nut_nud_d`, name: `NUD Tag Delta ${RUN}` },
+    { id: `${RUN}_nut_nud_b`, name: `NUD Tag Bravo ${RUN}` },
+    { id: `${RUN}_nut_nud_c`, name: `NUD Tag Charlie ${RUN}` },
+    { id: `${RUN}_nut_nud_a`, name: `NUD Tag Alpha ${RUN}` },
+  ],
+  /** A tag id with no `newusertags` doc: it has no name, so the table (and the dialog) leave it out. */
+  ghostTag: `${RUN}_nut_nud_ghost`,
+  full: { id: `${RUN}_nu_nud_full`, name: `NUD Full ${RUN}` },
+  bare: { id: `${RUN}_nu_nud_bare`, name: `NUD Bare ${RUN}` },
+  control: { id: `${RUN}_nu_nud_control`, name: `NUD Control ${RUN}` },
+  throwaway: { id: `${RUN}_nu_nud_gone`, name: `NUD Throwaway ${RUN}` },
+  holder: { id: `${RUN}_pf_nud_holder`, name: `WS Holder ${RUN}` },
+  /** countryCode / phonenumber as the CF writes them (the number keeps its inner space). */
+  phone: { cc: '+91', number: '98765 43210' },
+  status: 'active',
+  /** Fixed local instants: a single-digit PM hour and a single-digit AM hour exercise 'h:mm a'. */
+  lastLogin: new Date(2026, 9, 7, 14, 5, 0, 0),
+  movedOn: new Date(2026, 2, 3, 9, 40, 0, 0),
+  /** The time NUD-07's out-of-app write stamps into the hold record. */
+  holdAt: new Date(2026, 10, 2, 16, 45, 0, 0),
+};
+
+/** The tag ids on the full person, in their stored order (see the block comment). */
+export function wsDetailsFullTagIds(): string[] {
+  const T = wsDetails.tags;
+  return [T[0].id, wsAddIds.NUT_CAL_A, T[1].id, wsDetails.ghostTag, T[2].id, T[3].id];
+}
+
+/** Seed the tags and the full / bare / control people (idempotent: full-document set()). */
+export async function seedNewUserDetails(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const D = wsDetails;
+  const now = Date.now();
+  const minutesAgo = (m: number) => { const d = new Date(now - m * 60_000); d.setSeconds(0, 0); return T.fromDate(d); };
+  await Promise.all([
+    ...D.tags.map(t => db.collection('newusertags').doc(t.id).set({ docid: t.id, type: 'newusersegments', name: t.name, ...tag })),
+    db.collection('new_user_data').doc(D.full.id).set({
+      docid: D.full.id, uid: `${RUN}_u_nud_full`, profileid: D.full.id, name: D.full.name, email: `${D.full.id}@example.com`,
+      phonenumber: D.phone.number, countryCode: D.phone.cc, refferedby: '', refferedprofile: '',
+      created: minutesAgo(2), emailVerified: true, registrationMethod: 'email', status: D.status, subscriber: false,
+      enable: true, workshoponly: false, tags: wsDetailsFullTagIds(),
+      last_login: T.fromDate(D.lastLogin), movedtoexist: true, movedon: T.fromDate(D.movedOn), ...tag,
+    }),
+    db.collection('new_user_data').doc(D.bare.id).set({ name: D.bare.name, created: minutesAgo(3), ...tag }),
+    db.collection('new_user_data').doc(D.control.id).set({
+      docid: D.control.id, name: D.control.name, email: `${D.control.id}@example.com`, phonenumber: '9999900012',
+      countryCode: '+91', created: minutesAgo(4), status: 'active', enable: true, tags: [], ...tag,
+    }),
+  ]);
+}
+
+/** (Re)create the person NUD-07 deletes while its dialog is open. */
+export async function seedNewUserDetailsThrowaway(): Promise<void> {
+  const admin = seed.initAdmin();
+  const d = new Date(Date.now() - 60_000);
+  d.setSeconds(0, 0);
+  await admin.firestore().collection('new_user_data').doc(wsDetails.throwaway.id).set({
+    docid: wsDetails.throwaway.id, name: wsDetails.throwaway.name, email: `${wsDetails.throwaway.id}@example.com`,
+    phonenumber: '9999900013', countryCode: '+91', created: admin.firestore.Timestamp.fromDate(d), enable: true, tags: [],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** The holder's name, where the dialog's lookup finds it on its fallback branch (`participant metadata`). */
+export async function seedNewUserDetailsHolder(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const H = wsDetails.holder;
+  await db.collection('participant metadata').doc(H.id).set({
+    docid: H.id, profileid: H.id, name: H.name, email: `${H.id}@example.com`, testrunid: RUN, _testdata: true,
+  });
+}
+
+/**
+ * Delete the hold fields from every details person, so each case starts from "never put on hold" (re-runs
+ * included). update() on a missing doc throws, so each is guarded: a person NUD-07 deleted simply stays gone.
+ */
+export async function resetNewUserDetailsHold(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  const D = wsDetails;
+  await Promise.all([D.full.id, D.bare.id, D.control.id, D.throwaway.id].map(id =>
+    db.collection('new_user_data').doc(id)
+      .update({ deliveryonhold: FV.delete(), deliveryonholdby: FV.delete() })
+      .catch(() => undefined)));
+}
+
+/** Remove everything above (afterAll). */
+export async function clearNewUserDetails(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const D = wsDetails;
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    ...D.tags.map(t => drop('newusertags', t.id)),
+    ...[D.full.id, D.bare.id, D.control.id, D.throwaway.id].map(id => drop('new_user_data', id)),
+    drop('participant metadata', D.holder.id),
+  ]);
+}
+
+/**
+ * ORACLE — the name the caption must show for a profile id: `profile_data/{id}.name`, else
+ * `participant metadata/{id}.name` (trimmed), else '' (the caption then leaves the name out). Read here, by the
+ * test, from what the seed and the CFs wrote; never from the screen.
+ */
+export async function wsHoldByName(profileId: string): Promise<string> {
+  const db = seed.initAdmin().firestore();
+  const pick = async (col: string) => {
+    const snap = await db.collection(col).doc(profileId).get();
+    const v = snap.exists ? (snap.data() || {}).name : '';
+    return typeof v === 'string' ? v.trim() : '';
+  };
+  return (await pick('profile_data')) || (await pick('participant metadata'));
+}
+
+/** Out-of-app hold write (NUD-07): the stimulus the open dialog must pick up live. */
+export async function setNewUserHoldExternally(id: string, on: boolean, by: string, at: Date): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(id).update({
+    deliveryonhold: on, deliveryonholdby: { time: admin.firestore.Timestamp.fromDate(at), user: by },
+  });
+}
+
+/** Delete one new user (NUD-07's throwaway) while the screen is open. */
+export async function deleteNewUser(id: string): Promise<void> {
+  await seed.initAdmin().firestore().collection('new_user_data').doc(id).delete();
 }
