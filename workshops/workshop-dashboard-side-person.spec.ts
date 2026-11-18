@@ -7,6 +7,18 @@
 //   WDP-03  A not-started person (Not Started panel) has no data in this workshop: the item is disabled, says
 //           so, and clicking it does nothing
 //   WDP-04  Negative control: without the participant progress right (limited) the name is plain text
+//   WDP-05  Share Clicked on a workshop of its own: a sharer with NO enrolled doc here reads "Not enrolled in this
+//           workshop" (disabled; clicking does nothing), although they are enrolled and started in ANOTHER workshop;
+//           in the same panel the enrolled-not-started sharer reads "Not started — no data in this workshop yet"
+//           and the started sharer's item is live and opens their Participant Data
+//   WDP-06  The other panels that list people with no enrolled doc: Purchase (a buyer who never enrolled) and New
+//           Users Not Enrolled (a still-new user) read "Not enrolled in this workshop", and the disabled item
+//           leaves the panel open and the Participant Data already picked unchanged
+//
+// NOT covered here: the Sale Achieved purchases card (wdash-sale-tip) vs this menu. Its rows come only from Watson
+// (watsonFirestore() → Participants + ParticipantPurchases), and the emulator build sets `watson: null` on purpose
+// (WDC-15), so no emulator panel row ever has purchases. Covering it needs an emulator-only Watson stand-in — an
+// operator decision (it changes WDC-15/16), not a seed.
 //
 // Recon: starlabs-angular src/app/New-Workshop/workshop-dashboard/
 //   • workshop-dashboard.component.html — the row (wd-a-84) is a plain <div>; the name is
@@ -26,13 +38,23 @@
 // THE WORLD (seed-workshops.js §5 + §6c, unchanged): on W_DASH, p0 is 'enrolled' with a participant workshop doc
 // (a progress row) and p1 is 'enrollednotstarted' (no progress row). `limited` has ['qanda','export'] on
 // W_DASH — no participant progress right. Names are the CF-owned metadata names (alignWorkshopMetadataNames).
-import { test, expect, Page } from '@playwright/test';
+//
+// WDP-05/06 WORLD (seedPersonMenuWorld in support/wshop.ts — its OWN workshops; W_DASH is untouched):
+//   PMENU  evergreen + paid (so Share Clicked and Purchase exist). Share Clicked = outsider, waiting, started;
+//          Purchase = outsider. Enrolled docs here: waiting 'enrollednotstarted' (no participant workshop doc),
+//          started 'enrolled' + participant workshop doc (a progress row). The outsider has NONE here.
+//   OTHER  the outsider is enrolled and started there (so "this workshop" is what the wording is about).
+//   New Users Not Enrolled on PMENU lists the base seed's still-new NU Alpha (never enrolled here).
+// The panels' person sets and each person's enrolled doc are read back from Firestore first, so the wording each
+// case expects follows from the data, not from the seed's intent.
+import { test, expect, Page, Locator } from '@playwright/test';
 import {
   wsIds, wsMetaNames, installWshopStubs, loginAsWshopAdmin, loginAsWshopLimited, alignWorkshopMetadataNames,
   resetParticipantWorkshopP0, wsLimitedGrants,
+  wsPmenu, seedPersonMenuWorld, clearPersonMenuWorld, wsAddIds, wsAddNames,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc } from '../queue/support/firestore-admin';
+import { getDoc, queryWhere, db } from '../queue/support/firestore-admin';
 
 const panelCard = (page: Page, name: string) =>
   page.locator('.participant-panel mat-card.participant-card').filter({ hasText: name });
@@ -148,5 +170,187 @@ test.describe('Workshop dashboard — side panel person menu', () => {
     await expect(card.locator('.participant-name'), 'WDP-04: the name still shows').toHaveText(wsMetaNames.p0);
     expect(await card.locator('.participant-name').evaluate(el => el.tagName), 'WDP-04: as plain text').toBe('SPAN');
     await expect(page.getByTestId('wd-side-person-name'), 'WDP-04: no menu trigger anywhere').toHaveCount(0);
+  });
+});
+
+// ─── WDP-05/06: who reads "Not enrolled in this workshop" (seedPersonMenuWorld — its OWN workshops) ─────────────
+const PM = wsPmenu;
+const NOT_ENROLLED = 'Not enrolled in this workshop';
+const NOT_STARTED = 'Not started — no data in this workshop yet';
+const STARTED_NO_ROW = 'Started — no progress recorded yet';
+
+/** The enrolled docs on a workshop, keyed by profileid (first doc wins, as the dashboard reads them). */
+async function enrolledOn(workshopId: string): Promise<Map<string, any>> {
+  const docs: any[] = await queryWhere('workshop participant enrolled',
+    [['workshopref', '==', db().collection('workshopconfiguration').doc(workshopId)]]);
+  const out = new Map<string, any>();
+  for (const d of docs) if (d.profileid && !out.has(d.profileid)) out.set(d.profileid, d);
+  return out;
+}
+
+async function openPmenuDashboard(page: Page): Promise<void> {
+  await page.goto(`/workshop_dashboard/${PM.WORKSHOP}`, { waitUntil: 'domcontentloaded' });
+  await expect(page).toHaveURL(new RegExp(`workshop_dashboard/${PM.WORKSHOP}`), { timeout: 30_000 });
+  await expect(page.locator('nav.wdx-nav'), 'the dashboard has loaded').toBeVisible({ timeout: 90_000 });
+  // Both the enrolled and the progress snapshots have delivered: the started person's row is in the table.
+  await expect(page.getByTestId('wd-on-participant-click-39').filter({ hasText: PM.people.started.name }),
+    'the started person has a progress row').toHaveCount(1, { timeout: 60_000 });
+}
+
+const panelNames = (page: Page) => page.locator('.participant-panel mat-card.participant-card .participant-name');
+
+/**
+ * Open a panel from its card until it lists exactly `names` (any order). The sharer / buyer names are read after
+ * the ids arrive and the panel is built on click, so reopen until they are there (a load race, never a different set).
+ */
+async function openPanelListing(page: Page, card: Locator, names: string[], what: string): Promise<void> {
+  await expect(async () => {
+    if (await page.locator('aside.participant-panel.panel-visible').count()) {
+      await page.getByTestId('wd-close-participant-panel-61').click();
+    }
+    await card.click();
+    await expect.poll(async () => (await panelNames(page).allTextContents()).map(n => n.trim()).sort(), { timeout: 5_000 })
+      .toEqual([...names].sort());
+  }, what).toPass({ timeout: 60_000 });
+}
+
+/** Open the person menu from a panel row and check it is this person's. */
+async function openPersonMenu(page: Page, name: string): Promise<Locator> {
+  await panelCard(page, name).getByTestId('wd-side-person-name').click();
+  await expect(page.locator('.mat-mdc-menu-panel.wdx-pmenu .wdx-pmenu-name'), `the menu is ${name}'s`).toHaveText(name);
+  return page.getByTestId('wd-side-person-view');
+}
+
+async function closePersonMenu(page: Page): Promise<void> {
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('wd-side-person-view')).toHaveCount(0);
+}
+
+test.describe('Workshop dashboard — person menu: "Not enrolled in this workshop"', () => {
+  let guard: ConsoleGuard;
+  test.beforeAll(async () => { await seedPersonMenuWorld(); });
+  test.afterAll(async () => { await clearPersonMenuWorld(); });
+  test.beforeEach(async ({ page }) => {
+    guard = attachConsoleGuard(page);
+    await installWshopStubs(page);
+  });
+  test.afterEach(async () => {
+    assertNoFatal(guard, 'person menu (not enrolled): no fatal console errors / pageerrors');
+  });
+
+  test('WDP-05 Share Clicked: no enrolled doc here reads "Not enrolled in this workshop"; not started and started do not', async ({ page }) => {
+    // [ORACLE] who Share Clicked lists, and what each one has on THIS workshop — read back, then pinned to the seed.
+    const ws: any = await getDoc('workshopconfiguration', PM.WORKSHOP);
+    expect(ws?.evergreenWorkshop, 'WDP-05 precondition: Share Clicked only exists on an evergreen workshop').toBe(true);
+    const title = String(ws?.detailpage?.title || '');
+    expect(title, 'WDP-05 precondition: the workshop has a title').not.toBe('');
+    const refs: any[] = await queryWhere('workshopreferral', [['workshopref', '==', db().collection('workshopconfiguration').doc(PM.WORKSHOP)]]);
+    const clicked = refs.filter(r => r.profileid && !((Number(r.claimed) || 0) > 0)).map(r => r.profileid as string);
+    const { outsider, waiting, started } = PM.people;
+    expect(clicked.sort(), 'WDP-05 oracle: Share Clicked = outsider, waiting, started')
+      .toEqual([outsider.id, waiting.id, started.id].sort());
+    const here = await enrolledOn(PM.WORKSHOP);
+    expect(here.has(outsider.id), 'WDP-05 oracle: the outsider has NO enrolled doc on this workshop').toBe(false);
+    expect(here.get(waiting.id)?.status, 'WDP-05 oracle: waiting is enrolled, not started').toBe('enrollednotstarted');
+    expect(here.get(started.id)?.status, 'WDP-05 oracle: started is enrolled (started)').toBe('enrolled');
+    const pw: any[] = await queryWhere('participant workshop', [['profileid', '==', started.id]]);
+    expect(pw.filter(d => d.workshopref?.id === PM.WORKSHOP), 'WDP-05 oracle: started has a participant workshop doc here').toHaveLength(1);
+    // The outsider IS enrolled and started elsewhere, so a lookup that ignored the workshop would say "Started".
+    expect((await enrolledOn(PM.OTHER)).get(outsider.id)?.status, 'WDP-05 oracle: the outsider started ANOTHER workshop').toBe('enrolled');
+    const names = await Promise.all(clicked.map(async id => String(((await getDoc('profile_data', id)) as any)?.name || '')));
+    expect(names.sort(), 'WDP-05 oracle: the sharer names (profile_data)').toEqual([outsider.name, waiting.name, started.name].sort());
+
+    await loginAsWshopAdmin(page);
+    await openPmenuDashboard(page);
+    const pd = page.locator('#participantDataCard');
+    await expect(pd, 'WDP-05 precondition: nobody selected yet').toContainText('No Participant Selected');
+    await expect(page.getByTestId('wd-on-metric-click-21').locator('.metric-value'), 'WDP-05: Share Clicked counts the three')
+      .toHaveText(String(clicked.length), { timeout: 60_000 });
+    await openPanelListing(page, page.getByTestId('wd-on-metric-click-21'), names, 'WDP-05: Share Clicked lists the three sharers');
+
+    // [POSITIVE CONTROL] the started sharer has a progress row: the item is live and names the workshop.
+    let view = await openPersonMenu(page, started.name);
+    await expect(view, 'WDP-05: started → enabled').toBeEnabled();
+    await expect(view).toContainText(`In ${title}`);
+    await closePersonMenu(page);
+
+    // [NEGATIVE CONTROL] enrolled but not started: disabled, and NOT the "not enrolled" wording.
+    view = await openPersonMenu(page, waiting.name);
+    await expect(view, 'WDP-05: not started → disabled').toBeDisabled();
+    await expect(view, 'WDP-05: not started wording').toContainText(NOT_STARTED);
+    await expect(view).not.toContainText(NOT_ENROLLED);
+    await closePersonMenu(page);
+
+    // [ASSERT] no enrolled doc on this workshop: disabled, "Not enrolled in this workshop" — never "Not started" or
+    // "Started" (the outsider's enrolled + started doc on OTHER must not leak in), never "In <title>".
+    view = await openPersonMenu(page, outsider.name);
+    await expect(view, 'WDP-05: not enrolled → disabled').toBeDisabled();
+    await expect(view, 'WDP-05: the not-enrolled wording').toContainText(NOT_ENROLLED);
+    await expect(view).not.toContainText(NOT_STARTED);
+    await expect(view).not.toContainText(STARTED_NO_ROW);
+    await expect(view).not.toContainText('In ');
+    await view.click({ force: true });
+    await expect(page.locator('aside.participant-panel'), 'WDP-05: the panel stays open').toHaveClass(/panel-visible/);
+    await expect(pd, 'WDP-05: nobody was selected').toContainText('No Participant Selected');
+    await expect(pd.locator('.wdx-pd-name')).toHaveCount(0);
+    await closePersonMenu(page);
+
+    // The same item on the started sharer does act (so "does nothing" above is the disabled state, not a dead menu).
+    view = await openPersonMenu(page, started.name);
+    await view.click();
+    await expect(page.locator('aside.participant-panel'), 'WDP-05: started → the panel closes').not.toHaveClass(/panel-visible/);
+    await expect(pd.locator('.wdx-pd-name'), 'WDP-05: started → their Participant Data').toContainText(started.name, { timeout: 30_000 });
+  });
+
+  test('WDP-06 Purchase and New Users Not Enrolled read "Not enrolled in this workshop"; the picked Participant Data stays', async ({ page }) => {
+    // [ORACLE] Purchase = the buyers on this workshop; New Users Not Enrolled includes the still-new NU Alpha.
+    const ws: any = await getDoc('workshopconfiguration', PM.WORKSHOP);
+    expect(ws?.evergreenWorkshop === true && ws?.payment === true, 'WDP-06 precondition: Purchase only exists on an evergreen paid workshop').toBe(true);
+    const pays: any[] = await queryWhere('workshoppaymentlog', [['workshopref', '==', db().collection('workshopconfiguration').doc(PM.WORKSHOP)]]);
+    const buyers = [...new Set(pays.map(p => p.profileid).filter(Boolean))];
+    const { outsider, started } = PM.people;
+    expect(buyers, 'WDP-06 oracle: the outsider is the only buyer').toEqual([outsider.id]);
+    const here = await enrolledOn(PM.WORKSHOP);
+    expect(here.has(outsider.id), 'WDP-06 oracle: the buyer never enrolled here').toBe(false);
+    const nu: any = await getDoc('new_user_data', wsAddIds.NU_A);
+    expect(nu?.name, 'WDP-06 oracle: NU Alpha is a new user').toBe(wsAddNames.nuAlpha);
+    expect(nu?.movedtoexist === true, 'WDP-06 oracle: NU Alpha is still new').toBe(false);
+    expect(here.has(wsAddIds.NU_A), 'WDP-06 oracle: NU Alpha is not enrolled here').toBe(false);
+
+    await loginAsWshopAdmin(page);
+    await openPmenuDashboard(page);
+    // Pick the started person from the table first, so "nothing changes" has something to keep.
+    const pd = page.locator('#participantDataCard');
+    await page.getByTestId('wd-on-participant-click-39').filter({ hasText: started.name }).click();
+    await expect(pd.locator('.wdx-pd-name'), 'WDP-06 precondition: the started person is picked').toContainText(started.name, { timeout: 30_000 });
+
+    // Purchase: the buyer with no enrolled doc here.
+    await expect(page.getByTestId('wd-on-metric-click-23').locator('.metric-value'), 'WDP-06: Purchase counts the one buyer')
+      .toHaveText('1', { timeout: 60_000 });
+    await openPanelListing(page, page.getByTestId('wd-on-metric-click-23'), [outsider.name], 'WDP-06: Purchase lists the buyer');
+    let view = await openPersonMenu(page, outsider.name);
+    await expect(view, 'WDP-06: Purchase, not enrolled → disabled').toBeDisabled();
+    await expect(view, 'WDP-06: Purchase, the not-enrolled wording').toContainText(NOT_ENROLLED);
+    await expect(view).not.toContainText(NOT_STARTED);
+    await expect(view).not.toContainText(STARTED_NO_ROW);
+    await view.click({ force: true });
+    await expect(page.locator('aside.participant-panel'), 'WDP-06: the panel stays open').toHaveClass(/panel-visible/);
+    await expect(pd.locator('.wdx-pd-name'), 'WDP-06: the picked Participant Data is unchanged').toContainText(started.name);
+    await expect(pd.locator('.wdx-pd-name')).not.toContainText(outsider.name);
+    await closePersonMenu(page);
+    await page.getByTestId('wd-close-participant-panel-61').click();
+
+    // New Users Not Enrolled: a still-new user who never enrolled here.
+    await page.getByTestId('wd-on-metric-click-20').click();
+    const nuCard = panelCard(page, wsAddNames.nuAlpha);
+    await expect(nuCard, 'WDP-06: NU Alpha is in New Users Not Enrolled').toHaveCount(1, { timeout: 30_000 });
+    view = await openPersonMenu(page, wsAddNames.nuAlpha);
+    await expect(view, 'WDP-06: new user, not enrolled → disabled').toBeDisabled();
+    await expect(view, 'WDP-06: new user, the not-enrolled wording').toContainText(NOT_ENROLLED);
+    await expect(view).not.toContainText(NOT_STARTED);
+    await view.click({ force: true });
+    await expect(page.locator('aside.participant-panel'), 'WDP-06: the panel stays open').toHaveClass(/panel-visible/);
+    await expect(pd.locator('.wdx-pd-name'), 'WDP-06: still the picked person').toContainText(started.name);
+    await closePersonMenu(page);
   });
 });

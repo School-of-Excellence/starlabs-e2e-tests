@@ -2887,3 +2887,142 @@ export async function clearGlanceWorld(): Promise<void> {
       .map(t => drop('newusertags', t.id)),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-18 — Person menu: who reads "Not enrolled in this workshop" (workshop-dashboard-side-person.spec.ts,
+// WDP-05/06). Two run-tagged workshops of their OWN (W_DASH and the glance worlds are untouched):
+//   PMENU  evergreen (7 days) + paid, so the Share Clicked and Purchase panels exist
+//            workshopreferral, claimed 0, for outsider / waiting / started   → Share Clicked lists all three
+//            workshoppaymentlog, captured, for outsider only                → Purchase lists only the outsider
+//            workshop participant enrolled:
+//              outsider  NONE here                                            → "Not enrolled in this workshop"
+//              waiting   'enrollednotstarted', no participant workshop doc   → "Not started — no data …"
+//              started   'enrolled' + participant workshop doc (1 of 2 steps) → a progress row: "In <title>"
+//   OTHER  the outsider IS enrolled and started there, so the wording is about THIS workshop, not "never enrolled".
+// New Users Not Enrolled on PMENU also lists the base seed's still-new NU Alpha (never enrolled here).
+// Each person has profile_data AND participant metadata with the SAME name/email/phone: the sharer and buyer
+// names come from profile_data, and the CF that copies profile_data → participant metadata (when the functions
+// emulator loads) then writes the values already there. PRECONDITION writes only; clearPersonMenuWorld removes
+// every doc by id. No ATC collection is touched.
+// =================================================================================================
+export const wsPmenu = {
+  WORKSHOP: `${RUN}_W_pmenu`,
+  OTHER: `${RUN}_W_pmenu_other`,
+  title: `Person Menu Workshop ${RUN}`,
+  otherTitle: `Person Menu Other ${RUN}`,
+  people: {
+    outsider: { id: `${RUN}_pm_pf_outsider`, name: `PM Omar Outsider ${RUN}` },
+    waiting: { id: `${RUN}_pm_pf_waiting`, name: `PM Wren Waiting ${RUN}` },
+    started: { id: `${RUN}_pm_pf_started`, name: `PM Sana Started ${RUN}` },
+  },
+  enrolled: {
+    waiting: `${RUN}_pm_enr_waiting`,
+    started: `${RUN}_pm_enr_started`,
+    outsiderOther: `${RUN}_pm_enr_outsider_other`,
+  },
+  pw: {
+    started: `${RUN}_pm_pw_started`,
+    outsiderOther: `${RUN}_pm_pw_outsider_other`,
+  },
+  referrals: {
+    outsider: `${RUN}_pm_ref_outsider`,
+    waiting: `${RUN}_pm_ref_waiting`,
+    started: `${RUN}_pm_ref_started`,
+  },
+  payment: `${RUN}_pm_wpl_outsider`,
+};
+export type PmenuPersonKey = keyof typeof wsPmenu.people;
+
+export async function seedPersonMenuWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const ago = (days: number) => { const d = new Date(); d.setDate(d.getDate() - days); return T.fromDate(d); };
+  const P = wsPmenu;
+
+  const steps = (prefix: string, done: boolean) => [{
+    type: 'challenge', challengeid: `${prefix}_ch0`, heading: 'Menu Module', subheading: 'One',
+    challenges: [
+      { type: 'video', challengeid: `${prefix}_ch0_s0`, heading: 'Menu Step One', status: done ? 'completed' : '' },
+      { type: 'video', challengeid: `${prefix}_ch0_s1`, heading: 'Menu Step Two', status: '' },
+    ],
+  }];
+  const workshop = (id: string, title: string, extra: Record<string, any>) =>
+    db.collection('workshopconfiguration').doc(id).set({
+      docid: id, active: true, workshopcompleted: false, categorybased: false, atcmodel: null, created: ago(10),
+      detailpage: {
+        type: 'workshop', title, shortdescription: 'seeded person menu',
+        workshopStartDate: ago(10), workshopEndDate: ago(1), registrationStartDate: ago(20), registrationEndDate: ago(11),
+      },
+      challenges: steps(`${RUN}_pm`, false), ...extra, ...tag,
+    });
+  const wsRef = db.collection('workshopconfiguration').doc(P.WORKSHOP);
+  const otherRef = db.collection('workshopconfiguration').doc(P.OTHER);
+  const email = (id: string) => `${id.toLowerCase()}@example.com`;
+
+  await Promise.all([
+    workshop(P.WORKSHOP, P.title, { evergreenWorkshop: true, evergreenWorkshopMeta: { workshopDays: 7 }, payment: true }),
+    workshop(P.OTHER, P.otherTitle, { payment: false }),
+    ...Object.values(P.people).flatMap(p => [
+      db.collection('profile_data').doc(p.id).set({
+        docid: p.id, profileid: p.id, name: p.name, email: email(p.id), number: '9000000004', countrycode: '+91', ...tag,
+      }),
+      db.collection('participant metadata').doc(p.id).set({
+        profileid: p.id, name: p.name, email: email(p.id), countrycode: '+91', phonenumber: '9000000004', ...tag,
+      }),
+    ]),
+  ]);
+
+  const referral = (id: string, profileid: string) =>
+    db.collection('workshopreferral').doc(id).set({ docid: id, workshopref: wsRef, profileid, claimed: 0, created: ago(3), ...tag });
+  const enrRef = (id: string) => db.collection('workshop participant enrolled').doc(id);
+  const pwRef = (id: string) => db.collection('participant workshop').doc(id);
+  await Promise.all([
+    referral(P.referrals.outsider, P.people.outsider.id),
+    referral(P.referrals.waiting, P.people.waiting.id),
+    referral(P.referrals.started, P.people.started.id),
+    db.collection('workshoppaymentlog').doc(P.payment).set({
+      docid: P.payment, status: 'captured', profileid: P.people.outsider.id, amountRupees: 1499, datetime: ago(2), workshopref: wsRef, ...tag,
+    }),
+    // PMENU: waiting enrolled, not started (no participant workshop doc).
+    enrRef(P.enrolled.waiting).set({
+      docid: P.enrolled.waiting, profileid: P.people.waiting.id, status: 'enrollednotstarted', workshopref: wsRef,
+      enrollmentdate: ago(3), tags: [], ...tag,
+    }),
+    // PMENU: started, with a participant workshop doc → a progress row.
+    enrRef(P.enrolled.started).set({
+      docid: P.enrolled.started, profileid: P.people.started.id, status: 'enrolled', workshopref: wsRef,
+      participantworkshopref: pwRef(P.pw.started), enrollmentdate: ago(4), workshopStartedAt: ago(3), tags: [], ...tag,
+    }),
+    pwRef(P.pw.started).set({
+      docid: P.pw.started, profileid: P.people.started.id, workshopref: wsRef, workshopparticipantenrolledRef: enrRef(P.enrolled.started),
+      challenges: steps(`${RUN}_pm`, true), created: ago(4), ...tag,
+    }),
+    // OTHER: the outsider is enrolled AND started there — never on PMENU.
+    enrRef(P.enrolled.outsiderOther).set({
+      docid: P.enrolled.outsiderOther, profileid: P.people.outsider.id, status: 'enrolled', workshopref: otherRef,
+      participantworkshopref: pwRef(P.pw.outsiderOther), enrollmentdate: ago(5), workshopStartedAt: ago(4), tags: [], ...tag,
+    }),
+    pwRef(P.pw.outsiderOther).set({
+      docid: P.pw.outsiderOther, profileid: P.people.outsider.id, workshopref: otherRef,
+      workshopparticipantenrolledRef: enrRef(P.enrolled.outsiderOther), challenges: steps(`${RUN}_pm`, true), created: ago(5), ...tag,
+    }),
+  ]);
+}
+
+/** Remove the person-menu world (teardown only). */
+export async function clearPersonMenuWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const P = wsPmenu;
+  await Promise.all([
+    drop('workshopconfiguration', P.WORKSHOP),
+    drop('workshopconfiguration', P.OTHER),
+    ...Object.values(P.people).flatMap(p => [drop('profile_data', p.id), drop('participant metadata', p.id)]),
+    ...Object.values(P.enrolled).map(id => drop('workshop participant enrolled', id)),
+    ...Object.values(P.pw).map(id => drop('participant workshop', id)),
+    ...Object.values(P.referrals).map(id => drop('workshopreferral', id)),
+    drop('workshoppaymentlog', P.payment),
+  ]);
+}
