@@ -65,7 +65,7 @@ test.describe('Workshop dashboard — renamed Existing Participants / New Users 
 
     // Negative control: another panel keeps its titlecased heading. Total Enrolled lists everyone enrolled, so the
     // moved person IS here (2026-11-18: the 2026-11-17 "moved person in New Users" report was this panel — an edit
-    // had left the two membership lines above under this block; WNE-12 now guards New Users membership).
+    // had left the two membership lines above under this block; WNU-01 now guards New Users membership).
     await page.getByTestId('wd-close-participant-panel-61').click();
     await page.getByTestId('wd-on-metric-click-6').click();
     await expect(page.getByTestId('wdash-panel-heading'), 'WDL-01: Total Enrolled keeps its own heading')

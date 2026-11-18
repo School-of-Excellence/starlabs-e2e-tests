@@ -21,8 +21,8 @@
 //     NU     — NU Alpha, still new; tags [Venue, Segment] (stored order is NOT A-Z) → chips in that order
 //     NU B   — NU Bravo, still new; tags [dead id, Segment] → just Segment; then untagged → no chips
 //     moved  — movedtoexist; tags [dead id, Segment] → Existing Participants shows Segment (negative control
-//              for the New Users hook). New Users never lists this person: that membership is WNE-12's
-//              (workshop-dashboard-new-exist.spec.ts) — the 2026-11-17 "known bug" note here was a WDL-01 test-order
+//              for the New Users hook). New Users never lists this person: that membership is WNU-01's
+//              (workshop-dashboard-new-users-panel.spec.ts) — the 2026-11-17 "known bug" note here was a WDL-01 test-order
 //              artifact (its membership line had ended up in the Total Enrolled panel), retracted 2026-11-18.
 //   WDL-02 (seedReferralWorld — see support/wshop.ts §wsReferral, its own evergreen workshop):
 //     p0 shares code USED (claimed): NU Alpha and p2 (twice) enrolled with it, and p0 itself did too

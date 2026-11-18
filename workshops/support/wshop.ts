@@ -2372,13 +2372,13 @@ export async function clearSecondNewUser(): Promise<void> {
 }
 
 /**
- * WNE-12 (2026-11-18) PRECONDITION: mark the still-new user (NU Alpha) AND the moved person "referred, not
+ * WNU-01 (2026-11-18) PRECONDITION: mark the still-new user (NU Alpha) AND the moved person "referred, not
  * subscribed" in new_user_data. The New Users panel's Referred filter rebuilds its list from EVERY new_user_data
  * doc, so this gives that rebuild a moved candidate it must drop and a still-new one it must keep. Write it before
  * the page loads: the dashboard reads new_user_data once. clearNewUsersReferred takes it off NU Alpha again (the
  * moved doc itself goes with clearEnrolledExportCase).
  */
-export const wsNewUsersReferralCode = `${RUN}_wne12_ref`;
+export const wsNewUsersReferralCode = `${RUN}_wnu01_ref`;
 export async function markNewUsersReferred(): Promise<void> {
   const db = seed.initAdmin().firestore();
   await Promise.all([wsAddIds.NU_A, wsExportIds.MOVED].map(id =>
@@ -2390,10 +2390,30 @@ export async function clearNewUsersReferred(): Promise<void> {
     .set({ refferedby: admin.firestore.FieldValue.delete() }, { merge: true }).catch(() => undefined);
 }
 
-/** WNE-12: take the moved person's enrolment off the dashboard workshop WHILE the page is open (a live update).
+/** WNU-01: take the moved person's enrolment off the dashboard workshop WHILE the page is open (a live update).
  *  They stay in new_user_data, moved, and now not enrolled. clearEnrolledExportCase deletes it again (harmless). */
 export async function unenrollMovedPerson(): Promise<void> {
   await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).delete();
+}
+
+/**
+ * WNU-02 (2026-11-18) PRECONDITION: a SECOND enrolled doc for the still-new user (NU Alpha) on the dashboard
+ * workshop — the shape a double enrolment leaves behind. The New Users card counts people, so the panel must list
+ * NU Alpha once. The id sorts after ENR_NU, so ENR_NU stays the person's first enrolled doc. Run-tagged.
+ */
+export const wsDuplicateNewUserEnrolledId = `${RUN}_enr_nu_a_dup`;
+export async function enrollNewUserTwice(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('workshop participant enrolled').doc(wsDuplicateNewUserEnrolledId).set({
+    docid: wsDuplicateNewUserEnrolledId, profileid: wsAddIds.NU_A, status: 'enrolled',
+    workshopref: db.collection('workshopconfiguration').doc(wsIds.W_DASH),
+    enrollmentdate: admin.firestore.Timestamp.now(), tags: [], testrunid: RUN, _testdata: true,
+  });
+}
+export async function clearNewUserTwice(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsDuplicateNewUserEnrolledId)
+    .delete().catch(() => undefined);
 }
 
 // =================================================================================================
