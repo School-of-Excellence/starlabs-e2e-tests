@@ -2371,6 +2371,31 @@ export async function clearSecondNewUser(): Promise<void> {
     .delete().catch(() => undefined);
 }
 
+/**
+ * WNE-12 (2026-11-18) PRECONDITION: mark the still-new user (NU Alpha) AND the moved person "referred, not
+ * subscribed" in new_user_data. The New Users panel's Referred filter rebuilds its list from EVERY new_user_data
+ * doc, so this gives that rebuild a moved candidate it must drop and a still-new one it must keep. Write it before
+ * the page loads: the dashboard reads new_user_data once. clearNewUsersReferred takes it off NU Alpha again (the
+ * moved doc itself goes with clearEnrolledExportCase).
+ */
+export const wsNewUsersReferralCode = `${RUN}_wne12_ref`;
+export async function markNewUsersReferred(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([wsAddIds.NU_A, wsExportIds.MOVED].map(id =>
+    db.collection('new_user_data').doc(id).set({ refferedby: wsNewUsersReferralCode }, { merge: true })));
+}
+export async function clearNewUsersReferred(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(wsAddIds.NU_A)
+    .set({ refferedby: admin.firestore.FieldValue.delete() }, { merge: true }).catch(() => undefined);
+}
+
+/** WNE-12: take the moved person's enrolment off the dashboard workshop WHILE the page is open (a live update).
+ *  They stay in new_user_data, moved, and now not enrolled. clearEnrolledExportCase deletes it again (harmless). */
+export async function unenrollMovedPerson(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsExportIds.ENR_MOVED).delete();
+}
+
 // =================================================================================================
 // 2026-11-16 — /newusersprofile redesign (new-users-redesign.spec.ts). PRECONDITION writes + TEST-side oracles.
 // =================================================================================================

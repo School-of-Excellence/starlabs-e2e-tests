@@ -2,8 +2,13 @@
 // Total Enrolled export's Enrollment Date + Tags columns, the Total Enrolled cards' tag chips + Tag filter
 // (2026-11-12), the Total Enrolled sort and the Participant Data tags (2026-11-13), and the enrollment-date range on
 // Total / Exist Users / New Users Enrolled, and the Tag filter on Exist Users / New Users Enrolled (2026-11-16).
+// WNE-12 (2026-11-18): the New Users panel's own membership, against its card, however the panel is reached.
 //
-// Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md.
+// Recon: starlabs-angular specs/journals/2026-11-12-new-exist-and-export-tags.md. WNE-12: every writer of the New
+// Users list (onMetricClick('totalNewUsers'), the Referred / Subscriber rebuilds in applyFilterSide, then the tag,
+// enrollment-date and name filters that only narrow) goes through isNewUserProfile, the same rule as the card count
+// totalNewUsersEnrolled. The 2026-11-17 "moved person listed in New Users" report came from a WDL-01 edit that left
+// its membership lines under the Total Enrolled panel (which lists everyone enrolled, correctly).
 //
 // THE RULE UNDER TEST (workshop-dashboard.component.ts → isNewUserProfile):
 //   New   = a still-new user: a new_user_data doc WITHOUT movedtoexist: true.
@@ -13,21 +18,29 @@
 // Hooks: `wd-*` (workshop-dashboard.component.html). `wd-side-filter-all/new/exist`, `wd-side-enrolled-tag` and
 // `wd-side-tag-filter/-option/-clear`, `wd-side-sort-*`, `wd-pd-tag` and `wd-side-enrolled-*` landed with these rules,
 // so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this file on app branches without it.
+// WNE-12 adds no hooks: it drives existing ones (wd-on-metric-click-6/-19/-20, wdash-exist-users-card/-count,
+// wd-close-participant-panel-61, wdash-panel-heading, wd-button-63/-65, wd-change-apply-filter-side-67,
+// wd-side-filter-*, wd-side-tag-*, wd-side-enrolled-from/-clear, wd-side-search-85/-clear-86).
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
 //   p0, p1 — participant metadata (p0 also stamped workshoponly: true — the OLD "New" condition)
 //   moved  — new_user_data with movedtoexist: true and no metadata          → Exist
 //   NU     — new_user_data, not moved                                        → New
 //   NU's enrolled doc carries two real newusertags ids; moved's carries one id with no tag doc.
+// WNE-12 adds: moved also carries the real Segment tag (a tag it shares with NU); NU and moved are both "referred,
+//   not subscribed" (markNewUsersReferred); NU Bravo is enrolled and then removed WHILE the page is open; finally the
+//   moved person's enrolment is deleted while the page is open (a moved person who is NOT enrolled — the negative
+//   control for New Users Not Enrolled).
 import { test, expect, Page } from '@playwright/test';
 import {
   wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, stampP0Workshoponly,
   seedEnrolledExportCase, clearEnrolledExportCase, tagEnrolledExportCase, wsExportPeople, wsExportIds, wsExportTags,
-  setEnrolledTags, enrollSecondNewUser, clearSecondNewUser, wsAddNames,
+  setEnrolledTags, enrollSecondNewUser, clearSecondNewUser, wsAddNames, wsAddIds,
+  markNewUsersReferred, clearNewUsersReferred, unenrollMovedPerson,
   readCsvRows,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc } from '../queue/support/firestore-admin';
+import { getDoc, queryWhere, db } from '../queue/support/firestore-admin';
 import { readFileSync } from 'fs';
 
 const PROGRESS_ROW = 'table.progress-table tr.mat-mdc-row, table.progress-table tr[mat-row]';
@@ -448,6 +461,165 @@ test.describe('Workshop dashboard — New / Exist and the Total Enrolled export'
       await expect(panelCard(page, wsAddNames.nuBravo), 'WNE-09: any ticked tag matches').toBeVisible();
     } finally {
       await clearSecondNewUser();
+    }
+  });
+
+  test('WNE-12 New Users lists exactly the still-new enrolled people its card counts — on first open, after other panels, filters, live updates and reopening', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const { segment, venue, ghost } = wsExportTags;
+    // moved shares the real Segment tag with NU, so a tag pick cannot drop it for the wrong reason.
+    await tagEnrolledExportCase([ghost, segment.id]);
+    await markNewUsersReferred();
+    try {
+      const p0Meta: any = await getDoc('participant metadata', wsProfileIds.p0);
+      // ORACLE, straight from Firestore: the still-new people (new_user_data without movedtoexist) enrolled on W_DASH.
+      const stillNewEnrolled = async (): Promise<string[]> => {
+        const enrolled: any[] = await queryWhere('workshop participant enrolled',
+          [['workshopref', '==', db().collection('workshopconfiguration').doc(wsIds.W_DASH)]]);
+        const names: string[] = [];
+        for (const pid of [...new Set(enrolled.map(e => String(e.profileid)))]) {
+          const d: any = await getDoc('new_user_data', pid);
+          if (d && d.movedtoexist !== true) names.push(String(d.name));
+        }
+        return names.sort(nameOrder);
+      };
+      expect(await stillNewEnrolled(), 'WNE-12 oracle: NU is the only still-new person enrolled on the dashboard workshop')
+        .toEqual([nu.name]);
+      const movedDoc: any = await getDoc('new_user_data', wsExportIds.MOVED);
+      expect(movedDoc?.movedtoexist, 'WNE-12 precondition: the moved person is marked moved').toBe(true);
+      expect(movedDoc?.refferedby, 'WNE-12 precondition: ...and referred, like NU').toBeTruthy();
+      expect(await getDoc('new_user_data', wsProfileIds.p0), 'WNE-12 precondition: p0 has no new_user_data doc').toBeNull();
+      const nuc: any = await getDoc('new_user_data', wsAddIds.NU_C);
+      expect(!!nuc && nuc.movedtoexist !== true, 'WNE-12 precondition: NU Charlie is still new (Not Enrolled positive control)').toBe(true);
+      const nuEnrolled: any = await getDoc('workshop participant enrolled', wsExportIds.ENR_NU);
+
+      const newUsersCardN = page.getByTestId('wd-on-metric-click-19').locator('.metric-value');
+      const notEnrolledCardN = page.getByTestId('wd-on-metric-click-20').locator('.metric-value');
+      const existCardN = page.getByTestId('wdash-exist-users-count');
+      const panelN = page.locator('.participant-panel .wdx-pn-count-n');
+      const panelNames = async () => (await cardNames(page)).sort(nameOrder);
+      const never = [moved.name, p0Meta.name];
+
+      /** The open New Users panel lists exactly `names`, never the moved person or p0, and (unfiltered) its count is the card's. */
+      const expectNewUsers = async (step: string, names: string[], unfiltered = true) => {
+        await expect(page.getByTestId('wdash-panel-heading'), `${step}: the New Users panel is open`)
+          .toHaveText('New Users', { timeout: 30_000 });
+        await expect.poll(panelNames, { message: `${step}: exactly the still-new enrolled people`, timeout: 30_000 })
+          .toEqual([...names].sort(nameOrder));
+        for (const n of never) await expect(panelCard(page, n), `${step}: never ${n}`).toHaveCount(0);
+        await expect(panelN, `${step}: the panel count`).toHaveText(String(names.length));
+        if (unfiltered) await expect(newUsersCardN, `${step}: the card counts the same people`).toHaveText(String(names.length));
+      };
+      const openNewUsers = async () => {
+        if (await page.locator('.participant-panel.panel-visible').count()) {
+          await page.getByTestId('wd-close-participant-panel-61').click();
+        }
+        await page.getByTestId('wd-on-metric-click-19').click();
+      };
+
+      await loginAsWshopAdmin(page);
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+
+      // 1) First open, clicked as soon as the card can be clicked (no wait for its number).
+      await page.getByTestId('wd-on-metric-click-19').click({ timeout: 45_000 });
+      await expectNewUsers('WNE-12 first open', [nu.name]);
+
+      // 2) After Existing Participants (which DOES list the moved person and p0).
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wdash-exist-users-card').click();
+      await expect(panelCard(page, moved.name), 'WNE-12: Existing Participants lists the moved person').toBeVisible({ timeout: 30_000 });
+      await expect(panelCard(page, p0Meta.name), 'WNE-12: ...and p0').toBeVisible();
+      await expect(panelCard(page, nu.name), 'WNE-12: ...not the still-new user').toHaveCount(0);
+      await expect(panelN, 'WNE-12: Existing Participants count equals its card').toHaveText(((await existCardN.textContent()) || '').trim());
+      await openNewUsers();
+      await expectNewUsers('WNE-12 after Existing Participants', [nu.name]);
+
+      // 3) After Total Enrolled narrowed to Exist + Segment (only the moved person left in it).
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wd-on-metric-click-6').click();
+      await expect(panelCard(page, nu.name), 'WNE-12: Total Enrolled opened').toBeVisible({ timeout: 30_000 });
+      await pickFilter(page, 'wd-side-filter-exist');
+      await page.getByTestId('wd-button-63').click();
+      await page.getByTestId('wd-side-tag-option').filter({ hasText: segment.name }).click();
+      await page.keyboard.press('Escape');
+      await expect.poll(panelNames, { message: 'WNE-12: Total Enrolled, Exist + Segment = the moved person only' })
+        .toEqual([moved.name]);
+      await openNewUsers();
+      await expectNewUsers('WNE-12 after Total Enrolled (Exist + Segment)', [nu.name]);
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter All/ }), 'WNE-12: New Users opens unfiltered').toBeVisible();
+
+      // 4) New Users' own filters. Referred rebuilds the list from every new_user_data doc: NU stays, moved never comes in.
+      await page.getByTestId('wd-button-65').click();
+      await page.getByTestId('wd-change-apply-filter-side-67').click();
+      await expectNewUsers('WNE-12 Referred on', [nu.name], false);
+      await page.getByTestId('wd-change-apply-filter-side-67').click();
+      await expectNewUsers('WNE-12 Referred off', [nu.name]);
+      // Tags: only NU's tags are offered; Segment (which the moved person also carries) keeps NU only.
+      await expect(page.getByTestId('wd-side-tag-option'), 'WNE-12: New Users offers its own people\'s tags')
+        .toHaveText([segment.name, venue.name]);
+      await page.getByTestId('wd-side-tag-option').filter({ hasText: segment.name }).click();
+      await expectNewUsers('WNE-12 tag Segment', [nu.name], false);
+      await page.getByTestId('wd-side-tag-clear').click();
+      await page.keyboard.press('Escape');
+      await expectNewUsers('WNE-12 tags cleared', [nu.name]);
+      // Enrollment date: the day NU (and the moved person) enrolled.
+      const nuDay = await page.evaluate((t) => {
+        const d = new Date(t);
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      }, nuEnrolled.enrollmentdate.toMillis());
+      await page.getByTestId('wd-side-enrolled-from').fill(nuDay);
+      await expectNewUsers('WNE-12 enrolled from that day', [nu.name], false);
+      await page.getByTestId('wd-side-enrolled-clear').click();
+      await expectNewUsers('WNE-12 range cleared', [nu.name]);
+      // Name search: the moved person's name finds nobody here; clearing brings NU back.
+      await page.getByTestId('wd-side-search-85').fill(moved.name);
+      await expectNewUsers('WNE-12 search for the moved person', [], false);
+      await page.getByTestId('wd-side-search-clear-86').click();
+      await expectNewUsers('WNE-12 search cleared', [nu.name]);
+
+      // 5) Live updates while the page is open: NU Bravo enrols (the card follows), the moved person's enrolment is
+      //    touched; the open list never gains the moved person; reopening matches the card again.
+      try {
+        await enrollSecondNewUser([]);
+        await setEnrolledTags(wsExportIds.ENR_MOVED, [segment.id]);
+        await expect(newUsersCardN, 'WNE-12: the card follows the new enrolment live').toHaveText('2', { timeout: 30_000 });
+        for (const n of never) await expect(panelCard(page, n), `WNE-12 live update, panel open: never ${n}`).toHaveCount(0);
+        await openNewUsers();
+        await expectNewUsers('WNE-12 reopened after the live update', [nu.name, wsAddNames.nuBravo]);
+      } finally {
+        await clearSecondNewUser();
+      }
+      await expect(newUsersCardN, 'WNE-12: NU Bravo\'s enrolment removed → the card follows').toHaveText('1', { timeout: 30_000 });
+      await openNewUsers();
+      await expectNewUsers('WNE-12 reopened again', [nu.name]);
+
+      // 6) The moved person's enrolment is deleted while the page is open: a moved person who is NOT enrolled.
+      const existBefore = Number(((await existCardN.textContent()) || '').trim());
+      await unenrollMovedPerson();
+      await expect(existCardN, 'WNE-12: the live update arrived (Existing Participants lost the moved person)')
+        .toHaveText(String(existBefore - 1), { timeout: 30_000 });
+      await openNewUsers();
+      await expectNewUsers('WNE-12 after the moved person left', [nu.name]);
+      // New Users Not Enrolled uses the same rule: never the moved person (now not enrolled), NU (enrolled) or p0.
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wd-on-metric-click-20').click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNE-12: the New Users Not Enrolled panel is open')
+        .toHaveText('New Users Not Enrolled', { timeout: 30_000 });
+      await expect(panelCard(page, wsAddNames.nuCharlie), 'WNE-12: a still-new user who is not enrolled is listed').toBeVisible({ timeout: 30_000 });
+      for (const n of [moved.name, nu.name, p0Meta.name]) {
+        await expect(panelCard(page, n), `WNE-12 Not Enrolled: never ${n}`).toHaveCount(0);
+      }
+      await expect(panelN, 'WNE-12: New Users Not Enrolled count equals its card')
+        .toHaveText(((await notEnrolledCardN.textContent()) || '').trim());
+      // Its Referred rebuild reads every new_user_data doc too: the moved, referred, not-enrolled person stays out.
+      await page.getByTestId('wd-button-65').click();
+      await page.getByTestId('wd-change-apply-filter-side-67').click();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter All/ }), 'WNE-12: the Not Enrolled panel is still open').toBeVisible();
+      await expect(panelCard(page, moved.name), 'WNE-12 Not Enrolled, Referred: never the moved person').toHaveCount(0);
+      await expect(panelCard(page, nu.name), 'WNE-12 Not Enrolled, Referred: never the enrolled NU').toHaveCount(0);
+    } finally {
+      await clearNewUsersReferred();
     }
   });
 });

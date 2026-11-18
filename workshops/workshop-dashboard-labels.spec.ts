@@ -60,14 +60,17 @@ test.describe('Workshop dashboard — renamed Existing Participants / New Users 
       .toHaveText('New Users', { timeout: 30_000 });
     await expect(page.getByTestId('wdash-panel-title'), 'WDL-01: the new users panel heading')
       .toHaveText('All Participants - New Users');
+    await expect(panelCard(page, nu.name), 'WDL-01: the still-new user is a new user').toBeVisible({ timeout: 30_000 });
+    await expect(panelCard(page, moved.name), 'WDL-01: the moved person is not').toHaveCount(0);
 
-    // Negative control: another panel keeps its titlecased heading.
+    // Negative control: another panel keeps its titlecased heading. Total Enrolled lists everyone enrolled, so the
+    // moved person IS here (2026-11-18: the 2026-11-17 "moved person in New Users" report was this panel — an edit
+    // had left the two membership lines above under this block; WNE-12 now guards New Users membership).
     await page.getByTestId('wd-close-participant-panel-61').click();
     await page.getByTestId('wd-on-metric-click-6').click();
     await expect(page.getByTestId('wdash-panel-heading'), 'WDL-01: Total Enrolled keeps its own heading')
       .not.toHaveText(/Existing Participants|^New Users$/, { timeout: 30_000 });
-    await expect(panelCard(page, nu.name), 'WDL-01: the still-new user is listed').toBeVisible({ timeout: 30_000 });
-    // (Membership is not under test here: the moved person also shows in this panel today — noted 2026-11-17, see
-    // the starlabs-angular journal 2026-11-17-workshop-mail-template-mapping.md.)
+    await expect(panelCard(page, nu.name), 'WDL-01: Total Enrolled lists the still-new user').toBeVisible({ timeout: 30_000 });
+    await expect(panelCard(page, moved.name), 'WDL-01: ...and the moved person').toBeVisible();
   });
 });
