@@ -14,9 +14,10 @@
 //   Exist = everyone else — participant metadata people, and new_user_data people marked movedtoexist.
 //
 // Hooks: `wd-*` / `wdash-*` (one component: workshop-dashboard.component.html — the prefix family declared for it).
-// WNU-01/02 add no hooks. WNU-03/04 drive the three loading hooks added on 2026-11-18 with the non-blocking load
-// (wdash-exist-loading, wdash-new-loading, wdash-new-ne-loading). The panel heading `wdash-panel-heading`, the panel
-// count and those loading hooks are newer than many app branches, so the hub-ahead guard
+// WNU-01/02 add no hooks. WNU-03/04/05 drive the three loading hooks added on 2026-11-18 with the non-blocking load
+// (wdash-exist-loading, wdash-new-loading, wdash-new-ne-loading) and the side filter's note `wd-side-filter-wait`
+// (New / Exist still loading, or unavailable). The panel heading `wdash-panel-heading`, the panel
+// count and those hooks are newer than many app branches, so the hub-ahead guard
 // (scripts/readiness/landed-specs.cjs) skips this FILE on app branches without them. That is why these cases are not
 // in workshop-dashboard-new-exist.spec.ts: there they would make the guard skip WNE-01..11 too.
 //
@@ -25,9 +26,13 @@
 // cards that split New from Existing (Existing Participants, New Users, New Users Not Enrolled) show a quiet loading
 // state and stay disabled until it lands — or show "—" and stay disabled if the read fails. When it lands, the
 // numbers appear, the cards enable, and an already-open panel refreshes its names / New badges in place without
-// losing its search or its New / Exist pick (a pick made while loading applies when the read lands). The read is its
-// own request (a Firestore Lite REST runQuery POST): the tests hold exactly that request with page.route — never the
-// shared Listen channel, whose POSTs go one at a time, so holding one stalls every later read. PROOF (2026-11-18):
+// losing its search. The side panel's New / Exist options need new_user_data too, so they are disabled (with a note)
+// until it lands, and for good if it failed — never "New: nobody, Exist: everyone" (2026-11-18 review). The read is
+// its own request (a Firestore Lite REST runQuery POST): the tests hold exactly that request with page.route — never
+// the shared Listen channel, whose POSTs go one at a time, so holding one stalls every later read. A dropped read is
+// tried again twice (after 1s, then 3s) before it counts as failed (WNU-04 sees all three attempts fail; WNU-05 sees
+// the first fail and the retry fill the cards in). The 60s deadline for a stalled read is pinned by the app's unit
+// tests (retryRead), not here: holding a read for a minute is not worth the run time. PROOF (2026-11-18):
 // WNU-03 run against the app that still waited for new_user_data failed at "the Total Enrolled headline shows the
 // real figure" (element not found while held); with the non-blocking load it passes.
 //
@@ -41,7 +46,7 @@
 //   (the dashboard reads new_user_data once). Finally the moved person's enrolment is deleted while the page is open
 //   (a moved person who is NOT enrolled — the negative control for New Users Not Enrolled).
 // WNU-02 adds: a second enrolled doc for NU on W_DASH (enrollNewUserTwice).
-// WNU-03/04 add nothing: the base world already has a person of each kind (p0 / moved = Existing, NU = New enrolled,
+// WNU-03/04/05 add nothing: the base world already has a person of each kind (p0 / moved = Existing, NU = New enrolled,
 //   NU Bravo / NU Charlie = New not enrolled). The oracle (peopleOracle) reads the figures straight from Firestore.
 import { test, expect, Page, Route } from '@playwright/test';
 import {
@@ -109,11 +114,13 @@ async function peopleOracle() {
  * Holds the dashboard's one-time new_user_data read in the browser until the test says so. The read is a REST
  * runQuery POST of its own; only a POST whose structured query reads FROM new_user_data is held — every other
  * request (the Listen channel carrying the dashboard's live reads included) goes straight on. caught() counts the
- * held reads; release() lets them through, fail() aborts them (a failed read).
+ * attempts (the app retries a dropped read); release() lets them through, fail() aborts every one (a read that
+ * keeps failing), failFirst() aborts only the first and lets the retry through (a dropped connection).
  */
 async function holdNewUserDataRead(page: Page) {
-  let open!: (how: 'release' | 'fail') => void;
-  const gate = new Promise<'release' | 'fail'>(r => { open = r; });
+  type How = 'release' | 'fail' | 'fail-first';
+  let open!: (how: How) => void;
+  const gate = new Promise<How>(r => { open = r; });
   let caught = 0;
   const pattern = '**/documents:runQuery**';
   const handler = async (route: Route) => {
@@ -121,8 +128,9 @@ async function holdNewUserDataRead(page: Page) {
     let from = '';
     try { from = String(JSON.parse(req.postData() || '{}')?.structuredQuery?.from?.[0]?.collectionId || ''); } catch { from = ''; }
     if (req.method() !== 'POST' || from !== 'new_user_data') return route.fallback();
-    caught++;
-    if ((await gate) === 'fail') return route.abort('failed').catch(() => undefined);
+    const attempt = ++caught;
+    const how = await gate;
+    if (how === 'fail' || (how === 'fail-first' && attempt === 1)) return route.abort('failed').catch(() => undefined);
     return route.fallback().catch(() => undefined);
   };
   await page.route(pattern, handler);
@@ -130,9 +138,13 @@ async function holdNewUserDataRead(page: Page) {
     caught: () => caught,
     release: () => open('release'),
     fail: () => open('fail'),
+    failFirst: () => open('fail-first'),
     dispose: () => page.unroute(pattern, handler),
   };
 }
+
+/** The Lite SDK logs each aborted request itself ("HTTP error has no status") — expected where a test aborts the read. */
+const LITE_ABORT_LOG = /@firebase\/firestore: Firestore \([^)]*_lite\): RPC_ERROR/;
 
 test.describe('Workshop dashboard — the New Users panel lists exactly what its card counts', () => {
   let guard: ConsoleGuard;
@@ -436,12 +448,21 @@ test.describe('Workshop dashboard — the New Users panel lists exactly what its
       // NU and the moved person are named only by new_user_data: not yet.
       await expect(panelCard(page, nu.name), 'WNU-03 held: NU\'s name is not known yet').toHaveCount(0);
       await expect(page.locator('.participant-panel .new-badge'), 'WNU-03 held: no New badge yet').toHaveCount(0);
-      // An active search for NU finds nobody yet; a New pick made now waits for new_user_data (it decides who is New).
+      // New / Exist need new_user_data (it decides who is New): while it is out both options are disabled, with a
+      // note — never "New: nobody, Exist: everyone". A forced click on New changes nothing: still All, still everyone.
+      await page.getByTestId('wd-button-63').click();
+      await expect(page.getByTestId('wd-side-filter-wait'), 'WNU-03 held: the filter says New / Exist are still loading').toContainText('loading');
+      await expect(page.getByTestId('wd-side-filter-all').locator('input'), 'WNU-03 held: All stays available').toBeEnabled();
+      await expect(page.getByTestId('wd-side-filter-new').locator('input'), 'WNU-03 held: New is disabled').toBeDisabled();
+      await expect(page.getByTestId('wd-side-filter-exist').locator('input'), 'WNU-03 held: Exist is disabled').toBeDisabled();
+      await page.getByTestId('wd-side-filter-new').click({ force: true });
+      if (await page.locator('.mat-mdc-menu-panel').count()) await page.keyboard.press('Escape');
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter All/ }), 'WNU-03 held: a click on New picks nothing').toBeVisible();
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 held: never a "New" heading').toHaveCount(0);
+      await expect(panelN, 'WNU-03 held: still everyone enrolled, not "New: nobody"').toHaveText(String(o.totalEnrolled));
+      // An active search for NU finds nobody yet.
       await search.fill(nu.name);
       await expect(panelN, 'WNU-03 held: the search for NU finds nobody yet').toHaveText('0');
-      await pickFilter(page, 'wd-side-filter-new');
-      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 held: New is picked').toBeVisible();
-      await expect(panelN, 'WNU-03 held: still nobody').toHaveText('0');
       expect(hold.caught(), 'WNU-03: still held after all of that').toBe(1);
 
       // ── Release ─────────────────────────────────────────────────────────────────────────────────────────────
@@ -457,18 +478,31 @@ test.describe('Workshop dashboard — the New Users panel lists exactly what its
         await expect(card, 'WNU-03 released: no longer busy').not.toHaveAttribute('aria-busy', 'true');
       }
 
-      // The Total Enrolled panel opened while held caught up in place: still open, search and New pick kept, NU
-      // found by name with the New badge — without being reopened.
+      // The Total Enrolled panel opened while held caught up in place: still open, search kept, NU found by name
+      // with the New badge — without being reopened.
       await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03 released: the same panel is still open').toHaveText('Total Enrolled');
       await expect(search, 'WNU-03 released: the search survived the refresh').toHaveValue(nu.name);
-      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 released: the New pick survived the refresh').toBeVisible();
       await expect.poll(() => panelNames(page), { message: 'WNU-03 released: the search now finds NU by name', timeout: 30_000 })
         .toEqual([nu.name]);
       await expect(panelCard(page, nu.name).locator('.new-badge'), 'WNU-03 released: NU carries the New badge').toBeVisible();
+      // New / Exist are available now, and split correctly — with the search still in place, then without it.
+      await page.getByTestId('wd-button-63').click();
+      await expect(page.getByTestId('wd-side-filter-wait'), 'WNU-03 released: the loading note goes').toHaveCount(0);
+      await expect(page.getByTestId('wd-side-filter-new').locator('input'), 'WNU-03 released: New is enabled').toBeEnabled();
+      await expect(page.getByTestId('wd-side-filter-exist').locator('input'), 'WNU-03 released: Exist is enabled').toBeEnabled();
+      await page.keyboard.press('Escape');
+      await pickFilter(page, 'wd-side-filter-new');
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 released: New is picked').toBeVisible();
+      await expect(search, 'WNU-03 released: the pick kept the search').toHaveValue(nu.name);
+      await expect.poll(() => panelNames(page), { message: 'WNU-03 released: search + New finds NU' }).toEqual([nu.name]);
       await page.getByTestId('wd-side-search-clear-86').click();
       await expect.poll(() => panelNames(page), { message: 'WNU-03 released: search cleared, New lists the still-new enrolled people only' })
         .toEqual([nu.name]);
       await expect(panelN, 'WNU-03 released: New == oracle').toHaveText(String(o.newEnrolled));
+      await pickFilter(page, 'wd-side-filter-exist');
+      await expect(panelN, 'WNU-03 released: Exist == oracle').toHaveText(String(o.existEnrolled));
+      await expect(panelCard(page, nu.name), 'WNU-03 released: NU is not Exist').toHaveCount(0);
+      await expect(panelCard(page, moved.name), 'WNU-03 released: the moved person is Exist').toBeVisible();
       await pickFilter(page, 'wd-side-filter-all');
       await expect(panelN, 'WNU-03 released: All, everyone enrolled again').toHaveText(String(o.totalEnrolled));
       await expect(panelCard(page, moved.name), 'WNU-03 released: the moved person is named now').toBeVisible();
@@ -520,6 +554,7 @@ test.describe('Workshop dashboard — the New Users panel lists exactly what its
       for (const loading of [page.getByTestId('wdash-exist-loading'), page.getByTestId('wdash-new-loading'), page.getByTestId('wdash-new-ne-loading')]) {
         await expect(loading, 'WNU-04: the loading state ends').toHaveCount(0, { timeout: 30_000 });
       }
+      expect(hold.caught(), 'WNU-04: the read was tried three times (two retries) before it counted as failed').toBe(3);
       await expect(page.getByTestId('wdash-exist-users-count'), 'WNU-04: Existing Participants is unavailable').toHaveText('—');
       await expect(newCard.locator('.metric-value'), 'WNU-04: New Users is unavailable').toHaveText('—');
       await expect(neCard.locator('.metric-value'), 'WNU-04: New Users Not Enrolled is unavailable').toHaveText('—');
@@ -535,11 +570,57 @@ test.describe('Workshop dashboard — the New Users panel lists exactly what its
         .toHaveText(String(o.totalEnrolled));
       await page.getByTestId('wd-on-metric-click-6').click();
       await expect(page.getByTestId('wdash-panel-heading'), 'WNU-04: Total Enrolled still opens').toHaveText('Total Enrolled', { timeout: 30_000 });
+      await expect(page.locator('.participant-panel .wdx-pn-count-n'), 'WNU-04: Total Enrolled lists everyone').toHaveText(String(o.totalEnrolled));
+      // New / Exist cannot be told apart without new_user_data: disabled for good, and the note says so.
+      await page.getByTestId('wd-button-63').click();
+      await expect(page.getByTestId('wd-side-filter-wait'), 'WNU-04: the filter says New / Exist are unavailable').toContainText('unavailable');
+      await expect(page.getByTestId('wd-side-filter-new').locator('input'), 'WNU-04: New stays disabled').toBeDisabled();
+      await expect(page.getByTestId('wd-side-filter-exist').locator('input'), 'WNU-04: Exist stays disabled').toBeDisabled();
+      await page.keyboard.press('Escape');
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter All/ }), 'WNU-04: still All').toBeVisible();
       // The failure is logged as before — expected here (the test aborted the read), so it is taken off the guard,
-      // together with the Firestore Lite SDK's own log line for that same aborted request (nothing else).
+      // together with the Firestore Lite SDK's own log line for each aborted attempt (nothing else).
       await expect.poll(() => guard.all.some(m => /Error fetching new_user_data/.test(m)), { message: 'WNU-04: the failed read is logged' }).toBe(true);
-      const expectedLogs = [/Error fetching new_user_data/, /@firebase\/firestore: Firestore \([^)]*_lite\): RPC_ERROR/];
+      const expectedLogs = [/Error fetching new_user_data/, LITE_ABORT_LOG];
       for (let i = guard.fatals.length - 1; i >= 0; i--) if (expectedLogs.some(re => re.test(guard.fatals[i]))) guard.fatals.splice(i, 1);
+    } finally {
+      hold.release();
+      await hold.dispose();
+    }
+  });
+
+  test('WNU-05 a dropped new_user_data read is tried again: the three people cards still fill in, and nothing is logged as failed', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const o = await peopleOracle();
+    const existCard = page.getByTestId('wdash-exist-users-card');
+    const newCard = page.getByTestId('wd-on-metric-click-19');
+    const neCard = page.getByTestId('wd-on-metric-click-20');
+
+    await loginAsWshopAdmin(page);
+    const hold = await holdNewUserDataRead(page);
+    try {
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      await expect.poll(() => hold.caught(), { message: 'WNU-05: the new_user_data read is out, and held', timeout: 45_000 }).toBe(1);
+      await expect(page.getByTestId('wdash-new-loading'), 'WNU-05: loading while the read is out').toBeVisible({ timeout: 30_000 });
+      hold.failFirst();   // the first attempt drops; the retry goes through
+
+      await expect.poll(() => hold.caught(), { message: 'WNU-05: the dropped read is tried again', timeout: 30_000 }).toBe(2);
+      for (const loading of [page.getByTestId('wdash-exist-loading'), page.getByTestId('wdash-new-loading'), page.getByTestId('wdash-new-ne-loading')]) {
+        await expect(loading, 'WNU-05: the loading state ends').toHaveCount(0, { timeout: 30_000 });
+      }
+      await expect(page.getByTestId('wdash-exist-users-count'), 'WNU-05: Existing Participants == oracle, not "—"').toHaveText(String(o.existEnrolled));
+      await expect(newCard.locator('.metric-value'), 'WNU-05: New Users == oracle').toHaveText(String(o.newEnrolled));
+      await expect(neCard.locator('.metric-value'), 'WNU-05: New Users Not Enrolled == oracle').toHaveText(String(o.newNotEnrolled));
+      for (const card of [existCard, newCard, neCard]) await expect(card, 'WNU-05: the card is enabled').toBeEnabled();
+      await newCard.click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-05: New Users opens').toHaveText('New Users', { timeout: 30_000 });
+      await expect.poll(() => panelNames(page), { message: 'WNU-05: New Users lists NU', timeout: 30_000 }).toEqual([nu.name]);
+      await expect(panelCard(page, moved.name), 'WNU-05: never the moved person').toHaveCount(0);
+      expect(hold.caught(), 'WNU-05: one dropped attempt, one good one — no more').toBe(2);
+      // The retry hid the drop: no "Error fetching new_user_data". Only the Lite SDK's own line for the one aborted
+      // attempt is expected (taken off the guard; nothing else).
+      expect(guard.all.some(m => /Error fetching new_user_data/.test(m)), 'WNU-05: the read is not logged as failed').toBe(false);
+      for (let i = guard.fatals.length - 1; i >= 0; i--) if (LITE_ABORT_LOG.test(guard.fatals[i])) guard.fatals.splice(i, 1);
     } finally {
       hold.release();
       await hold.dispose();
