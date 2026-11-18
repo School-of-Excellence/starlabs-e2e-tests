@@ -182,18 +182,17 @@ test.describe("AppEngagement — Notification record + log", () => {
     expect(page.getByTestId('aeclr-btn-9'), 'aeclr-btn-9 present').toBeTruthy();
     expect(page.getByTestId('aeclr-btn-10'), 'aeclr-btn-10 present').toBeTruthy();
     expect(page.getByTestId('aeclr-btn-11'), 'aeclr-btn-11 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-12'), 'aeclr-btn-12 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-13'), 'aeclr-btn-13 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-14'), 'aeclr-btn-14 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-15'), 'aeclr-btn-15 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-16'), 'aeclr-btn-16 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-17'), 'aeclr-btn-17 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-act-18'), 'aeclr-act-18 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-inp-19'), 'aeclr-inp-19 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-20'), 'aeclr-btn-20 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-inp-21'), 'aeclr-inp-21 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-sel-22'), 'aeclr-sel-22 present').toBeTruthy();
-    expect(page.getByTestId('aeclr-btn-23'), 'aeclr-btn-23 present').toBeTruthy();
+    // Calls tab reworked 2026-11-18: Live button (aeclr-btn-12) and the custom player
+    // (aeclr-btn-13..23, act-18, inp-19/21, sel-22) are gone — one listener + the shared compact player.
+    expect(page.getByTestId('aeclr-live-chip'), 'aeclr-live-chip present').toBeTruthy();
+    expect(page.getByTestId('aeclr-row'), 'aeclr-row present').toBeTruthy();
+    expect(page.getByTestId('aeclr-empty'), 'aeclr-empty present').toBeTruthy();
+    expect(page.getByTestId('aeclr-audio'), 'aeclr-audio present').toBeTruthy();
+    expect(page.getByTestId('aa-play'), 'aa-play present').toBeTruthy();
+    expect(page.getByTestId('aa-seek'), 'aa-seek present').toBeTruthy();
+    expect(page.getByTestId('aa-time'), 'aa-time present').toBeTruthy();
+    expect(page.getByTestId('aa-duration'), 'aa-duration present').toBeTruthy();
+    expect(page.getByTestId('aa-rate'), 'aa-rate present').toBeTruthy();
   });
 
   test("aenl — notifications log controls are addressable", async ({ page }) => {

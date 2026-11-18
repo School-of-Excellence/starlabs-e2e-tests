@@ -144,7 +144,7 @@ jobs:
 
       - name: Install firebase-tools
         if: inputs.suite != 'unit'
-        run: npm i -g firebase-tools@latest
+        run: npm i -g firebase-tools@15.36.0
 
       - name: Install app deps
         run: |

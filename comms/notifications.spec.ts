@@ -154,7 +154,8 @@ test.describe('Comms — notification record + zoom dashboard (real UI, anti-cir
 // ===========================================================================================
 test.describe('Comms — route-mount smoke (guard admits super-role admin)', () => {
   const ROUTES = [
-    '/communication', '/email-templates', '/zoom-recording-dashboard',
+    // '/communication' retired 2026-11-18 — see comms/calls-record.spec.ts CR-09
+    '/email-templates', '/zoom-recording-dashboard',
     '/notificationlog', '/notificationrecord', '/group-chat', '/onewaytemplates',
   ];
   test('every seeded comms route mounts (no /login bounce)', async ({ page }) => {

@@ -14,7 +14,8 @@ test.describe('Communication Center — interactive controls addressable + mount
     await installCommsStubs(page); await loginAsCommsAdmin(page);
   });
 
-  test('communication (/communication) — controls addressable', async ({ page }) => {
+  // RETIRED: /communication was retired 2026-11-18 (call-recording signed-URL migration): it played `recordingurl` straight into <audio [src]>. Calls are covered by comms/calls-record.spec.ts.
+  test.skip('communication (/communication) — controls addressable', async ({ page }) => {
     await page.goto('/communication', { waitUntil: 'domcontentloaded' });
     expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
     expect(page.getByTestId('cmm-link')).toBeTruthy();

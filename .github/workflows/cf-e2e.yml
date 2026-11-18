@@ -86,7 +86,7 @@ jobs:
         run: bash e2e/ci/setup-emulator-config.sh
 
       - name: Install firebase-tools
-        run: npm i -g firebase-tools@latest
+        run: npm i -g firebase-tools@15.36.0
 
       - name: Install app deps
         run: npm ci --legacy-peer-deps

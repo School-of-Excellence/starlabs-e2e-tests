@@ -39,7 +39,8 @@ function db() { return admin().firestore(); }
 // ===========================================================================================
 // CN-01 — Communication dashboard renders the channel tiles the app built from its own config
 // ===========================================================================================
-test.describe('Comms — communication dashboard render (real UI, anti-circular)', () => {
+// RETIRED: /communication was retired 2026-11-18 (call-recording signed-URL migration): it played `recordingurl` straight into <audio [src]>. Calls are covered by comms/calls-record.spec.ts.
+test.describe.skip('Comms — communication dashboard render (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
   test.beforeEach(async ({ page }) => {
     guard = attachConsoleGuard(page);
@@ -86,7 +87,8 @@ test.describe('Comms — notification template create (real UI write, anti-circu
     await installCommsStubs(page);
   });
 
-  test.fixme('CN-03 creating a notification template writes templatevalidated:false + type:"notification"', async ({ page }) => {
+  // RETIRED: /communication was retired 2026-11-18 (call-recording signed-URL migration): it played `recordingurl` straight into <audio [src]>. Calls are covered by comms/calls-record.spec.ts.
+  test.skip('CN-03 creating a notification template writes templatevalidated:false + type:"notification"', async ({ page }) => {
     test.setTimeout(90_000);
     // Run-unique message body — this is the NATURAL KEY we assert by (the app-written doc carries no
     // testrunid; sendNotification writes `message: this.message.trim()` — communication.component.ts:1067).

@@ -273,6 +273,9 @@ test.describe('ATC — Prescribe ATC (real UI, emulator only)', () => {
     await fillNotes(page, 'PATC-07');
     await page.getByTestId('patc-audio-input').setInputFiles({ name: 'brief.wav', mimeType: 'audio/wav', buffer: wavBuffer() });
     await expect(page.getByTestId('patc-audio-item')).toHaveCount(1, { timeout: 15_000 });
+    // 2026-11-18: the local preview uses the shared COMPACT player — no native controls, no download menu
+    await expect(page.getByTestId('patc-audio-item').getByTestId('aa-play')).toBeVisible();
+    await expect(page.getByTestId('patc-audio-item').locator('audio')).not.toHaveAttribute('controls', /.*/);
     await page.getByTestId('patc-noteimg-input').setInputFiles({ name: `note-${RUN}.png`, mimeType: 'image/png', buffer: pngBuffer() });
     await page.getByTestId('patc-atcimg-input').setInputFiles({ name: `atc-${RUN}.png`, mimeType: 'image/png', buffer: pngBuffer() });
     // the media is uploaded by autosave; nudge one and wait for the URLs to be patched into the draft

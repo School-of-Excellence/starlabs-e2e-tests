@@ -176,6 +176,9 @@ test.describe('ATC — Edit ATC (real UI, emulator only)', () => {
     await openEdit(page, ATC.E4);
     await page.getByTestId('eatc-audio-input').setInputFiles({ name: 'edit-brief.wav', mimeType: 'audio/wav', buffer: wavBuffer() });
     await expect(page.getByTestId('eatc-audio-item')).toHaveCount(1, { timeout: 15_000 });
+    // 2026-11-18: the local preview uses the shared COMPACT player — no native controls, no download menu
+    await expect(page.getByTestId('eatc-audio-item').getByTestId('aa-play')).toBeVisible();
+    await expect(page.getByTestId('eatc-audio-item').locator('audio')).not.toHaveAttribute('controls', /.*/);
     await page.getByTestId('eatc-noteimg-input').setInputFiles({ name: `edit-note-${RUN}.png`, mimeType: 'image/png', buffer: pngBuffer() });
     await page.getByTestId('eatc-atcimg-input').setInputFiles({ name: `edit-atc-${RUN}.png`, mimeType: 'image/png', buffer: pngBuffer() });
     await submitEdit(page, guard);
