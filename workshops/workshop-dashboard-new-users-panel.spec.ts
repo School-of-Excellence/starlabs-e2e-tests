@@ -13,10 +13,23 @@
 //   New   = a still-new user: a new_user_data doc WITHOUT movedtoexist: true.
 //   Exist = everyone else — participant metadata people, and new_user_data people marked movedtoexist.
 //
-// Hooks: `wd-*` / `wdash-*` (one component: workshop-dashboard.component.html). No new hooks. The panel heading
-// `wdash-panel-heading` and the panel count are from the 2026-11-17 redesign, so the hub-ahead guard
+// Hooks: `wd-*` / `wdash-*` (one component: workshop-dashboard.component.html — the prefix family declared for it).
+// WNU-01/02 add no hooks. WNU-03/04 drive the three loading hooks added on 2026-11-18 with the non-blocking load
+// (wdash-exist-loading, wdash-new-loading, wdash-new-ne-loading). The panel heading `wdash-panel-heading`, the panel
+// count and those loading hooks are newer than many app branches, so the hub-ahead guard
 // (scripts/readiness/landed-specs.cjs) skips this FILE on app branches without them. That is why these cases are not
 // in workshop-dashboard-new-exist.spec.ts: there they would make the guard skip WNE-01..11 too.
+//
+// LOAD TIME (WNU-03/04, 2026-11-18). new_user_data is a large, growing collection read ONCE (not live). The dashboard
+// no longer waits for it: the headline, progress and every other card paint from their own reads, and only the three
+// cards that split New from Existing (Existing Participants, New Users, New Users Not Enrolled) show a quiet loading
+// state and stay disabled until it lands — or show "—" and stay disabled if the read fails. When it lands, the
+// numbers appear, the cards enable, and an already-open panel refreshes its names / New badges in place without
+// losing its search or its New / Exist pick (a pick made while loading applies when the read lands). The read is its
+// own request (a Firestore Lite REST runQuery POST): the tests hold exactly that request with page.route — never the
+// shared Listen channel, whose POSTs go one at a time, so holding one stalls every later read. PROOF (2026-11-18):
+// WNU-03 run against the app that still waited for new_user_data failed at "the Total Enrolled headline shows the
+// real figure" (element not found while held); with the non-blocking load it passes.
 //
 // THE WORLD (seedEnrolledExportCase + tagEnrolledExportCase, on W_DASH):
 //   p0     — participant metadata, stamped workshoponly: true (the OLD "New" condition) → Exist
@@ -28,7 +41,9 @@
 //   (the dashboard reads new_user_data once). Finally the moved person's enrolment is deleted while the page is open
 //   (a moved person who is NOT enrolled — the negative control for New Users Not Enrolled).
 // WNU-02 adds: a second enrolled doc for NU on W_DASH (enrollNewUserTwice).
-import { test, expect, Page } from '@playwright/test';
+// WNU-03/04 add nothing: the base world already has a person of each kind (p0 / moved = Existing, NU = New enrolled,
+//   NU Bravo / NU Charlie = New not enrolled). The oracle (peopleOracle) reads the figures straight from Firestore.
+import { test, expect, Page, Route } from '@playwright/test';
 import {
   wsIds, wsProfileIds, installWshopStubs, loginAsWshopAdmin, stampP0Workshoponly,
   seedEnrolledExportCase, clearEnrolledExportCase, tagEnrolledExportCase, wsExportPeople, wsExportIds, wsExportTags,
@@ -65,6 +80,58 @@ async function stillNewEnrolled(): Promise<string[]> {
     if (d && d.movedtoexist !== true) names.push(String(d.name));
   }
   return names.sort(nameOrder);
+}
+
+/**
+ * ORACLE for the figures, straight from Firestore (never from the page). The cards' rules, restated:
+ *   totalEnrolled / started = enrolled DOCS on W_DASH (all / status 'enrolled');
+ *   existEnrolled  = enrolled DOCS whose person is not still-new (Existing Participants counts docs);
+ *   newEnrolled    = still-new PEOPLE enrolled (New Users);  newNotEnrolled = still-new people not enrolled.
+ */
+async function peopleOracle() {
+  const enrolled: any[] = await queryWhere('workshop participant enrolled',
+    [['workshopref', '==', db().collection('workshopconfiguration').doc(wsIds.W_DASH)]]);
+  const all = await db().collection('new_user_data').get();
+  const stillNew = new Set(all.docs.filter((d: any) => d.data()?.movedtoexist !== true).map((d: any) => d.id));
+  const enrolledIds = new Set(enrolled.map(e => String(e.profileid)));
+  const dash: any = await getDoc('workshopconfiguration', wsIds.W_DASH);
+  return {
+    totalEnrolled: enrolled.length,
+    started: enrolled.filter(e => e.status === 'enrolled').length,
+    existEnrolled: enrolled.filter(e => !stillNew.has(String(e.profileid))).length,
+    newEnrolled: [...enrolledIds].filter(id => stillNew.has(id)).length,
+    newNotEnrolled: [...stillNew].filter(id => !enrolledIds.has(id)).length,
+    challenges: Array.isArray(dash?.challenges) ? dash.challenges.length : 0,
+  };
+}
+
+/**
+ * Holds the dashboard's one-time new_user_data read in the browser until the test says so. The read is a REST
+ * runQuery POST of its own; only a POST whose structured query reads FROM new_user_data is held — every other
+ * request (the Listen channel carrying the dashboard's live reads included) goes straight on. caught() counts the
+ * held reads; release() lets them through, fail() aborts them (a failed read).
+ */
+async function holdNewUserDataRead(page: Page) {
+  let open!: (how: 'release' | 'fail') => void;
+  const gate = new Promise<'release' | 'fail'>(r => { open = r; });
+  let caught = 0;
+  const pattern = '**/documents:runQuery**';
+  const handler = async (route: Route) => {
+    const req = route.request();
+    let from = '';
+    try { from = String(JSON.parse(req.postData() || '{}')?.structuredQuery?.from?.[0]?.collectionId || ''); } catch { from = ''; }
+    if (req.method() !== 'POST' || from !== 'new_user_data') return route.fallback();
+    caught++;
+    if ((await gate) === 'fail') return route.abort('failed').catch(() => undefined);
+    return route.fallback().catch(() => undefined);
+  };
+  await page.route(pattern, handler);
+  return {
+    caught: () => caught,
+    release: () => open('release'),
+    fail: () => open('fail'),
+    dispose: () => page.unroute(pattern, handler),
+  };
 }
 
 test.describe('Workshop dashboard — the New Users panel lists exactly what its card counts', () => {
@@ -292,6 +359,190 @@ test.describe('Workshop dashboard — the New Users panel lists exactly what its
       await expect(panelN, 'WNU-02: reopened, the panel count equals the card').toHaveText('1');
     } finally {
       await clearNewUserTwice();
+    }
+  });
+
+  test('WNU-03 the dashboard paints while new_user_data is still loading; only the three people cards wait, then fill in — and an open panel catches up without losing its search', async ({ page }) => {
+    const { moved, nu } = wsExportPeople;
+    const o = await peopleOracle();
+    expect(o.newEnrolled, 'WNU-03 oracle: NU is the one still-new person enrolled').toBe(1);
+    expect(o.existEnrolled, 'WNU-03 oracle: Existing people are enrolled (p0, p1, the moved person)').toBeGreaterThan(0);
+    expect(o.newNotEnrolled, 'WNU-03 oracle: some still-new people are not enrolled (NU Charlie at least)').toBeGreaterThan(0);
+    expect(o.challenges, 'WNU-03 oracle: the dashboard workshop has challenges to show progress for').toBeGreaterThan(0);
+    expect(await getDoc('participant metadata', wsAddIds.NU_A), 'WNU-03 precondition: NU has no participant metadata, so only new_user_data names them').toBeNull();
+    expect(await getDoc('participant metadata', wsExportIds.MOVED), 'WNU-03 precondition: nor does the moved person').toBeNull();
+
+    const existCard = page.getByTestId('wdash-exist-users-card');
+    const newCard = page.getByTestId('wd-on-metric-click-19');
+    const neCard = page.getByTestId('wd-on-metric-click-20');
+    const existLoading = page.getByTestId('wdash-exist-loading');
+    const newLoading = page.getByTestId('wdash-new-loading');
+    const neLoading = page.getByTestId('wdash-new-ne-loading');
+    const panelOpen = page.locator('.participant-panel.panel-visible');
+    const panelN = page.locator('.participant-panel .wdx-pn-count-n');
+    const search = page.getByTestId('wd-side-search-85');
+
+    await loginAsWshopAdmin(page);
+    const hold = await holdNewUserDataRead(page);
+    try {
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      await expect.poll(() => hold.caught(), { message: 'WNU-03: the dashboard sends its new_user_data read as its own runQuery request, and it is held', timeout: 45_000 })
+        .toBe(1);
+
+      // ── While held ──────────────────────────────────────────────────────────────────────────────────────────
+      // 1) The headline and the progress section are up, with real numbers (the load-time regression: they used to
+      //    wait for the whole new_user_data read).
+      await expect(page.getByTestId('wd-on-metric-click-6').locator('.metric-value'), 'WNU-03 held: the Total Enrolled headline shows the real figure')
+        .toHaveText(String(o.totalEnrolled), { timeout: 30_000 });
+      await expect(page.getByTestId('wd-on-metric-click-16').locator('.metric-value'), 'WNU-03 held: Total Started shows the real figure')
+        .toHaveText(String(o.started));
+      await expect(page.locator('#wdx-challenges .cpo-card'), 'WNU-03 held: the challenge progress section lists every challenge')
+        .toHaveCount(o.challenges);
+      await expect(page.locator('.wdx-hero .wdx-fig', { hasText: 'Average Progress' }).locator('.metric-value'), 'WNU-03 held: Average Progress shows a percentage')
+        .toHaveText(/^\d+(\.\d+)?%$/);
+      expect(hold.caught(), 'WNU-03: the read is still being held').toBe(1);
+
+      // 2) Only the three people cards wait: loading in place of the number, labelled for screen readers, disabled,
+      //    busy, labels and hooks kept.
+      for (const [card, loading, label] of [
+        [existCard, existLoading, 'Existing Participants'],
+        [newCard, newLoading, 'New Users'],
+        [neCard, neLoading, 'New Users Not Enrolled'],
+      ] as const) {
+        await expect(loading, `WNU-03 held: ${label} shows its loading state`).toBeVisible();
+        await expect(loading, `WNU-03 held: ${label} loading is announced`).toContainText('Loading');
+        await expect(card, `WNU-03 held: ${label} keeps its label`).toContainText(label);
+        await expect(card, `WNU-03 held: ${label} is disabled`).toBeDisabled();
+        await expect(card, `WNU-03 held: ${label} is marked busy`).toHaveAttribute('aria-busy', 'true');
+      }
+      await expect(page.getByTestId('wdash-exist-users-label'), 'WNU-03 held: the exist label hook stays').toHaveText('Existing Participants');
+      await expect(page.getByTestId('wdash-new-users-label'), 'WNU-03 held: the new users label hook stays').toHaveText('New Users');
+      await expect(page.getByTestId('wdash-exist-users-count'), 'WNU-03 held: no Existing figure is guessed').toHaveCount(0);
+      await expect(newCard.locator('.metric-value'), 'WNU-03 held: no New Users figure is guessed').toHaveCount(0);
+      await expect(neCard.locator('.metric-value'), 'WNU-03 held: no Not Enrolled figure is guessed').toHaveCount(0);
+      // A click on a waiting card opens nothing.
+      await newCard.click({ force: true });
+      await existCard.click({ force: true });
+      await expect(panelOpen, 'WNU-03 held: a waiting card opens no panel').toHaveCount(0);
+
+      // 3) Every other card still opens its panel.
+      await page.getByTestId('wd-on-metric-click-16').click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03 held: Total Started opens').toHaveText('Total Started', { timeout: 30_000 });
+      await expect(panelN, 'WNU-03 held: Total Started lists its people').toHaveText(String(o.started));
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await page.getByTestId('wd-on-metric-click-6').click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03 held: Total Enrolled opens').toHaveText('Total Enrolled', { timeout: 30_000 });
+      await expect(panelN, 'WNU-03 held: Total Enrolled lists everyone enrolled').toHaveText(String(o.totalEnrolled));
+      // NU and the moved person are named only by new_user_data: not yet.
+      await expect(panelCard(page, nu.name), 'WNU-03 held: NU\'s name is not known yet').toHaveCount(0);
+      await expect(page.locator('.participant-panel .new-badge'), 'WNU-03 held: no New badge yet').toHaveCount(0);
+      // An active search for NU finds nobody yet; a New pick made now waits for new_user_data (it decides who is New).
+      await search.fill(nu.name);
+      await expect(panelN, 'WNU-03 held: the search for NU finds nobody yet').toHaveText('0');
+      await pickFilter(page, 'wd-side-filter-new');
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 held: New is picked').toBeVisible();
+      await expect(panelN, 'WNU-03 held: still nobody').toHaveText('0');
+      expect(hold.caught(), 'WNU-03: still held after all of that').toBe(1);
+
+      // ── Release ─────────────────────────────────────────────────────────────────────────────────────────────
+      hold.release();
+      for (const loading of [existLoading, newLoading, neLoading]) {
+        await expect(loading, 'WNU-03 released: the loading state goes').toHaveCount(0, { timeout: 30_000 });
+      }
+      await expect(page.getByTestId('wdash-exist-users-count'), 'WNU-03 released: Existing Participants == oracle').toHaveText(String(o.existEnrolled));
+      await expect(newCard.locator('.metric-value'), 'WNU-03 released: New Users == oracle').toHaveText(String(o.newEnrolled));
+      await expect(neCard.locator('.metric-value'), 'WNU-03 released: New Users Not Enrolled == oracle').toHaveText(String(o.newNotEnrolled));
+      for (const card of [existCard, newCard, neCard]) {
+        await expect(card, 'WNU-03 released: the card is enabled').toBeEnabled();
+        await expect(card, 'WNU-03 released: no longer busy').not.toHaveAttribute('aria-busy', 'true');
+      }
+
+      // The Total Enrolled panel opened while held caught up in place: still open, search and New pick kept, NU
+      // found by name with the New badge — without being reopened.
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03 released: the same panel is still open').toHaveText('Total Enrolled');
+      await expect(search, 'WNU-03 released: the search survived the refresh').toHaveValue(nu.name);
+      await expect(page.locator('.participant-panel h4', { hasText: /^Filter New/ }), 'WNU-03 released: the New pick survived the refresh').toBeVisible();
+      await expect.poll(() => panelNames(page), { message: 'WNU-03 released: the search now finds NU by name', timeout: 30_000 })
+        .toEqual([nu.name]);
+      await expect(panelCard(page, nu.name).locator('.new-badge'), 'WNU-03 released: NU carries the New badge').toBeVisible();
+      await page.getByTestId('wd-side-search-clear-86').click();
+      await expect.poll(() => panelNames(page), { message: 'WNU-03 released: search cleared, New lists the still-new enrolled people only' })
+        .toEqual([nu.name]);
+      await expect(panelN, 'WNU-03 released: New == oracle').toHaveText(String(o.newEnrolled));
+      await pickFilter(page, 'wd-side-filter-all');
+      await expect(panelN, 'WNU-03 released: All, everyone enrolled again').toHaveText(String(o.totalEnrolled));
+      await expect(panelCard(page, moved.name), 'WNU-03 released: the moved person is named now').toBeVisible();
+      await expect(panelCard(page, moved.name).locator('.new-badge'), 'WNU-03 released: the moved person is not New').toHaveCount(0);
+      await expect(panelCard(page, 'Unknown'), 'WNU-03 released: nobody is left "Unknown"').toHaveCount(0);
+      await expect(page.locator('.participant-panel .new-badge'), 'WNU-03 released: exactly one New badge (NU)').toHaveCount(1);
+
+      // The cards now open the right people.
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await existCard.click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03: Existing Participants opens').toHaveText('Existing Participants', { timeout: 30_000 });
+      await expect(panelCard(page, moved.name), 'WNU-03: the moved person is under Existing, by their real name').toBeVisible({ timeout: 30_000 });
+      await expect(panelCard(page, 'Unknown'), 'WNU-03: never "Unknown"').toHaveCount(0);
+      await expect(panelCard(page, nu.name), 'WNU-03: NU is not Existing').toHaveCount(0);
+      await expect(panelN, 'WNU-03: Existing Participants lists what its card counts').toHaveText(String(o.existEnrolled));
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await newCard.click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03: New Users opens').toHaveText('New Users', { timeout: 30_000 });
+      await expect.poll(() => panelNames(page), { message: 'WNU-03: New Users lists NU', timeout: 30_000 }).toEqual([nu.name]);
+      await page.getByTestId('wd-close-participant-panel-61').click();
+      await neCard.click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-03: New Users Not Enrolled opens')
+        .toHaveText('New Users Not Enrolled', { timeout: 30_000 });
+      await expect(panelCard(page, wsAddNames.nuCharlie), 'WNU-03: a still-new person who is not enrolled is listed').toBeVisible({ timeout: 30_000 });
+      await expect(panelN, 'WNU-03: New Users Not Enrolled lists what its card counts').toHaveText(String(o.newNotEnrolled));
+      expect(hold.caught(), 'WNU-03: new_user_data was read exactly once').toBe(1);
+    } finally {
+      hold.release();
+      await hold.dispose();
+    }
+  });
+
+  test('WNU-04 if the new_user_data read fails, the three people cards say "—" and stay disabled — never an endless loading state', async ({ page }) => {
+    const o = await peopleOracle();
+    const existCard = page.getByTestId('wdash-exist-users-card');
+    const newCard = page.getByTestId('wd-on-metric-click-19');
+    const neCard = page.getByTestId('wd-on-metric-click-20');
+    const panelOpen = page.locator('.participant-panel.panel-visible');
+
+    await loginAsWshopAdmin(page);
+    const hold = await holdNewUserDataRead(page);
+    try {
+      await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
+      await expect.poll(() => hold.caught(), { message: 'WNU-04: the dashboard sends its new_user_data read as its own runQuery request, and it is held', timeout: 45_000 })
+        .toBe(1);
+      await expect(page.getByTestId('wdash-new-loading'), 'WNU-04: loading while the read is out').toBeVisible({ timeout: 30_000 });
+      hold.fail();
+
+      for (const loading of [page.getByTestId('wdash-exist-loading'), page.getByTestId('wdash-new-loading'), page.getByTestId('wdash-new-ne-loading')]) {
+        await expect(loading, 'WNU-04: the loading state ends').toHaveCount(0, { timeout: 30_000 });
+      }
+      await expect(page.getByTestId('wdash-exist-users-count'), 'WNU-04: Existing Participants is unavailable').toHaveText('—');
+      await expect(newCard.locator('.metric-value'), 'WNU-04: New Users is unavailable').toHaveText('—');
+      await expect(neCard.locator('.metric-value'), 'WNU-04: New Users Not Enrolled is unavailable').toHaveText('—');
+      for (const card of [existCard, newCard, neCard]) {
+        await expect(card, 'WNU-04: the card stays disabled').toBeDisabled();
+        await expect(card, 'WNU-04: and is not busy').not.toHaveAttribute('aria-busy', 'true');
+      }
+      await expect(page.getByTestId('wdash-exist-users-label'), 'WNU-04: labels stay').toHaveText('Existing Participants');
+      await newCard.click({ force: true });
+      await expect(panelOpen, 'WNU-04: an unavailable card opens no panel').toHaveCount(0);
+      // The rest of the dashboard is unaffected.
+      await expect(page.getByTestId('wd-on-metric-click-6').locator('.metric-value'), 'WNU-04: the headline is unaffected')
+        .toHaveText(String(o.totalEnrolled));
+      await page.getByTestId('wd-on-metric-click-6').click();
+      await expect(page.getByTestId('wdash-panel-heading'), 'WNU-04: Total Enrolled still opens').toHaveText('Total Enrolled', { timeout: 30_000 });
+      // The failure is logged as before — expected here (the test aborted the read), so it is taken off the guard,
+      // together with the Firestore Lite SDK's own log line for that same aborted request (nothing else).
+      await expect.poll(() => guard.all.some(m => /Error fetching new_user_data/.test(m)), { message: 'WNU-04: the failed read is logged' }).toBe(true);
+      const expectedLogs = [/Error fetching new_user_data/, /@firebase\/firestore: Firestore \([^)]*_lite\): RPC_ERROR/];
+      for (let i = guard.fatals.length - 1; i >= 0; i--) if (expectedLogs.some(re => re.test(guard.fatals[i]))) guard.fatals.splice(i, 1);
+    } finally {
+      hold.release();
+      await hold.dispose();
     }
   });
 });
