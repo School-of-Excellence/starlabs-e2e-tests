@@ -3071,3 +3071,155 @@ export async function clearPersonMenuWorld(): Promise<void> {
     drop('workshoppaymentlog', P.payment),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-18 — /newusersprofile person details dialog with "Delivery on hold" (new-users-details.spec.ts, NUD-*).
+// Plan: starlabs-angular specs/plans/2026-11-18-new-user-details-dialog.md.
+//
+// PRECONDITION writes and TEST-side oracles only. Every doc is run-scoped by id and run-tagged (the teardown sweep
+// is the backstop); clearNewUserDetails() removes them after the file, so the people and tags below never reach the
+// counts other New Users files take from Firestore (tag panels, Converted, the ops dashboard's movedon window).
+//
+//   full       every field the dialog shows: phone, status, enable, last_login and movedon at FIXED instants,
+//              converted, and six tag ids in a deliberate order — four of this run's own segment tags (doc order
+//              is NOT alphabetical), a calendar-type tag (not a segment: the table drops it) and an id with no
+//              tag doc (dropped too). The table shows three pills and "+1".
+//   bare       a name and created only — every other value is the dialog's empty wording.
+//   control    an untouched person: never opened, never toggled. NUD-05 proves the write landed on ONE doc.
+//   throwaway  deleted by NUD-07 while its dialog is open; re-seeded by seedNewUserDetailsThrowaway() each run.
+//   holder     a second staff-like profile id with a known name, in `participant metadata` ONLY (no profile_data),
+//              so the caption's name lookup is also proven on its fallback branch. No CF triggers on that
+//              collection, so nothing rewrites the name (unlike profile_data → participant metadata).
+// Every person is created a few minutes before the seed runs, so they are the newest rows (page 1 of the list).
+// =================================================================================================
+export const wsDetails = {
+  tags: [
+    { id: `${RUN}_nut_nud_d`, name: `NUD Tag Delta ${RUN}` },
+    { id: `${RUN}_nut_nud_b`, name: `NUD Tag Bravo ${RUN}` },
+    { id: `${RUN}_nut_nud_c`, name: `NUD Tag Charlie ${RUN}` },
+    { id: `${RUN}_nut_nud_a`, name: `NUD Tag Alpha ${RUN}` },
+  ],
+  /** A tag id with no `newusertags` doc: it has no name, so the table (and the dialog) leave it out. */
+  ghostTag: `${RUN}_nut_nud_ghost`,
+  full: { id: `${RUN}_nu_nud_full`, name: `NUD Full ${RUN}` },
+  bare: { id: `${RUN}_nu_nud_bare`, name: `NUD Bare ${RUN}` },
+  control: { id: `${RUN}_nu_nud_control`, name: `NUD Control ${RUN}` },
+  throwaway: { id: `${RUN}_nu_nud_gone`, name: `NUD Throwaway ${RUN}` },
+  holder: { id: `${RUN}_pf_nud_holder`, name: `WS Holder ${RUN}` },
+  /** countryCode / phonenumber as the CF writes them (the number keeps its inner space). */
+  phone: { cc: '+91', number: '98765 43210' },
+  status: 'active',
+  /** Fixed local instants: a single-digit PM hour and a single-digit AM hour exercise 'h:mm a'. */
+  lastLogin: new Date(2026, 9, 7, 14, 5, 0, 0),
+  movedOn: new Date(2026, 2, 3, 9, 40, 0, 0),
+  /** The time NUD-07's out-of-app write stamps into the hold record. */
+  holdAt: new Date(2026, 10, 2, 16, 45, 0, 0),
+};
+
+/** The tag ids on the full person, in their stored order (see the block comment). */
+export function wsDetailsFullTagIds(): string[] {
+  const T = wsDetails.tags;
+  return [T[0].id, wsAddIds.NUT_CAL_A, T[1].id, wsDetails.ghostTag, T[2].id, T[3].id];
+}
+
+/** Seed the tags and the full / bare / control people (idempotent: full-document set()). */
+export async function seedNewUserDetails(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const D = wsDetails;
+  const now = Date.now();
+  const minutesAgo = (m: number) => { const d = new Date(now - m * 60_000); d.setSeconds(0, 0); return T.fromDate(d); };
+  await Promise.all([
+    ...D.tags.map(t => db.collection('newusertags').doc(t.id).set({ docid: t.id, type: 'newusersegments', name: t.name, ...tag })),
+    db.collection('new_user_data').doc(D.full.id).set({
+      docid: D.full.id, uid: `${RUN}_u_nud_full`, profileid: D.full.id, name: D.full.name, email: `${D.full.id}@example.com`,
+      phonenumber: D.phone.number, countryCode: D.phone.cc, refferedby: '', refferedprofile: '',
+      created: minutesAgo(2), emailVerified: true, registrationMethod: 'email', status: D.status, subscriber: false,
+      enable: true, workshoponly: false, tags: wsDetailsFullTagIds(),
+      last_login: T.fromDate(D.lastLogin), movedtoexist: true, movedon: T.fromDate(D.movedOn), ...tag,
+    }),
+    db.collection('new_user_data').doc(D.bare.id).set({ name: D.bare.name, created: minutesAgo(3), ...tag }),
+    db.collection('new_user_data').doc(D.control.id).set({
+      docid: D.control.id, name: D.control.name, email: `${D.control.id}@example.com`, phonenumber: '9999900012',
+      countryCode: '+91', created: minutesAgo(4), status: 'active', enable: true, tags: [], ...tag,
+    }),
+  ]);
+}
+
+/** (Re)create the person NUD-07 deletes while its dialog is open. */
+export async function seedNewUserDetailsThrowaway(): Promise<void> {
+  const admin = seed.initAdmin();
+  const d = new Date(Date.now() - 60_000);
+  d.setSeconds(0, 0);
+  await admin.firestore().collection('new_user_data').doc(wsDetails.throwaway.id).set({
+    docid: wsDetails.throwaway.id, name: wsDetails.throwaway.name, email: `${wsDetails.throwaway.id}@example.com`,
+    phonenumber: '9999900013', countryCode: '+91', created: admin.firestore.Timestamp.fromDate(d), enable: true, tags: [],
+    testrunid: RUN, _testdata: true,
+  });
+}
+
+/** The holder's name, where the dialog's lookup finds it on its fallback branch (`participant metadata`). */
+export async function seedNewUserDetailsHolder(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const H = wsDetails.holder;
+  await db.collection('participant metadata').doc(H.id).set({
+    docid: H.id, profileid: H.id, name: H.name, email: `${H.id}@example.com`, testrunid: RUN, _testdata: true,
+  });
+}
+
+/**
+ * Delete the hold fields from every details person, so each case starts from "never put on hold" (re-runs
+ * included). update() on a missing doc throws, so each is guarded: a person NUD-07 deleted simply stays gone.
+ */
+export async function resetNewUserDetailsHold(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  const D = wsDetails;
+  await Promise.all([D.full.id, D.bare.id, D.control.id, D.throwaway.id].map(id =>
+    db.collection('new_user_data').doc(id)
+      .update({ deliveryonhold: FV.delete(), deliveryonholdby: FV.delete() })
+      .catch(() => undefined)));
+}
+
+/** Remove everything above (afterAll). */
+export async function clearNewUserDetails(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const D = wsDetails;
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  await Promise.all([
+    ...D.tags.map(t => drop('newusertags', t.id)),
+    ...[D.full.id, D.bare.id, D.control.id, D.throwaway.id].map(id => drop('new_user_data', id)),
+    drop('participant metadata', D.holder.id),
+  ]);
+}
+
+/**
+ * ORACLE — the name the caption must show for a profile id: `profile_data/{id}.name`, else
+ * `participant metadata/{id}.name` (trimmed), else '' (the caption then leaves the name out). Read here, by the
+ * test, from what the seed and the CFs wrote; never from the screen.
+ */
+export async function wsHoldByName(profileId: string): Promise<string> {
+  const db = seed.initAdmin().firestore();
+  const pick = async (col: string) => {
+    const snap = await db.collection(col).doc(profileId).get();
+    const v = snap.exists ? (snap.data() || {}).name : '';
+    return typeof v === 'string' ? v.trim() : '';
+  };
+  return (await pick('profile_data')) || (await pick('participant metadata'));
+}
+
+/** Out-of-app hold write (NUD-07): the stimulus the open dialog must pick up live. */
+export async function setNewUserHoldExternally(id: string, on: boolean, by: string, at: Date): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('new_user_data').doc(id).update({
+    deliveryonhold: on, deliveryonholdby: { time: admin.firestore.Timestamp.fromDate(at), user: by },
+  });
+}
+
+/** Delete one new user (NUD-07's throwaway) while the screen is open. */
+export async function deleteNewUser(id: string): Promise<void> {
+  await seed.initAdmin().firestore().collection('new_user_data').doc(id).delete();
+}
