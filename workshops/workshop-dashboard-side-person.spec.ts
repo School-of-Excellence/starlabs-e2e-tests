@@ -5,15 +5,25 @@
 //           Participant Data (the same as clicking their row in the progress table), scrolled into view, with
 //           keyboard focus moved to the Participant Data heading (not lost with the closing panel)
 //   WDP-03  A not-started person (Not Started panel) has no data in this workshop: the item is disabled, says
-//           so, and clicking it does nothing
+//           so, and clicking it does nothing (the menu stays open)
 //   WDP-04  Negative control: without the participant progress right (limited) the name is plain text
 //   WDP-05  Share Clicked on a workshop of its own: a sharer with NO enrolled doc here reads "Not enrolled in this
-//           workshop" (disabled; clicking does nothing), although they are enrolled and started in ANOTHER workshop;
-//           in the same panel the enrolled-not-started sharer reads "Not started — no data in this workshop yet"
-//           and the started sharer's item is live and opens their Participant Data
+//           workshop" (disabled; clicking leaves the menu open), although they are enrolled and started in ANOTHER
+//           workshop; in the same panel the enrolled-not-started sharer reads "Not started — no data in this
+//           workshop yet" and the started sharer's item is live and opens their Participant Data
 //   WDP-06  The other panels that list people with no enrolled doc: Purchase (a buyer who never enrolled) and New
-//           Users Not Enrolled (a still-new user) read "Not enrolled in this workshop", and the disabled item
-//           leaves the panel open and the Participant Data already picked unchanged
+//           Users Not Enrolled (a still-new user) read "Not enrolled in this workshop"; the disabled item leaves the
+//           menu open, and the side panel and the Participant Data already picked stay as they were
+//
+// HOW "clicking does nothing" is told apart from a live item (forceClickExpectInert): for a person with no progress
+// row, viewPersonData() returns before it closes the side panel, and onParticipantClick() never selects someone with
+// no enrolled doc here — so "the side panel stays open" and "Participant Data is unchanged" hold whether the item is
+// disabled or not. They only describe behaviour. What differs is the MENU: a live mat-menu item's click bubbles to
+// the menu panel's (click), which closes the menu even when viewPersonData() returned early; a disabled one is
+// stopped (MatMenuItem._checkDisabled), so the menu stays open. Together with toBeDisabled() that is what fails if
+// the item were always enabled. The click must also reach the item: while the menu's open animation runs the panel
+// has `pointer-events: none` and a click at the item's centre lands on the overlay pane, so the helper first waits
+// until a hit-test at the centre finds the item.
 //
 // NOT covered here: the Sale Achieved purchases card (wdash-sale-tip) vs this menu. Its rows come only from Watson
 // (watsonFirestore() → Participants + ParticipantPurchases), and the emulator build sets `watson: null` on purpose
@@ -24,8 +34,8 @@
 //   • workshop-dashboard.component.html — the row (wd-a-84) is a plain <div>; the name is
 //     `button.wdx-name.participant-name[data-testid=wd-side-person-name]` (a mat-menu trigger) when
 //     can('participantprogress'), else a plain span; ONE shared <mat-menu #personMenu> (class wdx-pmenu) whose
-//     item `wd-side-person-view` reads "View participant data" + "In <workshop title>" or, disabled,
-//     "Not started — no data in this workshop yet".
+//     item `wd-side-person-view` reads "View participant data" + "In <workshop title>" or, disabled, the
+//     personMenuNoDataNote line (below).
 //   • workshop-dashboard.component.ts — personHasData(p): the person has a row in participantProgressList
 //     (the table's rows; only status 'enrolled' people get one). viewPersonData(p): closeParticipantPanel()
 //     (the close button's handler), then onParticipantClick(row) → Participant Data + scroll to #participantDataCard;
@@ -58,6 +68,28 @@ import { getDoc, queryWhere, db } from '../queue/support/firestore-admin';
 
 const panelCard = (page: Page, name: string) =>
   page.locator('.participant-panel mat-card.participant-card').filter({ hasText: name });
+
+/**
+ * Force-click a disabled "View participant data" and check the click was swallowed: the person menu is still open.
+ * (See the header: the side panel and Participant Data cannot tell a disabled item from a live one for a person with
+ * no progress row; the menu can, because a live item's click closes it.) First wait until the open animation is over
+ * and a click at the item's centre hits the item itself, not the overlay pane under a `pointer-events: none` panel.
+ */
+async function forceClickExpectInert(page: Page, view: Locator, what: string): Promise<void> {
+  const menu = page.locator('.mat-mdc-menu-panel.wdx-pmenu');
+  await expect.poll(() => view.evaluate((el: Element) => {
+    const panel = el.closest('.mat-mdc-menu-panel');
+    if (!panel || panel.getAnimations().length || panel.classList.contains('mat-menu-panel-animating')) return 'animating';
+    const r = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return hit && el.contains(hit) ? 'item' : `hit ${hit ? hit.tagName + '.' + hit.className : 'nothing'}`;
+  }), `${what}: a click at the item's centre reaches the item`).toBe('item');
+  await view.click({ force: true });
+  await page.waitForTimeout(500);   // a live item's click would have closed the menu by now (exit animation ≤ 200 ms)
+  await expect(menu, `${what}: the menu stays open (a live item's click closes it)`).toBeVisible();
+  await expect(menu, `${what}: and is not closing`).not.toHaveClass(/mat-menu-panel-exit-animation/);
+  await expect(view, `${what}: the item is still there, disabled`).toBeDisabled();
+}
 
 async function openDashboard(page: Page): Promise<void> {
   await page.goto(`/workshop_dashboard/${wsIds.W_DASH}`, { waitUntil: 'domcontentloaded' });
@@ -154,7 +186,7 @@ test.describe('Workshop dashboard — side panel person menu', () => {
     await expect(view, 'WDP-03: disabled').toBeDisabled();
     await expect(view).toContainText('Not started — no data in this workshop yet');
     await expect(view).not.toContainText('In ');
-    await view.click({ force: true });
+    await forceClickExpectInert(page, view, 'WDP-03');
     await expect(page.locator('aside.participant-panel'), 'WDP-03: the panel stays open').toHaveClass(/panel-visible/);
     await expect(page.locator('#participantDataCard'), 'WDP-03: nobody was selected').toContainText('No Participant Selected');
     await expect(page.locator('#participantDataCard .wdx-pd-name')).toHaveCount(0);
@@ -289,7 +321,7 @@ test.describe('Workshop dashboard — person menu: "Not enrolled in this worksho
     await expect(view).not.toContainText(NOT_STARTED);
     await expect(view).not.toContainText(STARTED_NO_ROW);
     await expect(view).not.toContainText('In ');
-    await view.click({ force: true });
+    await forceClickExpectInert(page, view, 'WDP-05 outsider');
     await expect(page.locator('aside.participant-panel'), 'WDP-05: the panel stays open').toHaveClass(/panel-visible/);
     await expect(pd, 'WDP-05: nobody was selected').toContainText('No Participant Selected');
     await expect(pd.locator('.wdx-pd-name')).toHaveCount(0);
@@ -333,10 +365,9 @@ test.describe('Workshop dashboard — person menu: "Not enrolled in this worksho
     await expect(view, 'WDP-06: Purchase, the not-enrolled wording').toContainText(NOT_ENROLLED);
     await expect(view).not.toContainText(NOT_STARTED);
     await expect(view).not.toContainText(STARTED_NO_ROW);
-    await view.click({ force: true });
+    await forceClickExpectInert(page, view, 'WDP-06 Purchase');
     await expect(page.locator('aside.participant-panel'), 'WDP-06: the panel stays open').toHaveClass(/panel-visible/);
     await expect(pd.locator('.wdx-pd-name'), 'WDP-06: the picked Participant Data is unchanged').toContainText(started.name);
-    await expect(pd.locator('.wdx-pd-name')).not.toContainText(outsider.name);
     await closePersonMenu(page);
     await page.getByTestId('wd-close-participant-panel-61').click();
 
@@ -348,7 +379,7 @@ test.describe('Workshop dashboard — person menu: "Not enrolled in this worksho
     await expect(view, 'WDP-06: new user, not enrolled → disabled').toBeDisabled();
     await expect(view, 'WDP-06: new user, the not-enrolled wording').toContainText(NOT_ENROLLED);
     await expect(view).not.toContainText(NOT_STARTED);
-    await view.click({ force: true });
+    await forceClickExpectInert(page, view, 'WDP-06 new user');
     await expect(page.locator('aside.participant-panel'), 'WDP-06: the panel stays open').toHaveClass(/panel-visible/);
     await expect(pd.locator('.wdx-pd-name'), 'WDP-06: still the picked person').toContainText(started.name);
     await closePersonMenu(page);
