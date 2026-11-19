@@ -319,14 +319,26 @@ test.describe('Journey — Delivery dashboard Stages (CTD D&I Appointment board,
   }
   const titles = (page: Page) => page.locator('app-delivery-dashboard-clone .board .col-title');
 
-  test('DDC-CTD-01 the CTD D&I (Appointment) chip opens its own five-column board', async ({ page }) => {
+  test('DDC-CTD-01 the CTD D&I (Appointment) chip opens its delivery-sequence board; the cycle toggle swaps the third form', async ({ page }) => {
+    // 2026-11-19 (later): the full CTD sequence — 4 forms then the appointments — in two versions picked by the
+    // 1st / Next Cycle toggle (participantsproduct.deliverytype). Next Cycle replaces My Evolution Wishlist with
+    // My Pocket ATC; every other column is shared.
     await openStages(page);
     const chip = page.getByTestId('ddc-btn-ctd-appt');
     await expect(chip, 'DDC-CTD-01: the CTD chip is offered with no product filter').toBeVisible({ timeout: 60_000 });
     await chip.click();
     await expect(chip, 'DDC-CTD-01: the chip becomes the active product').toHaveClass(/active/, { timeout: 30_000 });
-    await expect(titles(page), 'DDC-CTD-01: Total Eligible → Diagnostics → Implementation → Review → Completion')
-      .toHaveText(['Total Eligible', 'Diagnostics', 'Implementation', 'Review', 'Completion'], { timeout: 90_000 });
+    await expect(page.getByTestId('ddc-ctd-cycle-first'), 'DDC-CTD-01: 1st Cycle is the default').toHaveClass(/is-active/);
+    await expect(titles(page), 'DDC-CTD-01: 1st Cycle — forms, then Diagnostics → Implementation ×2 → Review → Completion')
+      .toHaveText(['Total Eligible', 'Aspiration Form', 'ATC Understanding Validation', 'My Evolution Wishlist',
+        'Impact Valuation Activity', 'Diagnostics', 'Implementation 1', 'Implementation 2', 'Review', 'Completion'], { timeout: 90_000 });
+
+    await page.getByTestId('ddc-ctd-cycle-next').click();
+    await expect(page.getByTestId('ddc-ctd-cycle-next'), 'DDC-CTD-01: Next Cycle is now active').toHaveClass(/is-active/);
+    await expect(page.getByTestId('ddc-ctd-cycle-first')).not.toHaveClass(/is-active/);
+    await expect(titles(page).nth(3), 'DDC-CTD-01: Next Cycle\'s third form is My Pocket ATC').toHaveText('My Pocket ATC', { timeout: 90_000 });
+    await expect(titles(page).filter({ hasText: /^\s*My Evolution Wishlist\s*$/ }), 'DDC-CTD-01: …and the 1st-Cycle form is gone').toHaveCount(0);
+    await expect(titles(page), 'DDC-CTD-01: the other nine columns are shared').toHaveCount(10);
     await expect(page.getByTestId('ddc-btn-085'), 'DDC-CTD-01: EI Starter Pack is not active').not.toHaveClass(/active/);
   });
 
@@ -339,5 +351,11 @@ test.describe('Journey — Delivery dashboard Stages (CTD D&I Appointment board,
     await page.getByTestId('ddc-btn-ctd-appt').click();
     await expect(titles(page).filter({ hasText: /^\s*(Onboarding|Celebration Call|Past Month)\s*$/ }),
       'DDC-CTD-02: switching to CTD drops the Starter Pack-only columns').toHaveCount(0, { timeout: 90_000 });
+  });
+
+  test.fixme('DDC-ADDR4 Add-on count chips (Products Overview row + product modal) addressable (deferred — needs an Addons package seed)', async ({ page }) => {
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('ddc-chip-addon')).toBeTruthy();
+    expect(page.getByTestId('ddc-btn-addon')).toBeTruthy();
   });
 });
