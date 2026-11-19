@@ -730,16 +730,16 @@ const FTO_SEEDED = [
 ];
 
 // ── DELIVERY DASHBOARD — STUCK CASES (DDC-STK-*) ─────────────────────────────────────────────────────
-// Rule under test (starlabs-angular charan-release 2026-11-12 — the Stuck rule of mahalakshmi-development's
-// delivery-dashboard-new): a participantsproduct is a Stuck Case when it is IN DELIVERY (status 'ongoing'
-// AND its own `mode` is 'priority mode'), more than 15 days have passed since its last ATTENDED appointment
-// (appointments.participantproductid == the PP's docid; no attended appointment → since statusdate.ongoing),
-// AND no future appointment is booked (not cancelled, not attended, start > now). Every PP carries a
-// 20-day-old statusdate.
-//   STALE   ongoing · priority · attended 18d ago + a NEWER UNattended appt (2d, past) → STUCK, DAYS "18";
-//                     carries subscriptionstart/end so the two columns have something to render
-//   NOAPPT  ongoing · priority · no appointment at all       → STUCK, DAYS "20" (counted from statusdate.ongoing)
-//   UNATT   ongoing · priority · only an UNattended appt 30d → STUCK, DAYS "20" (unattended never counts)
+// Rule under test (starlabs-angular charan-release 2026-11-19, operator): a participantsproduct is a Stuck Case
+// when it is IN DELIVERY (status 'ongoing' AND its own `mode` is 'priority mode'), more than 7 days have passed
+// since its last BOOKED appointment — the latest non-cancelled one that has started, attended or not
+// (appointments.participantproductid == the PP's docid; none → since statusdate.ongoing) — AND nothing is
+// booked ahead (start > now). Was: > 15 days since the last ATTENDED appointment. Every PP has a 20-day-old statusdate.
+//   UNATT   ongoing · priority · only an UNattended appt 30d → STUCK 30 (appointment basis, "Not attended")
+//   NOAPPT  ongoing · priority · no appointment at all       → STUCK 20 (status basis, '*')
+//   MID     ongoing · priority · attended 10d ago            → STUCK 10 — only under > 7 (the threshold control);
+//                     carries subscriptionstart/end, 'regular' and the parallel product for the All-tab filters
+//   STALE   ongoing · priority · attended 18d + an UNattended booking 2d ago → NOT stuck (the newer booking resets it)
 //   RECENT  initiated · priority · attended 3d ago           → not stuck (status — it is the Not-Consuming row)
 //   DONE    completed · priority · attended 40d ago          → not stuck (status)
 //   FUTURE  ongoing · priority · attended 25d ago + an appt booked 3d AHEAD → not stuck (future booking)
@@ -751,7 +751,7 @@ const DDC = {
   P: `${DDC_RUN}_P_DFU`,
   P2: `${DDC_RUN}_P_PARALLEL`,
   names: { product: `DDC Stuck Product ${TESTRUNID}`, parallel: `DDC Parallel Product ${TESTRUNID}`, tag: `DDCSTK-${TESTRUNID}` },
-  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE', 'FUTURE', 'NONPRIO'],
+  people: ['STALE', 'RECENT', 'NOAPPT', 'UNATT', 'DONE', 'FUTURE', 'NONPRIO', 'MID'],
   subStart: Date.UTC(2026, 0, 15, 12), subEnd: Date.UTC(2027, 0, 14, 12),
 };
 const ddcPf = (k) => `${DDC_RUN}_pf_${k.toLowerCase()}`;
@@ -768,29 +768,30 @@ async function seedDdcStuck(db, T) {
   // "parallel product" (activeproduct minus the row's product). NDFU so it never becomes a dashboard row itself.
   await set('products', DDC.P2, { id: DDC.P2, product: DDC.names.parallel, type: 'NDFU', atcmodel: null, mode: 'online' });
 
-  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed', FUTURE: 'ongoing', NONPRIO: 'ongoing' };
-  // DDC-FLT filter axes: STALE = active · regular · has a parallel product; RECENT = non active · defaulted · none.
-  // (RECENT is the "Initiated – Not Consuming" row, STALE the "Stuck" row — the two rows the All tab shows.)
+  const status = { STALE: 'ongoing', RECENT: 'initiated', NOAPPT: 'ongoing', UNATT: 'ongoing', DONE: 'completed', FUTURE: 'ongoing', NONPRIO: 'ongoing', MID: 'ongoing' };
+  // DDC-FLT filter axes: MID = active · regular · has a parallel product; RECENT = non active · defaulted · none.
+  // (RECENT is the "Initiated – Not Consuming" row, MID a "Stuck" row. Moved from STALE 2026-11-19: under the
+  // last-BOOKED rule STALE's newer unattended booking makes it not stuck, so it left the All tab.)
   const custStatus = { RECENT: 'non active' };
-  const finStatus = { STALE: 'regular', RECENT: 'defaulted' };
+  const finStatus = { MID: 'regular', RECENT: 'defaulted' };
   for (const k of DDC.people) {
     await set('participant metadata', ddcPf(k), {
       profileid: ddcPf(k), name: ddcName(k), email: `${ddcPf(k)}@example.com`, customerstatus: custStatus[k] || 'active',
       ...(finStatus[k] ? { financialstatus: finStatus[k] } : {}),
-      activeproduct: k === 'DONE' ? [] : (k === 'STALE' ? [DDC.P, DDC.P2] : [DDC.P]), consumedproducts: k === 'DONE' ? [DDC.P] : [],
+      activeproduct: k === 'DONE' ? [] : (k === 'MID' ? [DDC.P, DDC.P2] : [DDC.P]), consumedproducts: k === 'DONE' ? [DDC.P] : [],
     });
     await set('participantsproduct', ddcPp(k), {
       profileid: ddcPf(k), productref: db.collection('products').doc(DDC.P), status: status[k], sequenceorder: 0,
       statusdate: { [status[k]]: ago(20) },
       // the PRODUCT's mode decides "in delivery" for the Stuck rule; NONPRIO is the mode negative control
       mode: k === 'NONPRIO' ? 'Journey Mode' : 'Priority Mode',
-      ...(k === 'STALE' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
+      ...(k === 'MID' ? { subscriptionstart: T.fromMillis(DDC.subStart), subscriptionend: T.fromMillis(DDC.subEnd) } : {}),
     });
   }
 
-  // STALE's parallel-product row (CF-consistent: productsdata_to_pmd derives activeproduct [P, P2] from it)
-  await set('participantsproduct', `${DDC_RUN}_PP_STALE_P2`, {
-    profileid: ddcPf('STALE'), productref: db.collection('products').doc(DDC.P2), status: 'ongoing', sequenceorder: 1,
+  // MID's parallel-product row (CF-consistent: productsdata_to_pmd derives activeproduct [P, P2] from it)
+  await set('participantsproduct', `${DDC_RUN}_PP_MID_P2`, {
+    profileid: ddcPf('MID'), productref: db.collection('products').doc(DDC.P2), status: 'ongoing', sequenceorder: 1,
     statusdate: { ongoing: ago(20) },
   });
 
@@ -798,8 +799,11 @@ async function seedDdcStuck(db, T) {
     participantproductid: ddcPp(k), profileid: ddcPf(k), attended, cancelled: false,
     starttime: ago(endDaysAgo), endtime: ago(endDaysAgo),
   });
-  await appt('APT_STALE_DONE', 'STALE', 18, true);   // 18 ≠ the 20d statusdate, so DAYS ≠ DAYS STUCK
-  await appt('APT_STALE_NOSHOW', 'STALE', 2, false);   // newer, but unattended — must not reset the clock
+  // Stuck rule since 2026-11-19 (app): > 7 days since the last BOOKED, started, non-cancelled appointment —
+  // attended or not — else since statusdate.ongoing; nothing booked ahead.
+  await appt('APT_STALE_DONE', 'STALE', 18, true);
+  await appt('APT_STALE_NOSHOW', 'STALE', 2, false);   // newer booking, unattended — it RESETS the clock → STALE not stuck
+  await appt('APT_MID_DONE', 'MID', 10, true);         // 10 days: stuck at > 7, would NOT be at the old > 15
   await appt('APT_RECENT', 'RECENT', 3, true);
   await appt('APT_UNATT', 'UNATT', 30, false);
   await appt('APT_DONE', 'DONE', 40, true);

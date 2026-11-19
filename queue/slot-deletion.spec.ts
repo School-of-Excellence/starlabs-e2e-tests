@@ -327,7 +327,7 @@ test.describe('QSD — queue slot deletion contract', () => {
       appointmentref: null, bookedby: null, usedslot: 0,
     });
 
-    expect(page.getByTestId('qpr-revert-appointment')).toBeTruthy(); // reference-only (review board; the operator-facing cancel)
+    expect(page.getByTestId('qpr-planner-revert-appointment')).toBeTruthy(); // reference-only (review board's Appointment tab; the operator-facing cancel — renamed from qpr-revert-appointment, Dharshan c97417aa)
 
     await openPlanner(page);
     await deleteSlotStartingOn(page, APPT_START); // the booked appointment slot
@@ -335,5 +335,33 @@ test.describe('QSD — queue slot deletion contract', () => {
     await pollUntil(() => slotExists(SLOT_APPT_BOOKED), gone => gone === false, { timeoutMs: 20_000, label: 'appointment slot removed after cancellation' });
     const appt = await getDoc('appointments', APPOINTMENT);
     expect((appt as any)?.['cancelled'], 'the appointment must read as cancelled').toBe(true);
+  });
+
+  // Dharshan c97417aa (pulled onto charan-release 2026-11-19): Overall-view filters, the Slot Planner's Appointment
+  // tab (notes, Book, Revert) and the appointment side panel. Book's writes were reviewed against the Flutter booking
+  // (same four docs, same fields) — a behavioral case needs a booked/open appointment-slot world (deferred).
+  test.fixme('QSD-ADDR1 queue planner review filters, appointment tab and panel addressable (deferred behavioral)', async ({ page }) => {
+    await page.goto('/queue-planner-review', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('qpr-specialist-filter')).toBeTruthy();
+    expect(page.getByTestId('qpr-participant-filter')).toBeTruthy();
+    expect(page.getByTestId('qpr-availability-filter')).toBeTruthy();
+    expect(page.getByTestId('qpr-clear-filters')).toBeTruthy();
+    expect(page.getByTestId('qpr-slottype-all')).toBeTruthy();
+    expect(page.getByTestId('qpr-slottype-queue')).toBeTruthy();
+    expect(page.getByTestId('qpr-slottype-appointment')).toBeTruthy();
+    expect(page.getByTestId('qpr-show-past')).toBeTruthy();
+    expect(page.getByTestId('qpr-overall-scroll-left')).toBeTruthy();
+    expect(page.getByTestId('qpr-overall-alldays')).toBeTruthy();
+    expect(page.getByTestId('qpr-overall-scroll-right')).toBeTruthy();
+    expect(page.getByTestId('qpr-overall-date-start')).toBeTruthy();
+    expect(page.getByTestId('qpr-overall-date-end')).toBeTruthy();
+    expect(page.getByTestId('qpr-planner-notes')).toBeTruthy();
+    expect(page.getByTestId('qpr-planner-note-save')).toBeTruthy();
+    expect(page.getByTestId('qpr-planner-note-close')).toBeTruthy();
+    expect(page.getByTestId('qpr-planner-book-appointment')).toBeTruthy();
+    expect(page.getByTestId('qpr-planner-appt-row')).toBeTruthy();
+    expect(page.getByTestId('qpr-panel-revert-appointment')).toBeTruthy();
+    expect(page.getByTestId('qpr-appt-summary-confirmed')).toBeTruthy();
+    expect(page.getByTestId('qpr-appt-summary-nonconfirmed')).toBeTruthy();
   });
 });
