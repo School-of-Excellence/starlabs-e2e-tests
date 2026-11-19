@@ -26,6 +26,22 @@
 //           and its one completion (named from the participant's copy, since its config has no steps)
 //   WLV-07  No extra access check (the operator's choice): `limited` — on no workshop admin list and with no grant on
 //           this workshop — still sees the Live button and the full feed
+// Addition (the plan's last section, "Addition: pagination and search" — browser-side only, data loading unchanged):
+//   WLV-08  20 rows a page, newest first: with 26 completions page 1 is exactly the 20 newest ("Page 1 of 2",
+//           "Showing 1–20 of 26", Previous disabled); Next shows the 6 oldest (oldest last, "Showing 21–26 of 26", Next
+//           disabled); Previous returns to page 1. The header count stays the whole feed. (WLV-03's 8 rows: no pager.)
+//   WLV-09  Search by name, phone or email — case-insensitive and partial — shows exactly the matching person's
+//           completions from EVERY page, newest first, and typing goes back to page 1: "CREW" (four people's emails,
+//           21 rows → still two pages) typed on page 2 lands on page 1, and typing on (same 21 rows) from its page 2
+//           lands on page 1 again; part of a name in mixed case ("qUINla"), part of an email ("ZENITH.Chen", the
+//           new_user_data person), phone digits in other formats ("+91 91234-56780", "4123 45678"). The box's clear
+//           button empties it and restores the full list on page 1
+//   WLV-10  A search that matches nobody → "No completions match your search", no rows, no pager (not the empty
+//           state); a challenge name is not searched (it matches nobody too); the no-match "Clear search" empties
+//           the box and restores the full list on page 1
+//   WLV-11  Live with pages: from exactly 20 completions (one page, no pager) an admin-SDK completion newer than all
+//           tops page 1 and the pager appears ("Page 1 of 2", "Showing 1–20 of 21"); a second one on page 1 tops it
+//           again and the total goes up; on page 2 a third one keeps the user on page 2 while its range and rows move
 //
 // Recon: starlabs-angular
 //   • src/app/New-Workshop/workshops/workshops.component.html — Actions column: `wor-live` (icon `sensors`, tooltip
@@ -40,11 +56,20 @@
 //   • workshop-live.engine.ts — completed = sub status === 'completed'; newest first, undated last ("—");
 //     "+91 9999900000" phones (people-send rule, both spellings of the country code); formatDateTime dates;
 //     "N completion(s)"; "Updated hh:mm:ss am".
+//   • Addition (pagination and search): in the ready state, `wlive-search` (the input; matches the person's name or
+//     email in any case and part, or the term's digits within the phone's digits — spaces, "+", "-" ignored) with
+//     `wlive-search-clear` inside it while it holds text; `wlive-no-match` ("No completions match your search") with
+//     `wlive-no-match-clear` ("Clear search") when a search keeps nothing; `wlive-pager` only with more than one page,
+//     holding `wlive-range` ("Showing A–B of N", an en dash; N = the searched rows), `wlive-prev` / `wlive-next`
+//     (disabled at either end) and `wlive-page` ("Page X of Y"). Typing (a changed term) and either clear go to page
+//     1; a live snapshot keeps the page (clamped to the last one). `wlive-count` stays the count of ALL completions.
 //
 // Hook prefixes: `wor-` (the /workshops list, WorkshopsComponent) and `wlive-` (WorkshopLiveComponent). `wor-live` and
 // every `wlive-*` hook are new with this change, so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips
 // this whole FILE on app branches that predate it — which is why these cases are a file of their own and not more
-// cases in workshops-list.spec.ts.
+// cases in workshops-list.spec.ts. The addition's hooks (all `wlive-`, driven by WLV-08..11): wlive-search,
+// wlive-search-clear, wlive-no-match, wlive-no-match-clear, wlive-pager, wlive-prev, wlive-next, wlive-page,
+// wlive-range — they land with the live screen itself, in the same app change.
 //
 // THE WORLD (seed-workshops.js + seedLiveWorld in support/wshop.ts; re-seeded before EVERY case, removed in afterAll):
 //   LIVE     app switch on → p0 (3 dated completions incl. a step the config dropped, 1 undated), p1 (1 + 1, plus a
@@ -56,6 +81,11 @@
 //            base seed's PW_A sits on W_DASH)
 //   + the base seed's Active Workshop / Inactive Workshop and seedListFilterWorkshops' web-only / mobile-only /
 //     completed workshops for WLV-01. The new config docs carry NO testrunid (WS-01 counts exactly three).
+//   PAGED    (WLV-08..11 only: seedLivePagedWorld, removed in afterAll) app switch on, LIVE's steps; 26 completions by
+//            five people with distinct names / emails / phones, one a day (completion i = person i % 5's sub ⌊i / 5⌋),
+//            so each person has rows on both pages. Four people in participant metadata, one (Chen) only in
+//            new_user_data; nobody has profile_data, so no CF rewrites a name. Four emails carry "crew", Emil's
+//            does not. Farah (metadata only) is WLV-11's live arrival; seedLivePagedWorld(20) seeds just the 20 oldest.
 //   Actors   admin (full access), limited (no list, no grant on LIVE) — both granted /workshoplive by the seed's ROUTES.
 //
 // Anti-circularity: what the screen must show is derived by the TEST — the completion table is pinned to what is
@@ -63,7 +93,11 @@
 // is the test's own sort of the known instants, dates are formatted in the browser the dashboard's way, people come
 // from the test's admin-SDK reads of participant metadata / new_user_data (pinned to wsMetaNames and the seeded
 // values), and the button's expected visibility is computed from each workshop doc's flags as read here. The live
-// arrivals in WLV-04/06 are out-of-app writes the app must PICK UP; they are stimuli, never read back as results.
+// arrivals in WLV-04/06/11 are out-of-app writes the app must PICK UP; they are stimuli, never read back as results.
+// Pages and searches (WLV-08..11): the expected rows are the test's own newest-first sort of PAGED's seeded instants,
+// sliced 20 at a time by the test; each search's expected people are DECLARED here and pinned against the seeded
+// names / emails / phones (the term occurs in exactly those people's field and in nobody's other fields); the pager
+// texts are the test's arithmetic on those counts — nothing is read off the page to build an expectation.
 import { test, expect, Page } from '@playwright/test';
 import {
   wsIds, wsProfileIds, wsMetaNames, wsListFilterIds, wsListFilterTitles,
@@ -71,6 +105,8 @@ import {
   resetWorkshopInactive, seedListFilterWorkshops, clearListFilterWorkshops,
   wsLive, wsLiveSeededCompletions, wsLiveArrivals, LiveCompletion, LivePersonKey,
   seedLiveWorld, clearLiveWorld, completeLiveQuizForP1, addLiveLateParticipant, createLiveOtherWorkshop,
+  wsLivePaged, wsLivePagedCompletions, wsLivePagedArrivals, PagedCompletion, PagedPersonKey,
+  seedLivePagedWorld, addLivePagedArrivals, clearLivePagedWorld,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { installProdFirewall } from '../_shared/prod-firewall';
@@ -143,7 +179,7 @@ async function personOracle(who: LivePersonKey): Promise<PersonCells> {
 }
 
 /** Newest first, undated last (equal instants never occur in this world). */
-const newestFirst = (rows: LiveCompletion[]) =>
+const newestFirst = <C extends { at: Date | null }>(rows: readonly C[]): C[] =>
   [...rows].sort((a, b) => (a.at && b.at ? b.at.getTime() - a.at.getTime() : a.at ? -1 : b.at ? 1 : 0));
 
 /** A date as the screen must show it — formatted IN THE BROWSER exactly as the dashboard's formatDateTime does. */
@@ -159,9 +195,17 @@ async function whenCell(page: Page, at: Date | null): Promise<string> {
 interface FeedOracle { names: string[]; phones: string[]; emails: string[]; mains: string[]; subs: string[]; whens: string[]; isos: string[] }
 
 async function feedOracle(page: Page, completions: LiveCompletion[]): Promise<FeedOracle> {
+  return rowsOracle(page, completions, personOracle);
+}
+
+/** The rows as the screen must show them, in the given order after the newest-first sort; people via `personOf`. */
+async function rowsOracle<K extends string>(
+  page: Page, completions: readonly { who: K; main: string; sub: string; at: Date | null }[],
+  personOf: (who: K) => Promise<PersonCells>,
+): Promise<FeedOracle> {
   const sorted = newestFirst(completions);
-  const people = new Map<LivePersonKey, PersonCells>();
-  for (const c of sorted) if (!people.has(c.who)) people.set(c.who, await personOracle(c.who));
+  const people = new Map<K, PersonCells>();
+  for (const c of sorted) if (!people.has(c.who)) people.set(c.who, await personOf(c.who));
   const whens: string[] = [];
   for (const c of sorted) whens.push(await whenCell(page, c.at));
   return {
@@ -193,6 +237,12 @@ async function completedSubsInFirestore(workshopId: string): Promise<{ docs: num
 
 /** Every column of the feed, in order — exact count and order, retried until names and config names land. */
 async function expectFeed(page: Page, o: FeedOracle, label: string): Promise<void> {
+  await expectRows(page, o, label);
+  await expect(page.getByTestId('wlive-count'), `${label}: the header count`).toHaveText(countText(o.subs.length));
+}
+
+/** Every column of the rows on screen (the feed, or one page of it), in order; no header-count check. */
+async function expectRows(page: Page, o: FeedOracle, label: string): Promise<void> {
   await expect(feedRows(page), `${label}: one row per completion`).toHaveCount(o.subs.length, { timeout: 30_000 });
   await expect(page.getByTestId('wlive-sub'), `${label}: sub challenges, newest first`).toHaveText(o.subs, { timeout: 30_000 });
   await expect(page.getByTestId('wlive-main'), `${label}: main challenges`).toHaveText(o.mains);
@@ -203,7 +253,6 @@ async function expectFeed(page: Page, o: FeedOracle, label: string): Promise<voi
   // The machine-readable instant of every dated row (the undated one has no <time>).
   await expect.poll(() => page.getByTestId('wlive-completed-at').locator('time')
     .evaluateAll(els => els.map(e => e.getAttribute('datetime'))), { message: `${label}: <time datetime>` }).toEqual(o.isos);
-  await expect(page.getByTestId('wlive-count'), `${label}: the header count`).toHaveText(countText(o.subs.length));
 }
 
 async function openLive(page: Page, workshopId: string): Promise<void> {
@@ -211,6 +260,87 @@ async function openLive(page: Page, workshopId: string): Promise<void> {
   await expect(page, 'the live screen is on its own URL')
     .toHaveURL(new RegExp(`/workshoplive/${workshopId}$`), { timeout: 30_000 });
 }
+
+// ─── PAGED (WLV-08..11): 20 rows a page, and the search ───────────────────────────────────────────────────────────
+
+const PG = wsLivePaged;
+/** Rows a page — the plan's number ("show 20 1st"), not read from the app. */
+const PAGE_SIZE = 20;
+
+/**
+ * [ORACLE] A PAGED person as a row must show them: their record read back from Firestore, pinned to the seeded values
+ * (nobody on PAGED has profile_data, so no CF renames them) and to the ONE people collection they were put in.
+ */
+async function pagedPersonOracle(who: PagedPersonKey): Promise<PersonCells> {
+  const p = PG.people[who];
+  const meta: any = await getDoc('participant metadata', p.id);
+  const fresh: any = await getDoc('new_user_data', p.id);
+  const [d, other] = p.source === 'metadata' ? [meta, fresh] : [fresh, meta];
+  expect(d, `precondition: ${who} is in ${p.source}`).toBeTruthy();
+  expect(other, `precondition: ${who} is in no other people collection`).toBeNull();
+  if (p.source === 'metadata') expect(d.profileid, `precondition: ${who}'s metadata carries their profileid`).toBe(p.id);
+  const cells = { name: String(d.name ?? '').trim(), phone: phoneCell(d), email: String(d.email ?? '').trim() };
+  expect(cells, `precondition: ${who} as seeded`).toEqual({ name: p.name, phone: `${p.cc} ${p.phone}`, email: p.email });
+  return cells;
+}
+
+/** Page `n` (1-based) of the rows, newest first — the test's own sort and slice. */
+const pageOf = (rows: readonly PagedCompletion[], n: number): PagedCompletion[] =>
+  newestFirst(rows).slice((n - 1) * PAGE_SIZE, n * PAGE_SIZE);
+
+/** The pager on page `n` of `total` rows: "Showing A–B of N" (en dash), "Page X of Y", the ends disabled. */
+async function expectPager(page: Page, n: number, total: number, label: string): Promise<void> {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const from = (n - 1) * PAGE_SIZE + 1;
+  const to = Math.min(n * PAGE_SIZE, total);
+  await expect(page.getByTestId('wlive-pager'), `${label}: the pagination bar`).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId('wlive-range'), `${label}: the range`).toHaveText(`Showing ${from}–${to} of ${total}`, { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-page'), `${label}: the page`).toHaveText(`Page ${n} of ${pages}`);
+  const prev = page.getByTestId('wlive-prev');
+  const next = page.getByTestId('wlive-next');
+  if (n === 1) await expect(prev, `${label}: Previous is disabled on page 1`).toBeDisabled();
+  else await expect(prev, `${label}: Previous is enabled`).toBeEnabled();
+  if (n === pages) await expect(next, `${label}: Next is disabled on the last page`).toBeDisabled();
+  else await expect(next, `${label}: Next is enabled`).toBeEnabled();
+}
+
+/**
+ * Page `n` of `rows` on screen: every column of exactly that slice, plus the pager — or, when the rows fit on one
+ * page, NO pagination bar at all.
+ */
+async function expectPagedView(page: Page, rows: readonly PagedCompletion[], n: number, label: string): Promise<void> {
+  if (rows.length > PAGE_SIZE) await expectPager(page, n, rows.length, label);
+  else {
+    expect(n, `${label}: the oracle asks for page 1 of a single page`).toBe(1);
+    await expect(page.getByTestId('wlive-pager'), `${label}: ${rows.length} rows fit on one page — no pagination bar`).toHaveCount(0, { timeout: 30_000 });
+  }
+  await expectRows(page, await rowsOracle(page, pageOf(rows, n), pagedPersonOracle), label);
+  await expect(page.getByTestId('wlive-no-match'), `${label}: not the no-match state`).toHaveCount(0);
+}
+
+type SearchField = 'name' | 'email' | 'phone';
+interface PagedSearch { term: string; field: SearchField; who: PagedPersonKey[] }
+const digitsOf = (s: string) => s.replace(/\D+/g, '');
+
+/**
+ * [PIVOT PIN] A search's expected people, DECLARED by the test, checked against the seeded people of PAGED: the term
+ * occurs in exactly `who`'s `field` (case-insensitive; for a phone, its digits within the shown number's digits) and
+ * in no other field of anyone — so the rows a search keeps can only be explained by that field.
+ */
+function pinSearch(s: PagedSearch): void {
+  const holds = (k: PagedPersonKey, f: SearchField): boolean => {
+    const p = PG.people[k];
+    if (f === 'phone') return !!digitsOf(s.term) && digitsOf(`${p.cc} ${p.phone}`).includes(digitsOf(s.term));
+    return (f === 'name' ? p.name : p.email).toLowerCase().includes(s.term.toLowerCase());
+  };
+  for (const f of ['name', 'email', 'phone'] as SearchField[]) {
+    expect(PG.order.filter(k => holds(k, f)), `precondition: "${s.term}" in the ${f} of exactly ${f === s.field ? s.who.join(', ') : 'nobody'}`)
+      .toEqual(f === s.field ? s.who : []);
+  }
+}
+
+/** The completions a search must keep: the declared people's, from the whole feed. */
+const keptBy = (s: PagedSearch, rows: readonly PagedCompletion[]) => rows.filter(c => s.who.includes(c.who));
 
 test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
@@ -221,7 +351,7 @@ test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI,
     await seedLiveWorld();
   });
   test.afterEach(() => assertNoFatal(guard, 'workshop live: no fatal console errors / pageerrors'));
-  test.afterAll(async () => { await clearLiveWorld(); });
+  test.afterAll(async () => { await Promise.all([clearLiveWorld(), clearLivePagedWorld()]); });
 
   // ===========================================================================================
   // WLV-01 — the Live button follows the Active chip's rule
@@ -351,6 +481,10 @@ test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI,
     await expect(page.getByTestId('wlive-empty')).toHaveCount(0);
     await expect(page.getByTestId('wlive-error')).toHaveCount(0);
     await expect(page.getByTestId('wlive-retry')).toHaveCount(0);
+    // The addition: 8 rows fit on one page, so there is no pagination bar; the search box is there, empty.
+    await expect(page.getByTestId('wlive-pager'), 'WLV-03: 8 rows fit on one page — no pagination bar').toHaveCount(0);
+    await expect(page.getByTestId('wlive-search'), 'WLV-03: the search box, empty').toHaveValue('');
+    await expect(page.getByTestId('wlive-no-match')).toHaveCount(0);
   });
 
   // ===========================================================================================
@@ -493,5 +627,207 @@ test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI,
     await openLive(page, L.LIVE);
     await expect(feedRows(page), 'WLV-07: the full feed').toHaveCount(wsLiveSeededCompletions.length, { timeout: 30_000 });
     await expect(page.getByTestId('wlive-error')).toHaveCount(0);
+  });
+
+  // ===========================================================================================
+  // WLV-08 — 20 rows a page, newest first, Previous / Next disabled at either end
+  // ===========================================================================================
+  test('WLV-08 page 1 is the 20 newest completions; Next shows the oldest ones and Previous comes back, each disabled at its end', async ({ page }) => {
+    await seedLivePagedWorld();
+    const all = wsLivePagedCompletions;
+    // [ORACLE PIN] what the two pages must add up to is what Firestore holds: 5 people, 26 completed sub challenges.
+    expect(await completedSubsInFirestore(PG.ID), 'precondition: PAGED holds 5 participant docs with 26 completed sub challenges')
+      .toEqual({ docs: 5, completed: all.length });
+    expect(all.length, 'precondition: 26 completions — a full page and 6 more').toBe(26);
+    expect(new Set(all.map(c => c.at.getTime())).size, 'precondition: every completion has its own instant (a total order)').toBe(all.length);
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, PG.ID);
+    await expect(page.getByTestId('wlive-title'), 'WLV-08: the workshop title').toHaveText(PG.title, { timeout: 30_000 });
+
+    // Page 1 — the 20 newest.
+    await expectPagedView(page, all, 1, 'WLV-08 page 1');
+    await expect(page.getByTestId('wlive-range'), 'WLV-08: spelled out').toHaveText('Showing 1–20 of 26');
+    await expect(page.getByTestId('wlive-page')).toHaveText('Page 1 of 2');
+    await expect(page.getByTestId('wlive-prev')).toHaveText('Previous');
+    await expect(page.getByTestId('wlive-next')).toHaveText('Next');
+    await expect(page.getByTestId('wlive-count'), 'WLV-08: the header counts the whole feed, not the page').toHaveText(countText(all.length));
+    await expect(page.getByTestId('wlive-search'), 'WLV-08: no search yet').toHaveValue('');
+
+    // Next — the 6 oldest, the oldest last.
+    await page.getByTestId('wlive-next').click();
+    await expectPagedView(page, all, 2, 'WLV-08 page 2');
+    await expect(page.getByTestId('wlive-range'), 'WLV-08: spelled out').toHaveText('Showing 21–26 of 26');
+    await expect(page.getByTestId('wlive-page')).toHaveText('Page 2 of 2');
+    const oldest = newestFirst(all)[all.length - 1];
+    expect(oldest, 'WLV-08: the oracle\'s oldest is the first seeded completion').toBe(all[0]);
+    await expect(feedRows(page).last().getByTestId('wlive-completed-at'), 'WLV-08: the oldest completion is the last row')
+      .toHaveText(await whenCell(page, oldest.at));
+    await expect(page.getByTestId('wlive-count'), 'WLV-08: still the whole feed').toHaveText(countText(all.length));
+
+    // Previous — page 1 again.
+    await page.getByTestId('wlive-prev').click();
+    await expectPagedView(page, all, 1, 'WLV-08 back on page 1');
+  });
+
+  // ===========================================================================================
+  // WLV-09 — search by part of a name, an email or a phone; typing goes back to page 1; clear restores
+  // ===========================================================================================
+  test('WLV-09 searching part of a name, an email or a phone (any format) keeps exactly that person\'s completions, newest first, from page 1', async ({ page }) => {
+    await seedLivePagedWorld();
+    const all = wsLivePagedCompletions;
+    const crew: PagedSearch = { term: 'CREW', field: 'email', who: ['asha', 'meera', 'chen', 'dora'] };
+    const crewOn: PagedSearch = { ...crew, term: 'CREW.' };
+    const singles: PagedSearch[] = [
+      { term: 'qUINla', field: 'name', who: ['meera'] },                 // part of a name, mixed case
+      { term: 'ZENITH.Chen', field: 'email', who: ['chen'] },            // part of an email (a new_user_data person)
+      { term: '+91 91234-56780', field: 'phone', who: ['dora'] },        // the whole number, with "+", code and a dash
+      { term: '4123 45678', field: 'phone', who: ['emil'] },             // digits with a space, no code
+    ];
+    for (const s of [crew, crewOn, ...singles]) pinSearch(s);
+    expect(keptBy(crew, all).length, 'precondition: "crew" keeps 21 rows — still two pages').toBe(21);
+    // [PIVOT PIN] every person has rows on BOTH pages, so a search that looked only at the page on screen would miss some.
+    const full = newestFirst(all);
+    for (const k of PG.order) {
+      expect([full.slice(0, PAGE_SIZE).some(c => c.who === k), full.slice(PAGE_SIZE).some(c => c.who === k)],
+        `precondition: ${k} has rows on page 1 and on page 2`).toEqual([true, true]);
+    }
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, PG.ID);
+    await expectPagedView(page, all, 1, 'WLV-09 before');
+    // On page 2 first: typing must bring the list back to page 1.
+    await page.getByTestId('wlive-next').click();
+    await expectPager(page, 2, all.length, 'WLV-09 on page 2');
+
+    const box = page.getByTestId('wlive-search');
+    await box.fill(crew.term);
+    await expectPagedView(page, keptBy(crew, all), 1, 'WLV-09 "CREW" typed on page 2 → page 1 of the 21 matches');
+    await expect(page.getByTestId('wlive-range'), 'WLV-09: spelled out').toHaveText('Showing 1–20 of 21');
+    await expect(page.getByTestId('wlive-count'), 'WLV-09: the header still counts the whole feed').toHaveText(countText(all.length));
+    await expect(page.getByTestId('wlive-search-clear'), 'WLV-09: the clear button shows while the box holds text').toBeVisible();
+    await page.getByTestId('wlive-next').click();
+    await expectPagedView(page, keptBy(crew, all), 2, 'WLV-09 "CREW" page 2');
+    // Typing on from page 2 — the same 21 rows match — goes back to page 1 again.
+    await box.press('End');
+    await box.pressSequentially('.');
+    await expect(box).toHaveValue(crewOn.term);
+    await expectPagedView(page, keptBy(crewOn, all), 1, 'WLV-09 "CREW." typed on page 2 → page 1');
+
+    for (const s of singles) {
+      await box.fill(s.term);
+      await expectPagedView(page, keptBy(s, all), 1, `WLV-09 "${s.term}" (${s.field}) → ${s.who.join(', ')} only`);
+      await expect(page.getByTestId('wlive-name'), `WLV-09 "${s.term}": every row is ${s.who[0]}'s`)
+        .toHaveText(keptBy(s, all).map(() => PG.people[s.who[0]].name));
+    }
+
+    // The box's clear button: empty box, the full list, page 1.
+    await page.getByTestId('wlive-search-clear').click();
+    await expect(box, 'WLV-09: the box is empty').toHaveValue('');
+    await expect(page.getByTestId('wlive-search-clear'), 'WLV-09: no clear button on an empty box').toHaveCount(0);
+    await expectPagedView(page, all, 1, 'WLV-09 cleared → the full list on page 1');
+  });
+
+  // ===========================================================================================
+  // WLV-10 — a search that matches nobody: the no-match state, and its Clear search
+  // ===========================================================================================
+  test('WLV-10 a search that matches nobody shows "No completions match your search"; Clear search restores the full list', async ({ page }) => {
+    await seedLivePagedWorld();
+    const all = wsLivePagedCompletions;
+    const nobody = 'zz nobody qx';
+    // A challenge name the full list shows on page 1 — but the search reads people's names, phones and emails only.
+    const challenge = L.sub.quiz;
+    expect(pageOf(all, 1).some(c => c.sub === challenge), `precondition: "${challenge}" rows are on page 1`).toBe(true);
+    for (const term of [nobody, challenge]) {
+      expect(PG.order.filter(k => `${PG.people[k].name}\n${PG.people[k].email}`.toLowerCase().includes(term.toLowerCase())),
+        `precondition: "${term}" is in nobody's name or email`).toEqual([]);
+      expect(digitsOf(term), `precondition: "${term}" has no digits to match a phone`).toBe('');
+    }
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, PG.ID);
+    await expectPagedView(page, all, 1, 'WLV-10 before');
+    await page.getByTestId('wlive-next').click();
+    await expectPager(page, 2, all.length, 'WLV-10 on page 2');
+
+    const box = page.getByTestId('wlive-search');
+    const none = page.getByTestId('wlive-no-match');
+    for (const term of [nobody, challenge]) {
+      await box.fill(term);
+      await expect(none, `WLV-10 "${term}": the no-match state`).toBeVisible({ timeout: 30_000 });
+      await expect(none).toContainText('No completions match your search');
+      await expect(feedRows(page), `WLV-10 "${term}": no rows`).toHaveCount(0);
+      await expect(page.getByTestId('wlive-pager'), `WLV-10 "${term}": no pagination bar`).toHaveCount(0);
+      await expect(page.getByTestId('wlive-empty'), `WLV-10 "${term}": not the empty state (the workshop has completions)`).toHaveCount(0);
+      await expect(page.getByTestId('wlive-count'), `WLV-10 "${term}": the header still counts the whole feed`).toHaveText(countText(all.length));
+    }
+
+    const clear = page.getByTestId('wlive-no-match-clear');
+    await expect(clear).toHaveText('Clear search');
+    await clear.click();
+    await expect(box, 'WLV-10: the box is empty').toHaveValue('');
+    await expect(none, 'WLV-10: the no-match state is gone').toHaveCount(0);
+    await expectPagedView(page, all, 1, 'WLV-10 cleared → the full list on page 1');
+  });
+
+  // ===========================================================================================
+  // WLV-11 — live arrivals with pages: the pager appears past 20; page 1 gets the new top row; page 2 stays put
+  // ===========================================================================================
+  test('WLV-11 a live completion tops page 1 (the pager appears past 20) and, on page 2, the user stays on page 2', async ({ page }) => {
+    await seedLivePagedWorld(PAGE_SIZE);
+    const seeded = wsLivePagedCompletions.slice(0, PAGE_SIZE);
+    const [a1, a2, a3] = wsLivePagedArrivals;
+    // [ORACLE PIN] exactly one full page in Firestore; Farah (the arrival) has no participant doc yet.
+    expect(await completedSubsInFirestore(PG.ID), 'precondition: PAGED holds exactly 20 completions — one full page')
+      .toEqual({ docs: 5, completed: PAGE_SIZE });
+    expect(await getDoc('participant workshop', PG.pw('farah')), 'precondition: Farah is not on PAGED yet').toBeNull();
+    const newestSeeded = Math.max(...seeded.map(c => c.at.getTime()));
+    expect([a1.at.getTime() > newestSeeded, a2.at.getTime() > a1.at.getTime(), a3.at.getTime() > a2.at.getTime()],
+      'precondition: each arrival is newer than everything before it')
+      .toEqual([true, true, true]);
+    // [PIVOT PIN] each arrival's sub challenge differs from the top row it displaces, so a top-row check waits for it.
+    expect([newestFirst(seeded)[0].sub !== a1.sub, a1.sub !== a2.sub, a2.sub !== a3.sub],
+      'precondition: every arrival changes the top row\'s sub challenge').toEqual([true, true, true]);
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, PG.ID);
+    await expectPagedView(page, seeded, 1, 'WLV-11 20 rows (one page, no pager)');
+    await expect(page.getByTestId('wlive-count')).toHaveText(countText(PAGE_SIZE));
+    await page.evaluate(() => { (window as any).__wlvSamePage = 'kept'; });
+    const top = feedRows(page).first();
+
+    // 1) A 21st completion, on page 1: it is the new top row and the pager appears.
+    await addLivePagedArrivals(1);
+    let feed = [...seeded, a1];
+    await expect(top.getByTestId('wlive-sub'), 'WLV-11: the arrival tops page 1').toHaveText(a1.sub, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-name'), 'WLV-11: the arrival\'s name fills in').toHaveText(PG.people.farah.name, { timeout: 30_000 });
+    await expectPagedView(page, feed, 1, 'WLV-11 after the 21st');
+    await expect(page.getByTestId('wlive-range'), 'WLV-11: spelled out').toHaveText('Showing 1–20 of 21');
+    await expect(page.getByTestId('wlive-page'), 'WLV-11: a second page now').toHaveText('Page 1 of 2');
+    await expect(page.getByTestId('wlive-count')).toHaveText(countText(21));
+
+    // 2) Another, still on page 1: on top again, the total goes up.
+    await addLivePagedArrivals(2);
+    feed = [...seeded, a1, a2];
+    await expect(page.getByTestId('wlive-range'), 'WLV-11: the total goes up').toHaveText('Showing 1–20 of 22', { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-sub'), 'WLV-11: the second arrival tops page 1').toHaveText(a2.sub);
+    await expectPagedView(page, feed, 1, 'WLV-11 after the 22nd');
+
+    // 3) On page 2, a third arrives: the user stays on page 2 while its range and rows move.
+    await page.getByTestId('wlive-next').click();
+    await expectPagedView(page, feed, 2, 'WLV-11 page 2 before the 23rd');
+    await addLivePagedArrivals(3);
+    feed = [...seeded, a1, a2, a3];
+    await expect(page.getByTestId('wlive-range'), 'WLV-11: still page 2, one more row on it').toHaveText('Showing 21–23 of 23', { timeout: 30_000 });
+    await expectPagedView(page, feed, 2, 'WLV-11 page 2 after the 23rd');
+    await expect(page.getByTestId('wlive-page'), 'WLV-11: the user stays on page 2').toHaveText('Page 2 of 2');
+    await expect(page.getByTestId('wlive-name').filter({ hasText: PG.people.farah.name }), 'WLV-11: the arrivals are not on page 2').toHaveCount(0);
+    await expect(page.getByTestId('wlive-count')).toHaveText(countText(23));
+    expect(await page.evaluate(() => (window as any).__wlvSamePage), 'WLV-11: no reload happened').toBe('kept');
+
+    // Back to page 1: the newest arrival on top.
+    await page.getByTestId('wlive-prev').click();
+    await expectPagedView(page, feed, 1, 'WLV-11 back on page 1');
+    await expect(top.getByTestId('wlive-sub'), 'WLV-11: the third arrival tops page 1').toHaveText(a3.sub);
   });
 });

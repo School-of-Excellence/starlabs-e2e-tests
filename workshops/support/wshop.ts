@@ -3659,3 +3659,146 @@ export async function clearLiveWorld(): Promise<void> {
     drop('participant metadata', L.people.late.id),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-19 — Workshop Live, addition: 20 rows a page and a search by name / phone / email
+// (workshop-live.spec.ts WLV-08..11; the plan's last section, "Addition: pagination and search").
+//
+// PAGED — a live workshop of its own (app switch on, LIVE's steps; NO testrunid on the config doc, for WS-01) with 26
+// completions by five people, one completion per sub challenge per person, each at its own instant: completion i
+// (0 = oldest) is person ORDER[i % 5]'s sub challenge ⌊i / 5⌋, stamped on 1 Oct + i days. So:
+//   • 26 rows → page 1 holds the 20 newest, page 2 the 6 oldest, and every person's rows sit on BOTH pages (a search
+//     that only looked at the page on screen would miss some)
+//   • names, emails and phones are distinct; the WLV-09 search terms each occur in exactly one person's name / email /
+//     phone (pinned by the spec), except "crew": four of the five emails carry it (21 rows, still two pages) and Emil's
+//     does not — the multi-person search and its control
+//   • nobody has profile_data, so no CF rewrites their names (unlike p0/p1 — see wsMetaNames). Four are in
+//     `participant metadata` only; Chen is in new_user_data only (camelCase countryCode), so the search covers both
+//     ways the screen looks people up
+//   • Farah is the live arrival: her metadata is seeded, but her participant workshop doc is written only WHILE THE
+//     PAGE IS OPEN (addLivePagedArrivals), each arrival newer than every seeded completion
+// seedLivePagedWorld(n) seeds only the n OLDEST completions (WLV-11 starts from exactly 20 — one full page, no pager).
+// PRECONDITION writes only; clearLivePagedWorld removes everything by id. No ATC collection is touched.
+// =================================================================================================
+export type PagedPersonKey = 'asha' | 'meera' | 'chen' | 'dora' | 'emil' | 'farah';
+export interface PagedPerson { id: string; name: string; email: string; cc: string; phone: string; source: 'metadata' | 'new_user_data' }
+export interface PagedCompletion { who: PagedPersonKey; main: string; sub: string; at: Date }
+
+export const wsLivePaged = {
+  ID: `${RUN}_W_wlv_paged`,
+  title: `Live Paged Workshop ${RUN}`,
+  people: {
+    asha: { id: `${RUN}_pf_wlvp_asha`, name: `WLV Asha Rao ${RUN}`, email: `asha.crew.${RUN}@example.com`, cc: '+91', phone: '9000011111', source: 'metadata' },
+    meera: { id: `${RUN}_pf_wlvp_meera`, name: `WLV Meera Quinlan ${RUN}`, email: `mq.crew.${RUN}@example.com`, cc: '+91', phone: '9000022222', source: 'metadata' },
+    chen: { id: `${RUN}_pf_wlvp_chen`, name: `WLV Chen Wu ${RUN}`, email: `zenith.chen.crew.${RUN}@example.com`, cc: '+44', phone: '7700900456', source: 'new_user_data' },
+    dora: { id: `${RUN}_pf_wlvp_dora`, name: `WLV Dora Silva ${RUN}`, email: `dora.crew.${RUN}@example.com`, cc: '+91', phone: '9123456780', source: 'metadata' },
+    emil: { id: `${RUN}_pf_wlvp_emil`, name: `WLV Emil Berg ${RUN}`, email: `emil.berg.${RUN}@example.com`, cc: '+61', phone: '412345678', source: 'metadata' },
+    farah: { id: `${RUN}_pf_wlvp_farah`, name: `WLV Farah Arrival ${RUN}`, email: `farah.arrival.${RUN}@example.com`, cc: '+91', phone: '9555512345', source: 'metadata' },
+  } as Record<PagedPersonKey, PagedPerson>,
+  /** The five people with seeded completions, in the order completion i cycles through them. */
+  order: ['asha', 'meera', 'chen', 'dora', 'emil'] as PagedPersonKey[],
+  pw: (who: PagedPersonKey) => `${RUN}_pw_wlvp_${who}`,
+};
+
+/** LIVE's six sub challenges as the screen names them (config `heading: subheading` / sub name), with their ids. */
+const WLVP_SUBS = [
+  { id: WLV.M1S1, main: wsLive.main.one, sub: wsLive.sub.welcome },
+  { id: WLV.M1S2, main: wsLive.main.one, sub: wsLive.sub.reflection },
+  { id: WLV.M1S3, main: wsLive.main.one, sub: wsLive.sub.bonus },
+  { id: WLV.M2S1, main: wsLive.main.two, sub: wsLive.sub.quiz },
+  { id: WLV.M2S2, main: wsLive.main.two, sub: wsLive.sub.form },
+  { id: WLV.M2S3, main: wsLive.main.two, sub: wsLive.sub.note },
+];
+const wlvpSubId = (c: PagedCompletion): string => WLVP_SUBS.find(s => s.sub === c.sub)!.id;
+
+/** Every completion the seed can put on PAGED, OLDEST FIRST (26; distinct local instants, one a day from 1 Oct 2026). */
+export const wsLivePagedCompletions: PagedCompletion[] = Array.from({ length: 26 }, (_, i) => {
+  const s = WLVP_SUBS[Math.floor(i / 5)];
+  return { who: wsLivePaged.order[i % 5], main: s.main, sub: s.sub, at: new Date(2026, 9, 1 + i, 8 + (i % 10), (i * 7) % 60, 0, 0) };
+});
+
+/**
+ * Farah's completions, in the order WLV-11 writes them while the page is open — each newer than everything before, and
+ * each on a sub challenge other than the row it displaces from the top (20 seeded: the newest is Emil's quiz), so a
+ * "the top row changed" check cannot pass before the arrival lands.
+ */
+export const wsLivePagedArrivals: PagedCompletion[] = [
+  { who: 'farah', main: WLVP_SUBS[0].main, sub: WLVP_SUBS[0].sub, at: new Date(2026, 10, 1, 9, 10, 0, 0) },
+  { who: 'farah', main: WLVP_SUBS[4].main, sub: WLVP_SUBS[4].sub, at: new Date(2026, 10, 2, 10, 20, 0, 0) },
+  { who: 'farah', main: WLVP_SUBS[1].main, sub: WLVP_SUBS[1].sub, at: new Date(2026, 10, 3, 11, 30, 0, 0) },
+];
+
+/** One person's participant workshop doc on PAGED: LIVE's steps with exactly these sub challenges completed. */
+function pagedPwDoc(db: any, T: any, who: PagedPersonKey, mine: PagedCompletion[]): Record<string, any> {
+  const subs: Record<string, Record<string, any>> = {};
+  for (const c of mine) subs[wlvpSubId(c)] = { status: 'completed', completed: T.fromDate(c.at) };
+  return {
+    docid: wsLivePaged.pw(who), profileid: wsLivePaged.people[who].id,
+    workshopref: db.collection('workshopconfiguration').doc(wsLivePaged.ID),
+    challenges: liveProgress(subs), created: T.fromDate(new Date(2026, 8, 30, 9, 0, 0, 0)), testrunid: RUN, _testdata: true,
+  };
+}
+
+/** Seed PAGED with its `count` OLDEST completions (idempotent: full-document set()); Farah's doc is removed. */
+export async function seedLivePagedWorld(count: number = wsLivePagedCompletions.length): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const P = wsLivePaged;
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  const seeded = wsLivePagedCompletions.slice(0, count);
+  const person = (who: PagedPersonKey) => {
+    const p = P.people[who];
+    const meta = db.collection('participant metadata').doc(p.id);
+    const fresh = db.collection('new_user_data').doc(p.id);
+    // each person in exactly ONE people collection (a leftover in the other would change which record is shown)
+    return p.source === 'new_user_data'
+      ? [meta.delete().catch(() => undefined), fresh.set({
+        docid: p.id, uid: `${p.id}_u`, name: p.name, email: p.email, phonenumber: p.phone, countryCode: p.cc,
+        created: T.fromDate(new Date(2026, 0, 6, 9, 0, 0, 0)), enable: true, status: 'active', tags: [], ...tag })]
+      : [fresh.delete().catch(() => undefined), meta.set({
+        docid: p.id, profileid: p.id, name: p.name, email: p.email, phonenumber: p.phone, countrycode: p.cc, ...tag })];
+  };
+  await Promise.all([
+    db.collection('workshopconfiguration').doc(P.ID).set({
+      docid: P.ID, atcmodel: null, categorybased: false, created: day(-3), workshoptype: 'liveworkshop',
+      active: true, webactive: false, eiflixmobileactive: false, workshopcompleted: false,
+      detailpage: { type: 'workshop', title: P.title, shortdescription: 'seeded workshop live (paged)',
+        workshopStartDate: day(-2), workshopEndDate: day(8), registrationStartDate: day(-6), registrationEndDate: day(0) },
+      challenges: liveConfigChallenges(),
+    }),
+    ...(Object.keys(P.people) as PagedPersonKey[]).flatMap(person),
+    ...P.order.map((who) => {
+      const ref = db.collection('participant workshop').doc(P.pw(who));
+      const mine = seeded.filter(c => c.who === who);
+      return mine.length ? ref.set(pagedPwDoc(db, T, who, mine)) : ref.delete().catch(() => undefined);
+    }),
+    db.collection('participant workshop').doc(P.pw('farah')).delete().catch(() => undefined),
+  ]);
+}
+
+/**
+ * WLV-11's arrivals: Farah's participant workshop doc on PAGED with her first `k` arrivals completed — k = 1 creates
+ * the doc (a person not on screen yet), a later k rewrites her whole steps list, as the apps write it.
+ */
+export async function addLivePagedArrivals(k: number): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('participant workshop').doc(wsLivePaged.pw('farah'))
+    .set(pagedPwDoc(db, admin.firestore.Timestamp, 'farah', wsLivePagedArrivals.slice(0, k)));
+}
+
+/** Remove PAGED's world by id (afterAll; the run-tag sweep is the backstop for the tagged docs). */
+export async function clearLivePagedWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const P = wsLivePaged;
+  const who = Object.keys(P.people) as PagedPersonKey[];
+  await Promise.all([
+    drop('workshopconfiguration', P.ID),
+    ...who.map(w => drop('participant workshop', P.pw(w))),
+    ...who.map(w => drop('participant metadata', P.people[w].id)),
+    ...who.map(w => drop('new_user_data', P.people[w].id)),
+  ]);
+}
