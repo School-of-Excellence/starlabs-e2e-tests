@@ -3376,3 +3376,286 @@ export async function clearPersonTagWorld(): Promise<void> {
     setEnrolledTags(wsIds.ENR_B, null).catch(() => undefined),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-19 — Workshop Live: the Live button on /workshops and the live feed at /workshoplive/:id
+// (workshop-live.spec.ts, WLV-*). Plan: starlabs-angular specs/plans/2026-11-19-workshop-live.md.
+//
+// Three workshops of this run's OWN, deliberately WITHOUT testrunid (WS-01 counts exactly the base seed's three
+// run-tagged workshopconfiguration docs); clearLiveWorld deletes them by id:
+//   LIVE     app switch on, not completed → Live button; the feed under test (two main challenges + a zoom call)
+//   EMPTY    web switch only, not completed → Live button; ONE person whose steps are finished / in review / untouched
+//            (and whose zoom call is completed), so the empty state means "nothing completed", not "no documents"
+//   DONE_ON  marked completed while its app and EiFlix mobile switches are still on → NO Live button (Active chip rule)
+// plus a fourth workshop id, OTHER, with no config doc: p0's step there is the NEWEST completion of all, so a screen
+// that ever read by person instead of by workshop would put it at the top of LIVE's feed. With no config doc,
+// /workshoplive/OTHER is also the "no such workshop" error; WLV-06 then creates one (createLiveOtherWorkshop) and
+// Retry must recover. (The base seed's PW_A — p0 on W_DASH, a completed step — is a second other-workshop control.)
+//
+// The people on LIVE (participant workshop docs, run-tagged; no spec counts that collection by tag):
+//   p0, p1    existing users — `participant metadata` from seed-workshops.js; names are CF-owned, so specs assert
+//             wsMetaNames after alignWorkshopMetadataNames()
+//   newUser   ONLY in new_user_data (camelCase countryCode, '+44'); no participant metadata, no profile_data
+//   ghost     in neither collection → "Unknown", with "—" for phone and email
+//   late      `participant metadata` ONLY (no profile_data, so no CF renames them). Their participant workshop doc is
+//             written by WLV-04 WHILE THE PAGE IS OPEN (addLiveLateParticipant) — never by the seed
+//
+// LIVE's steps (the config doc; sub names in `name`, as the v2 editor writes them):
+//   m1 'Live Module One' / 'Basics'    s1 name 'WLV Welcome Video' + heading 'Video' (the name wins), s2 'WLV First
+//                                      Reflection' (an assignment), s3 'WLV Bonus Audio'
+//   m2 'Live Module Two' / 'Practice'  s1 'WLV Practice Quiz', s2 'WLV Practice Form', s3 heading ONLY 'WLV Practice Note'
+//   zoom                               a main challenge with no sub challenges
+// Pivots in the participant copies:
+//   • newUser's copy has DRIFTED (as when the config sync does not run): mains and subs in another order, m2's
+//     heading stale and the completed sub's name stale ('WLV Stale Copy Name') → the screen must name it from the
+//     config by challengeid ('Live Module Two: Practice' / 'WLV Practice Quiz'), never from the copy or by index
+//   • p0's copy has a sub the config no longer has ('WLV Retired Step') → named from the copy (the fallback)
+//   • p0's 'WLV Bonus Audio' is completed with NO time → last row, "—"
+//   • p1: a 'finished' step and an 'inreview' step (both stamped NEWER than every completion) and a completed zoom
+//     call (a main challenge, not a sub) → none of them is a row
+// PRECONDITION writes only: the specs assert what the APP renders from them. No ATC collection is touched.
+// =================================================================================================
+const WLV = {
+  M1: `${RUN}_wlv_m1`, M1S1: `${RUN}_wlv_m1_s1`, M1S2: `${RUN}_wlv_m1_s2`, M1S3: `${RUN}_wlv_m1_s3`,
+  M1S4_RETIRED: `${RUN}_wlv_m1_s4_retired`,
+  M2: `${RUN}_wlv_m2`, M2S1: `${RUN}_wlv_m2_s1`, M2S2: `${RUN}_wlv_m2_s2`, M2S3: `${RUN}_wlv_m2_s3`,
+  ZOOM: `${RUN}_wlv_zoom`,
+  /** OTHER's own step — an id LIVE's config does not have, so a leaked row would read 'WLV Other Workshop Step'. */
+  OTHER_S1: `${RUN}_wlv_other_s1`,
+};
+
+export const wsLive = {
+  LIVE: `${RUN}_W_wlv_live`,
+  EMPTY: `${RUN}_W_wlv_empty`,
+  DONE_ON: `${RUN}_W_wlv_done_on`,
+  /** A workshop id with NO workshopconfiguration doc — only p0's newest completion points at it. */
+  OTHER: `${RUN}_W_wlv_other`,
+  titles: {
+    LIVE: `Live Feed Workshop ${RUN}`,
+    EMPTY: `Live Empty Workshop ${RUN}`,
+    DONE_ON: `Completed Switch On Workshop ${RUN}`,
+    /** OTHER's title once createLiveOtherWorkshop() gives it a config doc (WLV-06's Retry). */
+    OTHER: `Live Other Workshop ${RUN}`,
+  },
+  people: {
+    newUser: { id: `${RUN}_pf_wlv_new`, name: `WLV Nina NewUser ${RUN}`, email: `wlv.nina.${RUN}@example.com`, cc: '+44', phone: '7700900123' },
+    ghost: { id: `${RUN}_pf_wlv_ghost` },
+    late: { id: `${RUN}_pf_wlv_late`, name: `WLV Lata Late ${RUN}`, email: `wlv.lata.${RUN}@example.com`, cc: '+91', phone: '9811100022' },
+  },
+  /** participant workshop doc ids. */
+  pw: {
+    p0: `${RUN}_pw_wlv_p0`, p1: `${RUN}_pw_wlv_p1`, newUser: `${RUN}_pw_wlv_new`, ghost: `${RUN}_pw_wlv_ghost`,
+    late: `${RUN}_pw_wlv_late`, emptyP0: `${RUN}_pw_wlv_empty_p0`, otherP0: `${RUN}_pw_wlv_other_p0`,
+  },
+  /** The main challenge as the screen names it: `heading: subheading` from the CONFIG. */
+  main: { one: 'Live Module One: Basics', two: 'Live Module Two: Practice' },
+  sub: {
+    welcome: 'WLV Welcome Video', reflection: 'WLV First Reflection', bonus: 'WLV Bonus Audio', retired: 'WLV Retired Step',
+    quiz: 'WLV Practice Quiz', form: 'WLV Practice Form', note: 'WLV Practice Note',
+    /** Never on screen: the drifted copy's stale names, and the other workshop's step. */
+    stale: 'WLV Stale Copy Name', staleMain: 'Old Module Heading', other: 'WLV Other Workshop Step',
+  },
+  /** Fixed local instants (seed-time Node and the test browser share the machine's zone). */
+  at: {
+    p0Retired: new Date(2026, 10, 1, 7, 30, 0, 0),
+    p0Welcome: new Date(2026, 10, 2, 9, 5, 0, 0),
+    p1Welcome: new Date(2026, 10, 3, 10, 15, 0, 0),
+    p0ReflectionSubmitted: new Date(2026, 10, 3, 8, 0, 0, 0),   // `reviewed` = submitted for review, not the completion
+    p0Reflection: new Date(2026, 10, 4, 14, 20, 0, 0),          // `completed` = the approval time
+    newQuiz: new Date(2026, 10, 5, 16, 45, 0, 0),
+    p1Form: new Date(2026, 10, 6, 18, 30, 0, 0),
+    ghostNote: new Date(2026, 10, 7, 7, 50, 0, 0),
+    // negative controls — each NEWER than every real completion, so a leak would sit at the top
+    p1Zoom: new Date(2026, 10, 9, 9, 0, 0, 0),
+    p1Finished: new Date(2026, 10, 10, 12, 0, 0, 0),
+    p1InReview: new Date(2026, 10, 10, 13, 0, 0, 0),
+    otherWorkshop: new Date(2026, 10, 11, 10, 0, 0, 0),
+    // WLV-04's arrivals, written while the page is open — newer still
+    p1QuizLive: new Date(2026, 10, 12, 8, 10, 0, 0),
+    lateWelcome: new Date(2026, 10, 13, 11, 25, 0, 0),
+  },
+};
+
+export type LivePersonKey = 'p0' | 'p1' | 'newUser' | 'ghost' | 'late';
+export interface LiveCompletion { who: LivePersonKey; main: string; sub: string; at: Date | null }
+
+/** Every completion the seed puts on LIVE (in no particular order — the spec sorts). */
+export const wsLiveSeededCompletions: LiveCompletion[] = [
+  { who: 'p0', main: wsLive.main.one, sub: wsLive.sub.retired, at: wsLive.at.p0Retired },
+  { who: 'p0', main: wsLive.main.one, sub: wsLive.sub.welcome, at: wsLive.at.p0Welcome },
+  { who: 'p1', main: wsLive.main.one, sub: wsLive.sub.welcome, at: wsLive.at.p1Welcome },
+  { who: 'p0', main: wsLive.main.one, sub: wsLive.sub.reflection, at: wsLive.at.p0Reflection },
+  { who: 'newUser', main: wsLive.main.two, sub: wsLive.sub.quiz, at: wsLive.at.newQuiz },
+  { who: 'p1', main: wsLive.main.two, sub: wsLive.sub.form, at: wsLive.at.p1Form },
+  { who: 'ghost', main: wsLive.main.two, sub: wsLive.sub.note, at: wsLive.at.ghostNote },
+  { who: 'p0', main: wsLive.main.one, sub: wsLive.sub.bonus, at: null },
+];
+
+/** The two completions WLV-04 writes while the page is open, in the order it writes them. */
+export const wsLiveArrivals: { p1Quiz: LiveCompletion; late: LiveCompletion } = {
+  p1Quiz: { who: 'p1', main: wsLive.main.two, sub: wsLive.sub.quiz, at: wsLive.at.p1QuizLive },
+  late: { who: 'late', main: wsLive.main.one, sub: wsLive.sub.welcome, at: wsLive.at.lateWelcome },
+};
+
+/** LIVE's (and EMPTY's) config steps. */
+function liveConfigChallenges(): any[] {
+  const S = wsLive.sub;
+  return [
+    { type: 'challenge', challengeid: WLV.M1, heading: 'Live Module One', subheading: 'Basics', challenges: [
+      { type: 'video', challengeid: WLV.M1S1, name: S.welcome, heading: 'Video', status: '' },
+      { type: 'assignment', assignmenttype: 'question', submissionformat: 'text', challengeid: WLV.M1S2, name: S.reflection, status: '' },
+      { type: 'audio', challengeid: WLV.M1S3, name: S.bonus, status: '' },
+    ] },
+    { type: 'challenge', challengeid: WLV.M2, heading: 'Live Module Two', subheading: 'Practice', challenges: [
+      { type: 'quiz', challengeid: WLV.M2S1, name: S.quiz, status: '' },
+      { type: 'form', challengeid: WLV.M2S2, name: S.form, status: '' },
+      { type: 'note', challengeid: WLV.M2S3, heading: S.note, status: '' },
+    ] },
+    { type: 'zoomcall', challengeid: WLV.ZOOM, heading: 'Live Call', subheading: 'with the coach', status: 'pending' },
+  ];
+}
+
+/** A participant's copy of the steps: the config with per-challengeid fields merged on (status, completed, …). */
+function liveProgress(subs: Record<string, Record<string, any>>, mains: Record<string, Record<string, any>> = {}): any[] {
+  return liveConfigChallenges().map(m => ({
+    ...m, ...(mains[m.challengeid] || {}),
+    ...(Array.isArray(m.challenges) ? { challenges: m.challenges.map((s: any) => ({ ...s, ...(subs[s.challengeid] || {}) })) } : {}),
+  }));
+}
+
+/** p1's copy, as seeded; `quizAt` additionally completes m2/s1 (WLV-04's first arrival). */
+function liveP1Progress(T: any, quizAt?: Date): any[] {
+  const done = (d: Date) => ({ status: 'completed', completed: T.fromDate(d) });
+  return liveProgress({
+    [WLV.M1S1]: done(wsLive.at.p1Welcome),
+    [WLV.M1S2]: { status: 'finished', finished: T.fromDate(wsLive.at.p1Finished) },
+    [WLV.M1S3]: { status: 'inreview', reviewed: T.fromDate(wsLive.at.p1InReview) },
+    [WLV.M2S2]: done(wsLive.at.p1Form),
+    ...(quizAt ? { [WLV.M2S1]: done(quizAt) } : {}),
+  }, { [WLV.ZOOM]: { status: 'completed', completed: T.fromDate(wsLive.at.p1Zoom) } });
+}
+
+/** Seed the world above (idempotent: full-document set()). Also removes WLV-04's late doc, so every case starts clean. */
+export async function seedLiveWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const L = wsLive;
+  const P = L.people;
+  const done = (d: Date) => ({ status: 'completed', completed: T.fromDate(d) });
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  const cfg = (id: string) => db.collection('workshopconfiguration').doc(id);
+  // No testrunid on the config docs (WS-01) — same shape as seedListFilterWorkshops.
+  const workshop = (id: string, title: string, flags: Record<string, any>, withSteps: boolean) => cfg(id).set({
+    docid: id, atcmodel: null, categorybased: false, created: day(-3), workshoptype: 'liveworkshop',
+    detailpage: { type: 'workshop', title, shortdescription: 'seeded workshop live',
+      workshopStartDate: day(-2), workshopEndDate: day(8), registrationStartDate: day(-6), registrationEndDate: day(0) },
+    ...flags, ...(withSteps ? { challenges: liveConfigChallenges() } : {}),
+  });
+  const pw = (id: string, profileid: string, workshopId: string, challenges: any[]) =>
+    db.collection('participant workshop').doc(id).set({
+      docid: id, profileid, workshopref: cfg(workshopId), challenges, created: day(-2), ...tag,
+    });
+
+  // p0 on LIVE: three dated completions (one on a sub the config no longer has), one undated
+  const p0 = liveProgress({
+    [WLV.M1S1]: done(L.at.p0Welcome),
+    [WLV.M1S2]: { ...done(L.at.p0Reflection), reviewed: T.fromDate(L.at.p0ReflectionSubmitted) },
+    [WLV.M1S3]: { status: 'completed' },
+  });
+  p0[0].challenges.push({ type: 'video', challengeid: WLV.M1S4_RETIRED, name: L.sub.retired, ...done(L.at.p0Retired) });
+
+  // newUser on LIVE: a DRIFTED copy — mains and subs reordered, stale main heading and stale sub name
+  const nu = liveProgress({ [WLV.M2S1]: { ...done(L.at.newQuiz), name: L.sub.stale } });
+  const [m1, m2, zoom] = nu;
+  const drifted = [{ ...m2, heading: L.sub.staleMain, challenges: [...m2.challenges].reverse() }, zoom, m1];
+
+  const other = liveProgress({});
+  other[0].challenges.push({ type: 'video', challengeid: WLV.OTHER_S1, name: L.sub.other, ...done(L.at.otherWorkshop) });
+
+  await Promise.all([
+    workshop(L.LIVE, L.titles.LIVE, { active: true, webactive: false, eiflixmobileactive: false, workshopcompleted: false }, true),
+    workshop(L.EMPTY, L.titles.EMPTY, { active: false, webactive: true, eiflixmobileactive: false, workshopcompleted: false }, true),
+    workshop(L.DONE_ON, L.titles.DONE_ON, { active: true, webactive: false, eiflixmobileactive: true, workshopcompleted: true }, false),
+    db.collection('new_user_data').doc(P.newUser.id).set({
+      docid: P.newUser.id, uid: `${RUN}_u_wlv_new`, name: P.newUser.name, email: P.newUser.email,
+      phonenumber: P.newUser.phone, countryCode: P.newUser.cc, created: T.fromDate(new Date(2026, 0, 5, 9, 0, 0, 0)),
+      enable: true, status: 'active', tags: [], ...tag,
+    }),
+    db.collection('participant metadata').doc(P.late.id).set({
+      docid: P.late.id, profileid: P.late.id, name: P.late.name, email: P.late.email,
+      phonenumber: P.late.phone, countrycode: P.late.cc, ...tag,
+    }),
+    // the ghost is in NEITHER collection (a re-run must not find a leftover)
+    db.collection('participant metadata').doc(P.ghost.id).delete().catch(() => undefined),
+    db.collection('new_user_data').doc(P.ghost.id).delete().catch(() => undefined),
+    pw(L.pw.p0, wsProfileIds.p0, L.LIVE, p0),
+    pw(L.pw.p1, wsProfileIds.p1, L.LIVE, liveP1Progress(T)),
+    pw(L.pw.newUser, P.newUser.id, L.LIVE, drifted),
+    pw(L.pw.ghost, P.ghost.id, L.LIVE, liveProgress({ [WLV.M2S3]: done(L.at.ghostNote) })),
+    // EMPTY: p0 has touched steps, but none is completed (finished, in review; the zoom call is a main challenge)
+    pw(L.pw.emptyP0, wsProfileIds.p0, L.EMPTY, liveProgress({
+      [WLV.M1S1]: { status: 'finished', finished: T.fromDate(L.at.p1Finished) },
+      [WLV.M1S2]: { status: 'inreview', reviewed: T.fromDate(L.at.p1InReview) },
+    }, { [WLV.ZOOM]: { status: 'completed', completed: T.fromDate(L.at.p1Zoom) } })),
+    // OTHER: p0's newest completion of all, on a workshop that is not LIVE — on a step id of its own (not in LIVE's
+    // config), so if it ever leaked into LIVE's feed it would be named from the copy and the WLV-03 check would see it
+    pw(L.pw.otherP0, wsProfileIds.p0, L.OTHER, other),
+    db.collection('participant workshop').doc(L.pw.late).delete().catch(() => undefined),
+    // OTHER has no config doc until WLV-06 creates one
+    cfg(L.OTHER).delete().catch(() => undefined),
+  ]);
+}
+
+/**
+ * WLV-06: give OTHER a config doc (no testrunid, like the others) — an active workshop with a title and NO steps,
+ * so its one row is named from p0's own copy. Removed again by seedLiveWorld / clearLiveWorld.
+ */
+export async function createLiveOtherWorkshop(): Promise<void> {
+  const admin = seed.initAdmin();
+  const T = admin.firestore.Timestamp;
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  await admin.firestore().collection('workshopconfiguration').doc(wsLive.OTHER).set({
+    docid: wsLive.OTHER, atcmodel: null, categorybased: false, created: day(-3), workshoptype: 'liveworkshop',
+    active: true, webactive: false, eiflixmobileactive: false, workshopcompleted: false,
+    detailpage: { type: 'workshop', title: wsLive.titles.OTHER, shortdescription: 'seeded workshop live (other)',
+      workshopStartDate: day(-2), workshopEndDate: day(8), registrationStartDate: day(-6), registrationEndDate: day(0) },
+  });
+}
+
+/**
+ * WLV-04's first arrival: p1 completes m2/s1 ('WLV Practice Quiz') — the whole `challenges` array rewritten, as
+ * the apps write it. Every other step of p1's stays as seeded.
+ */
+export async function completeLiveQuizForP1(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('participant workshop').doc(wsLive.pw.p1)
+    .update({ challenges: liveP1Progress(admin.firestore.Timestamp, wsLive.at.p1QuizLive) });
+}
+
+/** WLV-04's second arrival: a person NOT yet on screen gets a participant workshop doc on LIVE with one completion. */
+export async function addLiveLateParticipant(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  await db.collection('participant workshop').doc(wsLive.pw.late).set({
+    docid: wsLive.pw.late, profileid: wsLive.people.late.id,
+    workshopref: db.collection('workshopconfiguration').doc(wsLive.LIVE),
+    challenges: liveProgress({ [WLV.M1S1]: { status: 'completed', completed: T.fromDate(wsLive.at.lateWelcome) } }),
+    created: T.now(), testrunid: RUN, _testdata: true,
+  });
+}
+
+/** Remove everything above by id (afterAll; the run-tag sweep is the backstop for the tagged docs). */
+export async function clearLiveWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const L = wsLive;
+  await Promise.all([
+    ...[L.LIVE, L.EMPTY, L.DONE_ON, L.OTHER].map(id => drop('workshopconfiguration', id)),
+    ...Object.values(L.pw).map(id => drop('participant workshop', id)),
+    drop('new_user_data', L.people.newUser.id),
+    drop('participant metadata', L.people.late.id),
+  ]);
+}

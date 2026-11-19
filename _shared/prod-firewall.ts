@@ -12,7 +12,7 @@
 // This is also a stub: an aborted/short-circuited request means "no real network" — the spec then
 // asserts the Firestore state the app wrote on the TEST project (anti-circular), never a prod response.
 
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 
 /** Hostnames / URL fragments that indicate a PRODUCTION (or other non-test) Firebase project endpoint. */
 const PROD_PATTERNS = [
@@ -62,10 +62,13 @@ export interface ProdFirewallOptions {
  * Install a route handler that short-circuits any request to a production endpoint with a benign
  * empty-200 (so app code awaiting the fetch resolves rather than hanging/erroring the console guard).
  * Returns a list that captures every blocked URL for optional assertions.
+ *
+ * `target` may be a BrowserContext: page.route() does not reach a page the app opens itself
+ * (window.open → a new tab), a context route does — from that tab's very first request.
  */
-export async function installProdFirewall(page: Page, opts: ProdFirewallOptions = {}): Promise<string[]> {
+export async function installProdFirewall(target: Page | BrowserContext, opts: ProdFirewallOptions = {}): Promise<string[]> {
   const blocked: string[] = [];
-  await page.route('**/*', async (route) => {
+  await target.route('**/*', async (route) => {
     const url = route.request().url();
     const isProd = PROD_PATTERNS.some((re) => re.test(url));
     const isFn = /cloudfunctions\.net/i.test(url);

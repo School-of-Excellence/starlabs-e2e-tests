@@ -142,6 +142,9 @@ const ROUTES = [
   // which would block the case before the screen's own gate could answer.
   { route: '/workshopconfigold', label: 'Workshop Configuration (legacy)' },
   { route: '/workshop_dashboard', label: 'Workshop Dashboard' },
+  // The live feed of completed steps (/workshoplive/:id, 2026-11-19). authGuard checks the first URL segment
+  // only, so this one entry admits every workshop id. Staff only, as the plan's real-environment entry will be.
+  { route: '/workshoplive', label: 'Workshop Live' },
   { route: '/engagementdashboard', label: 'Engagement Dashboard' },
   { route: '/engagementdashboardv2', label: 'Engagement Dashboard v2' },        // unguarded for now
   { route: '/bigengagementdashboard', label: 'Capacity / BIG Engagement Dashboard' },
