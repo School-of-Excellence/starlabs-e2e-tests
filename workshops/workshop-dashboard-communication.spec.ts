@@ -17,6 +17,15 @@
 //   • WDC-07: the three footer buttons must hand off to the SAME composers as the side panel; we assert the
 //     composer dialog the app opened, then dismiss it — nothing is ever sent (prod firewall + stubs, and a
 //     dismissed composer returns no payload).
+//   • WDC-LATE-01/02 (2026-11-19; starlabs-angular specs/plans/2026-11-19-dashboard-late-enrollee-names.md): two new
+//     users sign up and enrol on W_DASH WHILE THE PAGE IS OPEN (enrollLateNewUsers: new_user_data first, then both
+//     enrolments in one batch, then person ONE's uid into the chat group — the EiFlix app's order). The dashboard used to read
+//     new_user_data once, at load, so both were nameless: "Unknown · No login yet" in Users Not in Chat Group (ONE
+//     listed although already in the group), "Unknown" in Total Enrolled, and counted as Existing instead of New.
+//     The expected names and uids come from the test's OWN seed of the late people; what is asserted is what the APP
+//     made of them: the panel rows, the card figures (against the figures the page showed before the writes) and the
+//     uid the APP writes into the group on Add to group. Total Enrolled +2 is only a sync point (the unfixed app gets
+//     it right too); every other check fails on the unfixed app.
 // All reads are single-equality / collection scans — NO composite index needed.
 import { test, expect, Page, Locator } from '@playwright/test';
 import {
@@ -26,9 +35,10 @@ import {
   setupChatGroupPrecondition, teardownChatGroupPrecondition, giveP1LoginRef, chatGroupMembers,
   wsProfileIds, seedWatiConfig, clearWatiConfig, captureWorkshopProgressSend, pickWatiTemplate,
   setDashWorkshopType, clearDashWorkshopType,
+  enrollLateNewUsers, clearLateEnrollees, wsLatePeople,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
-import { getDoc, queryWhere, pollUntil } from '../queue/support/firestore-admin';
+import { getDoc, queryWhere, pollUntil, db } from '../queue/support/firestore-admin';
 
 const RUN = process.env.WSHOP_RUNID || 'wshop';
 // The metadata people are identified by the name the CF-owned field actually carries — their actor
@@ -996,5 +1006,138 @@ test.describe('Workshop dashboard — side panel name search', () => {
       .toHaveValue('', { timeout: 15_000 });
     await expect(cards, 'WS-50: the new panel is not filtered by the previous term')
       .toHaveCount(2, { timeout: 30_000 });
+  });
+});
+
+// =============================================================================================
+// WDC-LATE-01/02 — people who sign up and enrol WHILE the dashboard is open (2026-11-19)
+//
+// The bug: the enrolled list, the chat group's members and participant metadata are live, but new_user_data
+// was read once, at load. A new user who enrolled after that had no record on the page: named "Unknown", no
+// login found (new users carry theirs on new_user_data.uid), so listed as Not in Chat Group with "No login
+// yet" even when already in the group, and counted as Existing instead of New — until a refresh.
+// The fix (starlabs-angular specs/plans/2026-11-19-dashboard-late-enrollee-names.md) reads just the missing
+// ids from new_user_data when they appear in the enrolled list.
+//
+// THE WORLD: the plain seed (p0 + p1 enrolled on W_DASH) and, written by the TEST after the page is ready,
+// two late new users (enrollLateNewUsers): each a new_user_data doc with a uid + an enrolment on W_DASH.
+// In WDC-LATE-01 person ONE's uid is also put in the group's members, after the enrolments (the EiFlix app's
+// order: the group update reaches the page while it is still identifying ONE); person TWO's never is.
+// Removed in finally (clearLateEnrollees); the seed teardown's run-tag sweep is the backstop.
+// =============================================================================================
+test.describe('Workshop dashboard — people who enrol while it is open', () => {
+  let guard: ConsoleGuard;
+  test.beforeEach(async ({ page }) => {
+    test.setTimeout(180_000);
+    guard = attachConsoleGuard(page);
+    await alignWorkshopMetadataNames();
+    await clearLateEnrollees();   // a run that died mid-case must not hand its late people to this one
+    await installWshopStubs(page);
+  });
+  test.afterEach(() => assertNoFatal(guard, 'late enrollees: no fatal console errors / pageerrors'));
+
+  /** Panel rows still named the app's fallback, i.e. people the page could not identify. */
+  const unknownRows = (panel: Locator) => panel.locator('mat-card.participant-card .participant-name').filter({ hasText: /^\s*Unknown\s*$/ });
+
+  test('WDC-LATE-01 Not in Chat Group names a late new user with Add to group, and leaves out one already in the group', async ({ page }) => {
+    const one = wsLatePeople.one;
+    const two = wsLatePeople.two;
+    await setupChatGroupPrecondition();   // an EMPTY group on W_DASH: p0 (metadata ref) + p1 (profile_data fallback) missing
+    try {
+      await openDashboard(page);
+      const chatCount = page.getByTestId('wdash-chat-count');
+      // Ready: the card counts nobody until new_user_data has landed and the group has been read, so a figure
+      // here means the page has everything it reads at load.
+      await expect(chatCount, 'WDC-LATE-01 precondition: p0 + p1 are missing from the empty group').toHaveText('2', { timeout: 45_000 });
+      await page.getByTestId('wdash-chat-card').click();
+      const panel = page.locator('.participant-panel.panel-visible');
+      await expect(panel.locator('.panel-header'), 'WDC-LATE-01: the Not in Chat Group panel is open').toContainText('Chat Group', { timeout: 15_000 });
+      const cards = panel.locator('mat-card.participant-card');
+      await expect(cards, 'WDC-LATE-01 precondition: p0 + p1 listed').toHaveCount(2, { timeout: 30_000 });
+      const addAll = page.getByTestId('wdash-chat-add-all-btn');
+      await expect(addAll, 'WDC-LATE-01 precondition: both have a login (p1 through the profile_data fallback)').toContainText('2', { timeout: 15_000 });
+
+      // The panel stays OPEN while the two sign up and enrol: it must follow the live lists.
+      await enrollLateNewUsers({ oneJoinsGroup: true });
+
+      // [ASSERT] TWO is listed BY NAME and offered Add to group (their login is on new_user_data). Unfixed: "Unknown".
+      const twoCard = cards.filter({ hasText: two.name });
+      await expect(twoCard, 'WDC-LATE-01: the late user outside the group is listed by name').toHaveCount(1, { timeout: 30_000 });
+      await expect(twoCard.getByTestId('wdash-chat-add-btn'), 'WDC-LATE-01: ...with Add to group').toHaveCount(1);
+      // [ASSERT] TWO's row carries their login, not "No login yet". (Not a control on its own: unfixed, no row is
+      // named TWO, so this would pass there too — the twoCard count above is what fails.)
+      await expect(twoCard.getByTestId('wdash-chat-no-uid'), 'WDC-LATE-01: ...never "No login yet"').toHaveCount(0);
+      // [NEGATIVE CONTROL] nobody is an "Unknown" row, and ONE (already in the group) is not listed at all. Unfixed,
+      // ONE and TWO are both "Unknown" rows with no login, so the panel holds 4 rows and the card reads 4; here p0 + p1 + TWO.
+      await expect(unknownRows(panel), 'WDC-LATE-01: nobody is listed as Unknown').toHaveCount(0, { timeout: 15_000 });
+      await expect(cards, 'WDC-LATE-01: p0, p1 and TWO only — ONE is in the group').toHaveCount(3, { timeout: 15_000 });
+      // [ASSERT] (passes unfixed too — nobody is named ONE there; the two checks above are the controls).
+      await expect(cards.filter({ hasText: one.name }), 'WDC-LATE-01: ONE is not listed by name either').toHaveCount(0);
+      await expect(chatCount, 'WDC-LATE-01: the card counts TWO, not ONE').toHaveText('3', { timeout: 15_000 });
+      await expect(addAll, 'WDC-LATE-01: Add all counts TWO as addable').toContainText('3', { timeout: 15_000 });
+
+      // [REAL-UI] Add TWO. [ASSERT] the APP writes the uid it found for TWO into the group (read back from Firestore),
+      // and the live listener drops TWO from the panel.
+      await twoCard.getByTestId('wdash-chat-add-btn').click();
+      const members = await pollUntil(chatGroupMembers, (m) => m.includes(two.uid),
+        { label: 'WDC-LATE-01: supportchat.members gains TWO uid', timeoutMs: 30_000 });
+      expect([...members].sort(), 'WDC-LATE-01: the group holds ONE (enrolment) and TWO (the app\'s add), nobody else')
+        .toEqual([one.uid, two.uid].sort());
+      await expect(twoCard, 'WDC-LATE-01: TWO leaves the panel once added').toHaveCount(0, { timeout: 30_000 });
+      await expect(chatCount, 'WDC-LATE-01: back to p0 + p1').toHaveText('2', { timeout: 30_000 });
+    } finally {
+      await clearLateEnrollees();
+      await teardownChatGroupPrecondition();
+    }
+  });
+
+  test('WDC-LATE-02 new users who enrol while the page is open count as New, not Existing, and show by name in Total Enrolled', async ({ page }) => {
+    const one = wsLatePeople.one;
+    const two = wsLatePeople.two;
+    try {
+      // [ORACLE] the enrolments on W_DASH before the late ones, straight from Firestore.
+      const enrolledBefore = (await queryWhere('workshop participant enrolled',
+        [['workshopref', '==', db().collection('workshopconfiguration').doc(wsIds.W_DASH)]])).length;
+      expect(enrolledBefore, 'WDC-LATE-02 precondition: the seed enrols p0 + p1').toBeGreaterThanOrEqual(2);
+
+      await openDashboard(page);
+      const totalN = page.getByTestId('wd-on-metric-click-6').locator('.metric-value');
+      const newN = page.getByTestId('wd-on-metric-click-19').locator('.metric-value');
+      const existN = page.getByTestId('wdash-exist-users-count');
+      // Ready: Total Enrolled equals the Firestore count (the enrolled listener has delivered) and the People cards
+      // show figures, not their loading bar (new_user_data has landed).
+      await expect(totalN, 'WDC-LATE-02 precondition: Total Enrolled == the Firestore count').toHaveText(String(enrolledBefore), { timeout: 45_000 });
+      await expect(page.getByTestId('wdash-new-loading'), 'WDC-LATE-02 precondition: New Users has loaded').toHaveCount(0, { timeout: 45_000 });
+      await expect(newN, 'WDC-LATE-02 precondition: New Users shows a figure').toHaveText(/^\s*\d+\s*$/, { timeout: 45_000 });
+      await expect(existN, 'WDC-LATE-02 precondition: Existing Participants shows a figure').toHaveText(/^\s*\d+\s*$/, { timeout: 45_000 });
+      const newBefore = parseInt((await newN.innerText()).trim(), 10);
+      const existBefore = parseInt((await existN.innerText()).trim(), 10);
+
+      await enrollLateNewUsers({ oneJoinsGroup: false });
+
+      // Sync point only: Total Enrolled counts enrolment docs from the live listener (the unfixed app gets this right
+      // too), so this proves the two enrolments have reached the page before the checks that tell the apps apart.
+      await expect(totalN, 'WDC-LATE-02: both enrolments reached the page').toHaveText(String(enrolledBefore + 2), { timeout: 30_000 });
+      // [NEGATIVE CONTROL] both are still-new users → New Users +2. Unfixed: unchanged (the page has no record of them).
+      await expect(newN, 'WDC-LATE-02: New Users counts both late enrollees').toHaveText(String(newBefore + 2), { timeout: 30_000 });
+      // [NEGATIVE CONTROL] ...and Existing Participants does not. Unfixed: +2 (no new_user_data record → counted as existing).
+      await expect(existN, 'WDC-LATE-02: Existing Participants is unchanged').toHaveText(String(existBefore), { timeout: 30_000 });
+
+      // [ASSERT] Total Enrolled lists both BY NAME, tagged New. Unfixed: two "Unknown" rows with no New tag.
+      await page.getByTestId('wd-on-metric-click-6').click();
+      const panel = page.locator('.participant-panel.panel-visible');
+      const cards = panel.locator('mat-card.participant-card');
+      await expect(cards, 'WDC-LATE-02: one row per enrolment').toHaveCount(enrolledBefore + 2, { timeout: 30_000 });
+      const oneCard = cards.filter({ hasText: one.name });
+      const twoCard = cards.filter({ hasText: two.name });
+      await expect(oneCard, 'WDC-LATE-02: Total Enrolled lists ONE by name').toHaveCount(1, { timeout: 30_000 });
+      await expect(twoCard, 'WDC-LATE-02: Total Enrolled lists TWO by name').toHaveCount(1, { timeout: 30_000 });
+      await expect(oneCard.locator('.new-badge'), 'WDC-LATE-02: ONE carries the New tag').toHaveCount(1);
+      await expect(twoCard.locator('.new-badge'), 'WDC-LATE-02: TWO carries the New tag').toHaveCount(1);
+      await expect(unknownRows(panel), 'WDC-LATE-02: nobody in Total Enrolled is Unknown').toHaveCount(0);
+      await page.getByTestId('wd-close-participant-panel-61').click();
+    } finally {
+      await clearLateEnrollees();
+    }
   });
 });

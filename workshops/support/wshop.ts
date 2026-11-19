@@ -404,6 +404,76 @@ export async function chatGroupMembers(): Promise<string[]> {
   return Array.isArray(m) ? m.map(String) : [];
 }
 
+/**
+ * Two people who sign up and enrol on W_DASH WHILE THE DASHBOARD IS OPEN (WDC-LATE-01/02, 2026-11-19).
+ * Each is a still-new user — a `new_user_data` doc (doc id = profileid) carrying the login uid, and no
+ * `participant metadata` — plus a `workshop participant enrolled` doc on W_DASH (the ENR_B shape: a fresh
+ * enrolment that has not started). No Auth user: the dashboard only reads the uid string. Run-tagged, so
+ * the seed's teardown sweep is the backstop for a run that dies before clearLateEnrollees().
+ */
+export const wsLateIds = {
+  ONE: `${RUN}_pf_late1`,
+  TWO: `${RUN}_pf_late2`,
+  ENR_ONE: `${RUN}_enr_late1`,
+  ENR_TWO: `${RUN}_enr_late2`,
+};
+export const wsLatePeople = {
+  one: { name: `Late Joiner One ${RUN}`, email: `late.one.${RUN}@example.com`, uid: `${RUN}_u_late1` },
+  two: { name: `Late Joiner Two ${RUN}`, email: `late.two.${RUN}@example.com`, uid: `${RUN}_u_late2` },
+};
+
+/**
+ * The late sign-up + enrolment, in the order the apps write it: the two `new_user_data` docs first (sign-up),
+ * then both enrolments in ONE batch, so the dashboard's enrolled listener sees them in a single snapshot, then —
+ * when `oneJoinsGroup` — person ONE's uid into the W_DASH chat group AFTER the enrolment has committed, as the
+ * EiFlix app does (enrolment, then _dropIfDuplicate, then _autoAddGroup; workshop_service.dart). So the group
+ * update reaches the dashboard while it is still identifying ONE (2026-11-19 review). Person TWO's uid is never
+ * put in the group. PRECONDITION writes only: the specs assert what the APP renders from them.
+ */
+export async function enrollLateNewUsers(opts: { oneJoinsGroup: boolean }): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  const now = admin.firestore.Timestamp.now();
+  const tag = { testrunid: RUN, _testdata: true };
+  const people: [string, { name: string; email: string; uid: string }][] = [
+    [wsLateIds.ONE, wsLatePeople.one], [wsLateIds.TWO, wsLatePeople.two],
+  ];
+  await Promise.all(people.map(([pid, p]) => db.collection('new_user_data').doc(pid).set({
+    docid: pid, name: p.name, email: p.email, uid: p.uid, created: now, enable: true, status: 'active', tags: [], ...tag,
+  })));
+  const dashRef = db.collection('workshopconfiguration').doc(wsIds.W_DASH);
+  const batch = db.batch();
+  const enrolments: [string, string][] = [[wsLateIds.ENR_ONE, wsLateIds.ONE], [wsLateIds.ENR_TWO, wsLateIds.TWO]];
+  for (const [enr, pid] of enrolments) {
+    batch.set(db.collection('workshop participant enrolled').doc(enr), {
+      docid: enr, profileid: pid, status: 'enrollednotstarted', workshopref: dashRef, enrollmentdate: now, ...tag,
+    });
+  }
+  await batch.commit();
+  if (opts.oneJoinsGroup) {
+    // update(), not set(): the group must already exist (setupChatGroupPrecondition) — a missing one is a broken precondition.
+    await db.collection('supportchat').doc(wsChatGroupId).update({ members: FV.arrayUnion(wsLatePeople.one.uid) });
+  }
+}
+
+/** Undo enrollLateNewUsers (and any add the app made for them): the four docs, and both uids out of the group. Idempotent. */
+export async function clearLateEnrollees(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const FV = admin.firestore.FieldValue;
+  await Promise.all([
+    db.collection('workshop participant enrolled').doc(wsLateIds.ENR_ONE).delete(),
+    db.collection('workshop participant enrolled').doc(wsLateIds.ENR_TWO).delete(),
+    db.collection('new_user_data').doc(wsLateIds.ONE).delete(),
+    db.collection('new_user_data').doc(wsLateIds.TWO).delete(),
+  ]);
+  const group = db.collection('supportchat').doc(wsChatGroupId);
+  if ((await group.get()).exists) {
+    await group.update({ members: FV.arrayRemove(wsLatePeople.one.uid, wsLatePeople.two.uid) });
+  }
+}
+
 /** The typed answer WDC-12 puts on p0's assignment — long enough to be clamped at three lines. */
 export const wsP0AssignmentAnswer =
   `Answer line one for ${RUN}. ` + 'This sentence is repeated to push the answer well past the three-line clamp. '.repeat(6) + 'END-OF-ANSWER';
