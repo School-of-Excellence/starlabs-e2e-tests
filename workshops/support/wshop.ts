@@ -3293,3 +3293,86 @@ export async function setNewUserHoldExternally(id: string, on: boolean, by: stri
 export async function deleteNewUser(id: string): Promise<void> {
   await seed.initAdmin().firestore().collection('new_user_data').doc(id).delete();
 }
+
+// =================================================================================================
+// 2026-11-19 — Workshop dashboard person menu: "Manage tag" (workshop-dashboard-person-tags.spec.ts, WPT-*).
+// Plan: starlabs-angular specs/plans/2026-11-19-dashboard-person-manage-tag.md.
+//
+// Eight newusertags of this run's OWN (the base seed's tags and W_DASH's people are left as they are):
+//   apple, banana, add, drop, keep   type 'newusersegments' — what the Manage tag list offers. "wpt apple" is lower
+//                                    case on purpose: A→Z ignoring case puts it between "WPT Add" and "WPT Banana",
+//                                    a case-sensitive sort puts it last.
+//   blank                            a segment whose name is empty — never listed
+//   calendar                         type 'wccalendar' — never listed (only segments are)
+//   venue                            type 'location' — never listed, but it sits on p0's enrolled doc, so "the
+//                                    person's other tags are kept" covers a tag the menu cannot even show
+// The enrolled docs' tags (ENR_A for p0, ENR_B for p1) are set per test with setEnrolledTags and removed again after.
+// enrollP1Twice adds a SECOND enrolled doc for p1 on W_DASH (the plan's "a second enrolment gets the same change");
+// its id sorts after ENR_B, so ENR_B stays p1's first enrolled doc. PRECONDITION writes only; clearPersonTagWorld
+// removes every doc by id (the run-tag sweep is the backstop). No ATC collection is touched.
+// =================================================================================================
+export const wsPersonTags = {
+  apple: { id: `${RUN}_nut_wpt_apple`, type: 'newusersegments', name: `wpt apple ${RUN}` },
+  banana: { id: `${RUN}_nut_wpt_banana`, type: 'newusersegments', name: `WPT Banana ${RUN}` },
+  add: { id: `${RUN}_nut_wpt_add`, type: 'newusersegments', name: `WPT Add ${RUN}` },
+  drop: { id: `${RUN}_nut_wpt_drop`, type: 'newusersegments', name: `WPT Drop ${RUN}` },
+  keep: { id: `${RUN}_nut_wpt_keep`, type: 'newusersegments', name: `WPT Keep ${RUN}` },
+  blank: { id: `${RUN}_nut_wpt_blank`, type: 'newusersegments', name: '' },
+  calendar: { id: `${RUN}_nut_wpt_cal`, type: 'wccalendar', name: `WPT Calendar Type ${RUN}` },
+  venue: { id: `${RUN}_nut_wpt_venue`, type: 'location', name: `WPT Venue ${RUN}` },
+};
+
+/** p1's second enrolled doc on W_DASH (enrollP1Twice). */
+export const wsPersonTagDupEnrolledId = `${RUN}_enr_b_wpt_dup`;
+
+/**
+ * p0's enrolment on ANOTHER workshop (2026-11-19 review): a write must stay on THIS workshop's enrolled doc, so a
+ * plan built from the profile id alone (e.g. querying the enrolled collection by profileid) would show up here. The
+ * workshop id names no workshopconfiguration doc, so no dashboard or list anywhere counts this enrolment.
+ */
+export const wsPersonTagOtherWorkshopId = `${RUN}_ws_wpt_other`;
+export const wsPersonTagOtherEnrolledId = `${RUN}_enr_a_wpt_other`;
+
+/** Seed the eight tags and p0's other-workshop enrolment (idempotent: full-document set()). */
+export async function seedPersonTagWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const tag = { testrunid: RUN, _testdata: true };
+  await Promise.all([
+    ...Object.values(wsPersonTags).map(t =>
+      db.collection('newusertags').doc(t.id).set({ docid: t.id, type: t.type, name: t.name, ...tag })),
+    db.collection('workshop participant enrolled').doc(wsPersonTagOtherEnrolledId).set({
+      docid: wsPersonTagOtherEnrolledId, profileid: wsProfileIds.p0, status: 'enrolled',
+      workshopref: db.collection('workshopconfiguration').doc(wsPersonTagOtherWorkshopId),
+      enrollmentdate: admin.firestore.Timestamp.now(), tags: [wsPersonTags.keep.id], ...tag,
+    }),
+  ]);
+}
+
+/** A second enrolled doc for p1 on W_DASH, 'enrollednotstarted' like ENR_B, carrying the given tag ids. */
+export async function enrollP1Twice(tags: string[]): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('workshop participant enrolled').doc(wsPersonTagDupEnrolledId).set({
+    docid: wsPersonTagDupEnrolledId, profileid: wsProfileIds.p1, status: 'enrollednotstarted',
+    workshopref: db.collection('workshopconfiguration').doc(wsIds.W_DASH),
+    enrollmentdate: admin.firestore.Timestamp.now(), tags, testrunid: RUN, _testdata: true,
+  });
+}
+
+export async function clearP1Twice(): Promise<void> {
+  await seed.initAdmin().firestore().collection('workshop participant enrolled').doc(wsPersonTagDupEnrolledId)
+    .delete().catch(() => undefined);
+}
+
+/** Remove the tags, p1's second enrolment and p0's other-workshop one, and take the tags off ENR_A / ENR_B (teardown only). */
+export async function clearPersonTagWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await Promise.all([
+    ...Object.values(wsPersonTags).map(t => db.collection('newusertags').doc(t.id).delete().catch(() => undefined)),
+    clearP1Twice(),
+    db.collection('workshop participant enrolled').doc(wsPersonTagOtherEnrolledId).delete().catch(() => undefined),
+    setEnrolledTags(wsIds.ENR_A, null).catch(() => undefined),
+    setEnrolledTags(wsIds.ENR_B, null).catch(() => undefined),
+  ]);
+}
