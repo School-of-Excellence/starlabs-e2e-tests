@@ -42,6 +42,20 @@
 //   WLV-11  Live with pages: from exactly 20 completions (one page, no pager) an admin-SDK completion newer than all
 //           tops page 1 and the pager appears ("Page 1 of 2", "Showing 1–20 of 21"); a second one on page 1 tops it
 //           again and the total goes up; on page 2 a third one keeps the user on page 2 while its range and rows move
+// Addition (the plan's last section, "Addition: Journey and Customer status columns"):
+//   WLV-12  Two columns after Email — "Journey" and "Customer status" (header order and each row's cell order) — read,
+//           per kind of person (one completion each, the row told apart by its own sub challenge): an existing user's
+//           active journey by NAME and status in title case ("Active", "Non Active", "Discontinued", "Banned", "Late");
+//           "—" for no active journey, an empty one, or an id with no journey doc (never the raw id); "—" for an empty
+//           status; "New User" in BOTH for a still-new user — new_user_data only, or new_user_data (movedtoexist absent,
+//           or false) AND a metadata doc with a journey and a status, whose name / phone / email still come from the
+//           metadata; a converted user (movedtoexist true) shows their metadata journey and status; someone in neither
+//           collection reads "Unknown" and "—" throughout. Search is unchanged: a journey name, "New User" or a status
+//           matches nobody
+//   WLV-13  Live: with the page open, an existing user arrives with a completion → their row tops the list with their
+//           journey and status (the control: arrivals are not all "new"); then a still-new user who ALSO has metadata
+//           with a journey and a status arrives → once their details fill in (the metadata name), both columns read
+//           "New User"; no reload
 //
 // Recon: starlabs-angular
 //   • src/app/New-Workshop/workshops/workshops.component.html — Actions column: `wor-live` (icon `sensors`, tooltip
@@ -63,13 +77,19 @@
 //     holding `wlive-range` ("Showing A–B of N", an en dash; N = the searched rows), `wlive-prev` / `wlive-next`
 //     (disabled at either end) and `wlive-page` ("Page X of Y"). Typing (a changed term) and either clear go to page
 //     1; a live snapshot keeps the page (clamped to the last one). `wlive-count` stays the count of ALL completions.
+//   • Addition (journey and status): `wlive-journey` and `wlive-status`, two cells after `wlive-email` in each
+//     `wlive-row` (headers "Journey", "Customer status"; two more fields on a card). The journey collection is read
+//     once (`journey` = the name, by activejourney id); new_user_data is now asked for EVERY person (not only those
+//     metadata lacks) — a person with a new_user_data doc whose movedtoexist !== true reads "New User" in both (the
+//     dashboard's isNewUserProfile). While a person loads, both cells show the name's placeholder.
 //
 // Hook prefixes: `wor-` (the /workshops list, WorkshopsComponent) and `wlive-` (WorkshopLiveComponent). `wor-live` and
 // every `wlive-*` hook are new with this change, so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips
 // this whole FILE on app branches that predate it — which is why these cases are a file of their own and not more
 // cases in workshops-list.spec.ts. The addition's hooks (all `wlive-`, driven by WLV-08..11): wlive-search,
 // wlive-search-clear, wlive-no-match, wlive-no-match-clear, wlive-pager, wlive-prev, wlive-next, wlive-page,
-// wlive-range — they land with the live screen itself, in the same app change.
+// wlive-range — they land with the live screen itself, in the same app change. The journey / status addition's
+// hooks (also `wlive-`, driven by WLV-12..13): wlive-journey, wlive-status.
 //
 // THE WORLD (seed-workshops.js + seedLiveWorld in support/wshop.ts; re-seeded before EVERY case, removed in afterAll):
 //   LIVE     app switch on → p0 (3 dated completions incl. a step the config dropped, 1 undated), p1 (1 + 1, plus a
@@ -86,6 +106,11 @@
 //            so each person has rows on both pages. Four people in participant metadata, one (Chen) only in
 //            new_user_data; nobody has profile_data, so no CF rewrites a name. Four emails carry "crew", Emil's
 //            does not. Farah (metadata only) is WLV-11's live arrival; seedLivePagedWorld(20) seeds just the 20 oldest.
+//   KINDS    (WLV-12..13 only: seedLiveKindsWorld, removed in afterAll) app switch on; one main challenge with one sub
+//            challenge per person; two run-scoped journeys (ALPHA, BETA) plus an activejourney id with no journey doc.
+//            Ten people with one completion each — every kind listed under WLV-12 — and two live arrivals (people docs
+//            seeded, participant workshop docs written by WLV-13 while the page is open). Nobody has profile_data, so
+//            no CF rewrites a name; people with both docs carry a DIFFERENT name / email / phone in new_user_data.
 //   Actors   admin (full access), limited (no list, no grant on LIVE) — both granted /workshoplive by the seed's ROUTES.
 //
 // Anti-circularity: what the screen must show is derived by the TEST — the completion table is pinned to what is
@@ -98,6 +123,10 @@
 // sliced 20 at a time by the test; each search's expected people are DECLARED here and pinned against the seeded
 // names / emails / phones (the term occurs in exactly those people's field and in nobody's other fields); the pager
 // texts are the test's arithmetic on those counts — nothing is read off the page to build an expectation.
+// Journey and status (WLV-12..13): each person's two labels are DECLARED here (KINDS_LABELS, literal text from the
+// plan) and pinned against the test's own admin-SDK reads of their participant metadata / new_user_data / journey docs
+// with the plan's rules applied (journey name by id, title-cased status, the new-user rule) — the row order is the
+// test's own sort of the seeded instants.
 import { test, expect, Page } from '@playwright/test';
 import {
   wsIds, wsProfileIds, wsMetaNames, wsListFilterIds, wsListFilterTitles,
@@ -107,6 +136,7 @@ import {
   seedLiveWorld, clearLiveWorld, completeLiveQuizForP1, addLiveLateParticipant, createLiveOtherWorkshop,
   wsLivePaged, wsLivePagedCompletions, wsLivePagedArrivals, PagedCompletion, PagedPersonKey,
   seedLivePagedWorld, addLivePagedArrivals, clearLivePagedWorld,
+  wsLiveKinds, KindsPersonKey, seedLiveKindsWorld, addLiveKindsArrival, clearLiveKindsWorld,
 } from './support/wshop';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 import { installProdFirewall } from '../_shared/prod-firewall';
@@ -342,6 +372,106 @@ function pinSearch(s: PagedSearch): void {
 /** The completions a search must keep: the declared people's, from the whole feed. */
 const keptBy = (s: PagedSearch, rows: readonly PagedCompletion[]) => rows.filter(c => s.who.includes(c.who));
 
+// ─── KINDS (WLV-12..13): the Journey and Customer status columns ──────────────────────────────────────────────────
+
+const K = wsLiveKinds;
+const NEW_USER = 'New User';
+
+/**
+ * What each person's Journey and Customer status cells must read — DECLARED here, literal, from the plan's rules for
+ * that kind of person (never computed from the page or from the seed's own fields).
+ */
+const KINDS_LABELS: Record<KindsPersonKey, { journey: string; status: string; why: string }> = {
+  alphaActive: { journey: K.journeys.alpha.name, status: 'Active', why: 'an existing user on journey ALPHA, active' },
+  noJourney: { journey: NIL, status: 'Non Active', why: 'an existing user with no active journey' },
+  missingJourney: { journey: NIL, status: 'Discontinued', why: 'an active journey id with no journey doc — "—", never the id' },
+  blankJourney: { journey: NIL, status: 'Banned', why: 'an empty active journey' },
+  noStatus: { journey: K.journeys.beta.name, status: NIL, why: 'an empty customer status' },
+  converted: { journey: K.journeys.beta.name, status: 'Late', why: 'moved to existing (movedtoexist true) — the metadata values' },
+  stillNew: { journey: NEW_USER, status: NEW_USER, why: 'new_user_data not moved (no movedtoexist) AND metadata with a journey and a status' },
+  stillNewFalse: { journey: NEW_USER, status: NEW_USER, why: 'new_user_data with movedtoexist false AND metadata with a journey and a status' },
+  newOnly: { journey: NEW_USER, status: NEW_USER, why: 'new_user_data only' },
+  ghost: { journey: NIL, status: NIL, why: 'in neither people collection' },
+  arrivalExisting: { journey: K.journeys.alpha.name, status: 'Active', why: 'a live arrival who is an existing user' },
+  arrivalNew: { journey: NEW_USER, status: NEW_USER, why: 'a live arrival still new, who also has metadata with a journey and a status' },
+};
+
+/** The new columns, after Email — the plan's header names and the row's cell order (table and card alike). */
+const KINDS_HEADERS = ['Name', 'Phone', 'Email', 'Journey', 'Customer status', 'Main challenge', 'Sub challenge', 'Completed'];
+const KINDS_CELL_HOOKS = ['wlive-name', 'wlive-phone', 'wlive-email', 'wlive-journey', 'wlive-status', 'wlive-main', 'wlive-sub', 'wlive-completed-at'];
+
+interface KindsCells extends PersonCells { journey: string; status: string }
+
+/** "non active" → "Non Active". */
+const titleCase = (s: string) => s.split(/\s+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+
+/**
+ * [ORACLE] A KINDS person's cells, from the test's admin-SDK reads with the plan's rules applied: name / phone / email
+ * from participant metadata first, then new_user_data, else "Unknown" and "—"; "New User" in both columns when there
+ * is a new_user_data doc whose movedtoexist !== true (the dashboard's isNewUserProfile); otherwise, from metadata, the
+ * `journey` name of the activejourney doc ("—" with no id or no such doc) and the title-cased customerstatus ("—" when
+ * empty); "—" for both with no metadata. Pinned to the seed's declared docs and to KINDS_LABELS.
+ */
+async function kindsPersonOracle(who: KindsPersonKey): Promise<KindsCells> {
+  const p = K.people[who];
+  const meta: any = await getDoc('participant metadata', p.id);
+  const fresh: any = await getDoc('new_user_data', p.id);
+  expect([!!meta, !!fresh], `precondition: ${who} has exactly the declared people docs [metadata, new_user_data]`)
+    .toEqual([!!p.meta, !!p.nud]);
+  if (meta) expect(meta.profileid, `precondition: ${who}'s metadata carries their profileid`).toBe(p.id);
+  const isNew = !!fresh && fresh.movedtoexist !== true;
+  const d = meta || fresh;
+  const cells: KindsCells = {
+    name: d ? String(d.name ?? '').trim() || UNKNOWN : UNKNOWN,
+    phone: d ? phoneCell(d) : NIL,
+    email: d ? String(d.email ?? '').trim() || NIL : NIL,
+    journey: NIL,
+    status: NIL,
+  };
+  if (isNew) {
+    cells.journey = NEW_USER;
+    cells.status = NEW_USER;
+  } else if (meta) {
+    const jid = String(meta.activejourney ?? '').trim();
+    const j: any = jid ? await getDoc('journey', jid) : null;
+    cells.journey = String(j?.journey ?? '').trim() || NIL;
+    const st = String(meta.customerstatus ?? '').trim();
+    cells.status = st ? titleCase(st) : NIL;
+  }
+  const shown = p.meta ?? p.nud;
+  expect(cells, `precondition: ${who} — ${KINDS_LABELS[who].why}`).toEqual({
+    name: shown ? shown.name : UNKNOWN, phone: shown ? `${shown.cc} ${shown.phone}` : NIL, email: shown ? shown.email : NIL,
+    journey: KINDS_LABELS[who].journey, status: KINDS_LABELS[who].status,
+  });
+  return cells;
+}
+
+/** Newest first — every KINDS completion has its own instant. */
+const kindsNewestFirst = (keys: readonly KindsPersonKey[]): KindsPersonKey[] =>
+  [...keys].sort((a, b) => K.people[b].at.getTime() - K.people[a].at.getTime());
+
+/** A KINDS row by its person's own sub challenge (exact). */
+const kindsRow = (page: Page, who: KindsPersonKey) =>
+  feedRows(page).filter({ has: page.getByTestId('wlive-sub').filter({ hasText: exactly(K.people[who].sub) }) });
+
+/**
+ * The whole KINDS feed on screen — every row, newest first: sub challenge, name, phone, email, Journey and Customer
+ * status, each column exactly (retried until the people, new-user and journey reads land); then the header count.
+ */
+async function expectKindsFeed(page: Page, keys: readonly KindsPersonKey[], label: string): Promise<void> {
+  const sorted = kindsNewestFirst(keys);
+  const cells: KindsCells[] = [];
+  for (const k of sorted) cells.push(await kindsPersonOracle(k));
+  await expect(feedRows(page), `${label}: one row per completion`).toHaveCount(sorted.length, { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-sub'), `${label}: sub challenges, newest first`).toHaveText(sorted.map(k => K.people[k].sub), { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-name'), `${label}: names`).toHaveText(cells.map(c => c.name), { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-phone'), `${label}: phones`).toHaveText(cells.map(c => c.phone));
+  await expect(page.getByTestId('wlive-email'), `${label}: emails`).toHaveText(cells.map(c => c.email));
+  await expect(page.getByTestId('wlive-journey'), `${label}: Journey`).toHaveText(cells.map(c => c.journey), { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-status'), `${label}: Customer status`).toHaveText(cells.map(c => c.status), { timeout: 30_000 });
+  await expect(page.getByTestId('wlive-count'), `${label}: the header count`).toHaveText(countText(sorted.length));
+}
+
 test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI, anti-circular)', () => {
   let guard: ConsoleGuard;
   test.beforeAll(async () => { await alignWorkshopMetadataNames(); });
@@ -351,7 +481,7 @@ test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI,
     await seedLiveWorld();
   });
   test.afterEach(() => assertNoFatal(guard, 'workshop live: no fatal console errors / pageerrors'));
-  test.afterAll(async () => { await Promise.all([clearLiveWorld(), clearLivePagedWorld()]); });
+  test.afterAll(async () => { await Promise.all([clearLiveWorld(), clearLivePagedWorld(), clearLiveKindsWorld()]); });
 
   // ===========================================================================================
   // WLV-01 — the Live button follows the Active chip's rule
@@ -829,5 +959,132 @@ test.describe('Workshop Live — the Live button and /workshoplive/:id (real UI,
     await page.getByTestId('wlive-prev').click();
     await expectPagedView(page, feed, 1, 'WLV-11 back on page 1');
     await expect(top.getByTestId('wlive-sub'), 'WLV-11: the third arrival tops page 1').toHaveText(a3.sub);
+  });
+
+  // ===========================================================================================
+  // WLV-12 — the Journey and Customer status columns, for every kind of person
+  // ===========================================================================================
+  test('WLV-12 Journey and Customer status after Email: journey name and title-cased status, "—" when missing, "New User" in both for a still-new user', async ({ page }) => {
+    await seedLiveKindsWorld();
+    const kinds = K.seeded;
+    // [ORACLE PIN] the feed the test expects is what Firestore holds: one participant doc and one completion a person.
+    expect(await completedSubsInFirestore(K.ID), `precondition: KINDS holds ${kinds.length} participant docs, one completion each`)
+      .toEqual({ docs: kinds.length, completed: kinds.length });
+    // [PIVOT PINS] what makes each kind a real test of its rule, as stored:
+    for (const who of ['stillNew', 'stillNewFalse', 'converted'] as KindsPersonKey[]) {
+      const meta: any = await getDoc('participant metadata', K.people[who].id);
+      const j: any = meta?.activejourney ? await getDoc('journey', String(meta.activejourney)) : null;
+      expect([!!j?.journey, !!String(meta?.customerstatus ?? '').trim()],
+        `precondition: ${who}'s metadata has a NAMED journey and a status — "New User" can only come from the new-user rule`)
+        .toEqual([true, true]);
+    }
+    const nud = async (who: KindsPersonKey) => ((await getDoc('new_user_data', K.people[who].id)) as any) ?? {};
+    expect('movedtoexist' in (await nud('stillNew')), 'precondition: stillNew\'s new_user_data has no movedtoexist at all').toBe(false);
+    expect((await nud('stillNewFalse')).movedtoexist, 'precondition: stillNewFalse is explicitly not moved').toBe(false);
+    expect((await nud('converted')).movedtoexist, 'precondition: converted is moved to existing').toBe(true);
+    expect(await getDoc('journey', K.journeys.missingId), 'precondition: missingJourney\'s journey id has no journey doc').toBeNull();
+    expect((await getDoc('participant metadata', K.people.missingJourney.id) as any)?.activejourney,
+      'precondition: …and that id IS their active journey').toBe(K.journeys.missingId);
+    expect('activejourney' in ((await getDoc('participant metadata', K.people.noJourney.id) as any) ?? { activejourney: 'no doc' }),
+      'precondition: noJourney has no active journey field').toBe(false);
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, K.ID);
+    await expect(page.getByTestId('wlive-title'), 'WLV-12: the workshop title').toHaveText(K.title, { timeout: 30_000 });
+    await expectKindsFeed(page, kinds, 'WLV-12');
+
+    // The two columns sit after Email: in the header and in every row (the card layout keeps the same cell order).
+    await expect(page.locator('table.wlv-table thead th'), 'WLV-12: Journey and Customer status after Email').toHaveText(KINDS_HEADERS);
+    await expect.poll(() => feedRows(page).evaluateAll(rows => rows.map(r =>
+      [...r.querySelectorAll(':scope > td')].map(td => td.getAttribute('data-testid')).join(','))),
+    { message: 'WLV-12: every row\'s cells in order' }).toEqual(kinds.map(() => KINDS_CELL_HOOKS.join(',')));
+
+    // Spelled out per kind (each is already implied by the exact columns above), the row found by its own sub challenge.
+    for (const who of kinds) {
+      const x = KINDS_LABELS[who];
+      const row = kindsRow(page, who);
+      await expect(row, `WLV-12: ${who} has one row`).toHaveCount(1);
+      await expect(row.getByTestId('wlive-journey'), `WLV-12: ${who} (${x.why}) — Journey`).toHaveText(x.journey);
+      await expect(row.getByTestId('wlive-status'), `WLV-12: ${who} (${x.why}) — Customer status`).toHaveText(x.status);
+    }
+    // Still-new users with metadata keep the metadata's name, phone and email (the precedence is unchanged).
+    for (const who of ['stillNew', 'stillNewFalse', 'converted'] as KindsPersonKey[]) {
+      const m = K.people[who].meta!;
+      const n = K.people[who].nud!;
+      expect(m.name, `precondition: ${who}'s two records differ`).not.toBe(n.name);
+      await expect(kindsRow(page, who).getByTestId('wlive-name'), `WLV-12: ${who} is named from metadata`).toHaveText(m.name);
+      await expect(kindsRow(page, who).getByTestId('wlive-email'), `WLV-12: ${who}'s email from metadata`).toHaveText(m.email);
+      await expect(kindsRow(page, who).getByTestId('wlive-phone'), `WLV-12: ${who}'s phone from metadata`).toHaveText(`${m.cc} ${m.phone}`);
+    }
+    // A journey id never shows in place of a name.
+    for (const id of [K.journeys.alpha.id, K.journeys.beta.id, K.journeys.missingId]) {
+      await expect(page.getByTestId('wlive-journey').filter({ hasText: id }), `WLV-12: the raw id ${id} never shows`).toHaveCount(0);
+    }
+
+    // Search is unchanged — name, phone and email only: a journey name, "New User" or a status matches nobody.
+    const shownText = K.seeded.flatMap(k => [K.people[k].meta, K.people[k].nud])
+      .flatMap(c => (c ? [c.name, c.email] : [])).join('\n').toLowerCase();
+    const box = page.getByTestId('wlive-search');
+    const none = page.getByTestId('wlive-no-match');
+    for (const term of ['Alpha Journey', NEW_USER, 'Discontinued']) {
+      expect(shownText.includes(term.toLowerCase()), `precondition: "${term}" is in nobody's name or email`).toBe(false);
+      expect(digitsOf(term), `precondition: "${term}" has no digits to match a phone`).toBe('');
+      await box.fill(term);
+      await expect(none, `WLV-12 "${term}": the no-match state — the search does not read the new columns`).toContainText('No completions match your search', { timeout: 30_000 });
+      await expect(feedRows(page), `WLV-12 "${term}": no rows`).toHaveCount(0);
+    }
+    await page.getByTestId('wlive-no-match-clear').click();
+    await expect(box, 'WLV-12: the box is empty').toHaveValue('');
+    await expectKindsFeed(page, kinds, 'WLV-12 cleared');
+  });
+
+  // ===========================================================================================
+  // WLV-13 — live: an arriving still-new user reads "New User" in both columns once their details fill in
+  // ===========================================================================================
+  test('WLV-13 live: an arriving existing user shows their journey and status; an arriving still-new user reads "New User" in both', async ({ page }) => {
+    await seedLiveKindsWorld();
+    const [existing, fresh] = K.arrivals;
+    expect([existing, fresh], 'precondition: the control arrives first, then the new user').toEqual(['arrivalExisting', 'arrivalNew']);
+    for (const who of K.arrivals) {
+      expect(await getDoc('participant workshop', K.pw(who)), `precondition: ${who} is not on KINDS yet`).toBeNull();
+    }
+    const newest = Math.max(...K.seeded.map(k => K.people[k].at.getTime()));
+    expect([K.people[existing].at.getTime() > newest, K.people[fresh].at.getTime() > K.people[existing].at.getTime()],
+      'precondition: each arrival is newer than everything before it').toEqual([true, true]);
+    // [PIVOT PIN] the arriving new user's metadata has a named journey and a status, so only the new-user rule
+    // (new_user_data asked for this late person too, not just for people metadata lacks) gives "New User".
+    const freshMeta: any = await getDoc('participant metadata', K.people[fresh].id);
+    const freshNud: any = await getDoc('new_user_data', K.people[fresh].id);
+    const freshJourney: any = freshMeta?.activejourney ? await getDoc('journey', String(freshMeta.activejourney)) : null;
+    expect([!!freshJourney?.journey, !!freshMeta?.customerstatus,
+      !!freshNud && freshNud.movedtoexist !== true],
+    'precondition: arrivalNew has metadata with a named journey and a status, and a not-moved new_user_data doc')
+      .toEqual([true, true, true]);
+
+    await loginAsWshopAdmin(page);
+    await openLive(page, K.ID);
+    await expectKindsFeed(page, K.seeded, 'WLV-13 before');
+    await expect(page.getByTestId('wlive-sub').filter({ hasText: exactly(K.people[fresh].sub) }), 'WLV-13: the new user is not on screen yet').toHaveCount(0);
+    await page.evaluate(() => { (window as any).__wlvSamePage = 'kept'; });
+    const top = feedRows(page).first();
+
+    // 1) The control: an existing user arrives — their journey and status, not "New User".
+    await addLiveKindsArrival(existing);
+    const e = await kindsPersonOracle(existing);
+    await expect(top.getByTestId('wlive-sub'), 'WLV-13: the existing user\'s completion tops the list').toHaveText(K.people[existing].sub, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-name'), 'WLV-13: their name fills in').toHaveText(e.name, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-journey'), 'WLV-13: their journey by name').toHaveText(e.journey, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-status'), 'WLV-13: their status').toHaveText(e.status, { timeout: 30_000 });
+
+    // 2) A still-new user who also has metadata arrives — "New User" in both once their details fill in.
+    await addLiveKindsArrival(fresh);
+    const n = await kindsPersonOracle(fresh);
+    await expect(top.getByTestId('wlive-sub'), 'WLV-13: the new user\'s completion tops the list').toHaveText(K.people[fresh].sub, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-name'), 'WLV-13: their details fill in (the metadata name)').toHaveText(n.name, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-journey'), 'WLV-13: Journey reads New User').toHaveText(NEW_USER, { timeout: 30_000 });
+    await expect(top.getByTestId('wlive-status'), 'WLV-13: Customer status reads New User').toHaveText(NEW_USER, { timeout: 30_000 });
+
+    await expectKindsFeed(page, [...K.seeded, ...K.arrivals], 'WLV-13 after both arrivals');
+    expect(await page.evaluate(() => (window as any).__wlvSamePage), 'WLV-13: no reload happened').toBe('kept');
   });
 });

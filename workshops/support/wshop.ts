@@ -3802,3 +3802,199 @@ export async function clearLivePagedWorld(): Promise<void> {
     ...who.map(w => drop('new_user_data', P.people[w].id)),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-19 — Workshop Live, addition: the Journey and Customer status columns
+// (workshop-live.spec.ts WLV-12..13; the plan's last section, "Addition: Journey and Customer status columns").
+//
+// KINDS — a live workshop of its own (app switch on; NO testrunid on the config doc, for WS-01) with ONE main challenge
+// and one sub challenge per person, so each person's single completion — and so their row — is told apart by its sub
+// name. Two run-scoped journeys, ALPHA and BETA (`journey` = the name the screen shows). Nobody here has profile_data,
+// so the profile_data → participant metadata CF never rewrites a name (unlike p0/p1 — see wsMetaNames).
+//   alphaActive      metadata: activejourney ALPHA, 'active'
+//   noJourney        metadata: NO activejourney field, 'non active'
+//   missingJourney   metadata: activejourney = an id with NO journey doc, 'discontinued'   (the raw id must never show)
+//   blankJourney     metadata: activejourney '', 'banned'
+//   noStatus         metadata: activejourney BETA, customerstatus ''
+//   converted        metadata: BETA, 'late'  + new_user_data with movedtoexist: true (other name / email / phone)
+//   stillNew         metadata: ALPHA, 'active' + new_user_data, movedtoexist ABSENT (other name / email / phone)
+//   stillNewFalse    metadata: BETA, 'non active' + new_user_data with movedtoexist: false
+//   newOnly          new_user_data only (camelCase countryCode)
+//   ghost            in neither collection
+// WLV-13's arrivals — their people docs are seeded, their participant workshop docs are written only WHILE THE PAGE IS
+// OPEN (addLiveKindsArrival), each newer than every seeded completion:
+//   arrivalExisting  metadata only: ALPHA, 'active'                     (the control: an arrival is not "new" per se)
+//   arrivalNew       metadata: BETA, 'late' + new_user_data, movedtoexist ABSENT
+// The labels each must read are DECLARED by the spec (and pinned there against these docs); this is data only.
+// PRECONDITION writes only; clearLiveKindsWorld removes everything by id. No ATC collection is touched.
+// =================================================================================================
+export type KindsPersonKey =
+  | 'alphaActive' | 'noJourney' | 'missingJourney' | 'blankJourney' | 'noStatus' | 'converted'
+  | 'stillNew' | 'stillNewFalse' | 'newOnly' | 'ghost' | 'arrivalExisting' | 'arrivalNew';
+export interface KindsContact { name: string; email: string; cc: string; phone: string }
+export interface KindsPerson {
+  id: string;
+  /** Their one sub challenge on KINDS (unique per person) and when they completed it. */
+  sub: string;
+  subId: string;
+  at: Date;
+  /** participant metadata, if they have it. `journey`: the activejourney written (undefined = no such field). */
+  meta?: KindsContact & { journey?: string; status: string };
+  /** new_user_data, if they have it. `movedtoexist`: undefined = no such field. */
+  nud?: KindsContact & { movedtoexist?: boolean };
+}
+
+const WLVK_J = {
+  ALPHA: `${RUN}_J_wlvk_alpha`,
+  BETA: `${RUN}_J_wlvk_beta`,
+  /** An activejourney value with NO journey doc behind it. */
+  MISSING: `${RUN}_J_wlvk_missing`,
+};
+const wlvkContact = (first: string, cc: string, phone: string): KindsContact =>
+  ({ name: `WLVK ${first} ${RUN}`, email: `wlvk.${first.toLowerCase().replace(/\s+/g, '.')}.${RUN}@example.com`, cc, phone });
+const wlvkPerson = (key: string, n: number, at: Date, rest: Pick<KindsPerson, 'meta' | 'nud'>): KindsPerson =>
+  ({ id: `${RUN}_pf_wlvk_${key}`, sub: `WLVK Step ${n} ${key}`, subId: `${RUN}_wlvk_s${n}`, at, ...rest });
+
+export const wsLiveKinds = {
+  ID: `${RUN}_W_wlv_kinds`,
+  title: `Live Kinds Workshop ${RUN}`,
+  /** The main challenge as the screen names it (`heading: subheading` from the config). */
+  main: 'Kinds Module: People',
+  journeys: {
+    alpha: { id: WLVK_J.ALPHA, name: `WLVK Alpha Journey ${RUN}` },
+    beta: { id: WLVK_J.BETA, name: `WLVK Beta Journey ${RUN}` },
+    missingId: WLVK_J.MISSING,
+  },
+  people: {
+    alphaActive: wlvkPerson('alphaActive', 1, new Date(2026, 9, 3, 9, 10, 0, 0), {
+      meta: { ...wlvkContact('Aarav Alpha', '+91', '9300000001'), journey: WLVK_J.ALPHA, status: 'active' } }),
+    noJourney: wlvkPerson('noJourney', 2, new Date(2026, 9, 7, 10, 20, 0, 0), {
+      meta: { ...wlvkContact('Bina Bare', '+91', '9300000002'), status: 'non active' } }),
+    missingJourney: wlvkPerson('missingJourney', 3, new Date(2026, 9, 1, 11, 30, 0, 0), {
+      meta: { ...wlvkContact('Chirag Gone', '+91', '9300000003'), journey: WLVK_J.MISSING, status: 'discontinued' } }),
+    blankJourney: wlvkPerson('blankJourney', 4, new Date(2026, 9, 9, 12, 40, 0, 0), {
+      meta: { ...wlvkContact('Divya Blank', '+91', '9300000004'), journey: '', status: 'banned' } }),
+    noStatus: wlvkPerson('noStatus', 5, new Date(2026, 9, 5, 13, 50, 0, 0), {
+      meta: { ...wlvkContact('Eshan Plain', '+91', '9300000005'), journey: WLVK_J.BETA, status: '' } }),
+    converted: wlvkPerson('converted', 6, new Date(2026, 9, 2, 14, 15, 0, 0), {
+      meta: { ...wlvkContact('Farida Moved', '+91', '9300000006'), journey: WLVK_J.BETA, status: 'late' },
+      nud: { ...wlvkContact('Farida Signup', '+44', '7700900606'), movedtoexist: true } }),
+    stillNew: wlvkPerson('stillNew', 7, new Date(2026, 9, 8, 15, 25, 0, 0), {
+      meta: { ...wlvkContact('Gauri Twofold', '+91', '9300000007'), journey: WLVK_J.ALPHA, status: 'active' },
+      nud: { ...wlvkContact('Gauri Signup', '+44', '7700900707') } }),
+    stillNewFalse: wlvkPerson('stillNewFalse', 8, new Date(2026, 9, 4, 16, 35, 0, 0), {
+      meta: { ...wlvkContact('Hiran Flagged', '+91', '9300000008'), journey: WLVK_J.BETA, status: 'non active' },
+      nud: { ...wlvkContact('Hiran Signup', '+44', '7700900808'), movedtoexist: false } }),
+    newOnly: wlvkPerson('newOnly', 9, new Date(2026, 9, 6, 17, 45, 0, 0), {
+      nud: wlvkContact('Isha Signup', '+44', '7700900909') }),
+    ghost: wlvkPerson('ghost', 10, new Date(2026, 9, 10, 8, 5, 0, 0), {}),
+    arrivalExisting: wlvkPerson('arrivalExisting', 11, new Date(2026, 10, 1, 9, 0, 0, 0), {
+      meta: { ...wlvkContact('Jatin Arrives', '+91', '9300000011'), journey: WLVK_J.ALPHA, status: 'active' } }),
+    arrivalNew: wlvkPerson('arrivalNew', 12, new Date(2026, 10, 2, 10, 30, 0, 0), {
+      meta: { ...wlvkContact('Kavya Arrives', '+91', '9300000012'), journey: WLVK_J.BETA, status: 'late' },
+      nud: { ...wlvkContact('Kavya Signup', '+44', '7700901212') } }),
+  } as Record<KindsPersonKey, KindsPerson>,
+  /** The people with a completion on KINDS from the seed (in no particular order — the spec sorts). */
+  seeded: ['alphaActive', 'noJourney', 'missingJourney', 'blankJourney', 'noStatus', 'converted',
+    'stillNew', 'stillNewFalse', 'newOnly', 'ghost'] as KindsPersonKey[],
+  /** WLV-13's arrivals, in the order it writes them. */
+  arrivals: ['arrivalExisting', 'arrivalNew'] as KindsPersonKey[],
+  pw: (who: KindsPersonKey) => `${RUN}_pw_wlvk_${who}`,
+};
+
+const WLVK_MAIN = `${RUN}_wlvk_m1`;
+
+/** KINDS's config steps: one main challenge, one sub challenge per person (named for them). */
+function kindsConfigChallenges(): any[] {
+  return [{
+    type: 'challenge', challengeid: WLVK_MAIN, heading: 'Kinds Module', subheading: 'People',
+    challenges: (Object.keys(wsLiveKinds.people) as KindsPersonKey[]).map(k => {
+      const p = wsLiveKinds.people[k];
+      return { type: 'video', challengeid: p.subId, name: p.sub, status: '' };
+    }),
+  }];
+}
+
+/** One person's participant workshop doc on KINDS: the config's steps with exactly their own sub completed. */
+function kindsPwDoc(db: any, T: any, who: KindsPersonKey): Record<string, any> {
+  const p = wsLiveKinds.people[who];
+  return {
+    docid: wsLiveKinds.pw(who), profileid: p.id,
+    workshopref: db.collection('workshopconfiguration').doc(wsLiveKinds.ID),
+    challenges: kindsConfigChallenges().map(m => ({
+      ...m, challenges: m.challenges.map((s: any) => (s.challengeid === p.subId ? { ...s, status: 'completed', completed: T.fromDate(p.at) } : s)),
+    })),
+    created: T.fromDate(new Date(2026, 8, 30, 9, 0, 0, 0)), testrunid: RUN, _testdata: true,
+  };
+}
+
+/**
+ * Seed KINDS (idempotent: full-document set()). Every person's people docs are written exactly as declared — and a
+ * collection they are NOT declared in is cleared, so a leftover can never change which record is shown. The missing
+ * journey id is deleted too. The arrivals' participant workshop docs are removed (WLV-13 writes them).
+ */
+export async function seedLiveKindsWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const K = wsLiveKinds;
+  const day = (n: number) => T.fromMillis(Date.now() + n * 86_400_000);
+  const keys = Object.keys(K.people) as KindsPersonKey[];
+  const people = (who: KindsPersonKey) => {
+    const p = K.people[who];
+    const meta = db.collection('participant metadata').doc(p.id);
+    const fresh = db.collection('new_user_data').doc(p.id);
+    const m = p.meta;
+    const n = p.nud;
+    return [
+      m ? meta.set({
+        docid: p.id, profileid: p.id, name: m.name, email: m.email, phonenumber: m.phone, countrycode: m.cc,
+        customerstatus: m.status, ...(m.journey !== undefined ? { activejourney: m.journey } : {}), ...tag,
+      }) : meta.delete().catch(() => undefined),
+      n ? fresh.set({
+        docid: p.id, uid: `${p.id}_u`, name: n.name, email: n.email, phonenumber: n.phone, countryCode: n.cc,
+        created: T.fromDate(new Date(2026, 0, 7, 9, 0, 0, 0)), enable: true, status: 'active', tags: [],
+        ...(n.movedtoexist !== undefined ? { movedtoexist: n.movedtoexist } : {}), ...tag,
+      }) : fresh.delete().catch(() => undefined),
+    ];
+  };
+  await Promise.all([
+    db.collection('workshopconfiguration').doc(K.ID).set({
+      docid: K.ID, atcmodel: null, categorybased: false, created: day(-3), workshoptype: 'liveworkshop',
+      active: true, webactive: false, eiflixmobileactive: false, workshopcompleted: false,
+      detailpage: { type: 'workshop', title: K.title, shortdescription: 'seeded workshop live (kinds)',
+        workshopStartDate: day(-2), workshopEndDate: day(8), registrationStartDate: day(-6), registrationEndDate: day(0) },
+      challenges: kindsConfigChallenges(),
+    }),
+    db.collection('journey').doc(K.journeys.alpha.id).set({ id: K.journeys.alpha.id, journey: K.journeys.alpha.name, ...tag }),
+    db.collection('journey').doc(K.journeys.beta.id).set({ id: K.journeys.beta.id, journey: K.journeys.beta.name, ...tag }),
+    db.collection('journey').doc(K.journeys.missingId).delete().catch(() => undefined),
+    ...keys.flatMap(people),
+    ...K.seeded.map(who => db.collection('participant workshop').doc(K.pw(who)).set(kindsPwDoc(db, T, who))),
+    ...K.arrivals.map(who => db.collection('participant workshop').doc(K.pw(who)).delete().catch(() => undefined)),
+  ]);
+}
+
+/** WLV-13: one arrival's participant workshop doc on KINDS (a person not on screen yet), with their one completion. */
+export async function addLiveKindsArrival(who: KindsPersonKey): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  await db.collection('participant workshop').doc(wsLiveKinds.pw(who)).set(kindsPwDoc(db, admin.firestore.Timestamp, who));
+}
+
+/** Remove KINDS's world by id (afterAll; the run-tag sweep is the backstop for the tagged docs). */
+export async function clearLiveKindsWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const K = wsLiveKinds;
+  const keys = Object.keys(K.people) as KindsPersonKey[];
+  await Promise.all([
+    drop('workshopconfiguration', K.ID),
+    drop('journey', K.journeys.alpha.id),
+    drop('journey', K.journeys.beta.id),
+    ...keys.map(w => drop('participant workshop', K.pw(w))),
+    ...keys.map(w => drop('participant metadata', K.people[w].id)),
+    ...keys.map(w => drop('new_user_data', K.people[w].id)),
+  ]);
+}
