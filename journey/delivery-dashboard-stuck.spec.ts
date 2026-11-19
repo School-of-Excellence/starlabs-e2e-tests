@@ -304,3 +304,40 @@ test.describe('Journey — Delivery dashboard funnel + Ongoing-by-product strip 
     expect(page.getByTestId('ddc-stagemix-completed')).toBeTruthy();
   });
 });
+
+// DDC-CTD (app charan-release 2026-11-19, journal specs/journals/2026-11-19-delivery-dashboard-ctd-stage-tab.md): the
+// Stages section gains a "CTD D&I (Appointment)" product chip (exact product, not the merged CTD card) with its own
+// board — Total Eligible → Diagnostics → Implementation → Review → Completion — and EI Starter Pack's month columns were
+// re-wired 1:1 (Past / This / Next Month sit between Total Eligible and Onboarding). The column lists are the app's
+// own config; the cases prove each chip renders ITS board and not another product's (CTD has no Onboarding /
+// Celebration Call; Starter Pack has no Review / Completion). Card membership needs a CTD appointment seed (deferred).
+test.describe('Journey — Delivery dashboard Stages (CTD D&I Appointment board, EI Starter Pack month columns)', () => {
+  async function openStages(page: Page) {
+    await loginAsJourneyAdmin(page);
+    await page.goto('/delivery-dashboard', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('app-delivery-dashboard-clone'), 'ddc must mount').toBeAttached({ timeout: 30_000 });
+  }
+  const titles = (page: Page) => page.locator('app-delivery-dashboard-clone .board .col-title');
+
+  test('DDC-CTD-01 the CTD D&I (Appointment) chip opens its own five-column board', async ({ page }) => {
+    await openStages(page);
+    const chip = page.getByTestId('ddc-btn-ctd-appt');
+    await expect(chip, 'DDC-CTD-01: the CTD chip is offered with no product filter').toBeVisible({ timeout: 60_000 });
+    await chip.click();
+    await expect(chip, 'DDC-CTD-01: the chip becomes the active product').toHaveClass(/active/, { timeout: 30_000 });
+    await expect(titles(page), 'DDC-CTD-01: Total Eligible → Diagnostics → Implementation → Review → Completion')
+      .toHaveText(['Total Eligible', 'Diagnostics', 'Implementation', 'Review', 'Completion'], { timeout: 90_000 });
+    await expect(page.getByTestId('ddc-btn-085'), 'DDC-CTD-01: EI Starter Pack is not active').not.toHaveClass(/active/);
+  });
+
+  test('DDC-CTD-02 EI Starter Pack lists the month columns between Total Eligible and Onboarding', async ({ page }) => {
+    await openStages(page);
+    await page.getByTestId('ddc-btn-085').click();
+    await expect(titles(page), 'DDC-CTD-02: the ten Starter Pack columns, months wired 1:1')
+      .toHaveText(['Total Eligible', 'Past Month', 'This Month', 'Next Month', 'Onboarding', 'Pre-Process', 'Diagnostics',
+        'Implementation', 'Report', 'Celebration Call'], { timeout: 90_000 });
+    await page.getByTestId('ddc-btn-ctd-appt').click();
+    await expect(titles(page).filter({ hasText: /^\s*(Onboarding|Celebration Call|Past Month)\s*$/ }),
+      'DDC-CTD-02: switching to CTD drops the Starter Pack-only columns').toHaveCount(0, { timeout: 90_000 });
+  });
+});

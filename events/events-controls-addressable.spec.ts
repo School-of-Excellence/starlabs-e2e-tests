@@ -238,11 +238,13 @@ test.describe('Events interactive controls — addressable + mount smoke (non-AT
     expect(page.getByTestId('pf-send-notification')).toBeTruthy();
     expect(page.getByTestId('pf-send-email')).toBeTruthy();
     expect(page.getByTestId('pf-bar-export')).toBeTruthy();
+    expect(page.getByTestId('pf-bar-mark-attended')).toBeTruthy();
+    expect(page.getByTestId('pf-bar-mark-restore')).toBeTruthy();
+    expect(page.getByTestId('pf-bar-mark-notattended')).toBeTruthy();
     expect(page.getByTestId('pf-bar-filter')).toBeTruthy();
     expect(page.getByTestId('pf-table-select-all')).toBeTruthy();
     expect(page.getByTestId('pf-table-row-select')).toBeTruthy();
     expect(page.getByTestId('pf-row-assign-product')).toBeTruthy();
-    expect(page.getByTestId('pf-row-revoke-attend')).toBeTruthy();
     expect(page.getByTestId('pf-row-revoke')).toBeTruthy();
     expect(page.getByTestId('pf-table-clear-filter')).toBeTruthy();
     expect(page.getByTestId('pf-import-toggle-add')).toBeTruthy();
@@ -260,6 +262,7 @@ test.describe('Events interactive controls — addressable + mount smoke (non-AT
     expect(page.getByTestId('epc-overview-configure-cta')).toBeTruthy();
     expect(page.getByTestId('epc-row-edit-loading')).toBeTruthy();
     expect(page.getByTestId('epc-row-edit')).toBeTruthy();
+    expect(page.getByTestId('epc-copy-link')).toBeTruthy();
     expect(page.getByTestId('pf-arena-card')).toBeTruthy();
     expect(page.getByTestId('pf-edit-event')).toBeTruthy();
     expect(page.getByTestId('pf-journey-card-toggle')).toBeTruthy();
