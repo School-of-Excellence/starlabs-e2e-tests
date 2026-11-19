@@ -90,6 +90,26 @@ test.describe('Journey & Products — catalog authoring (real UI, anti-circular,
     await deleteDocsByField('journey', 'journey', NEW_JOURNEY_NAME);
   });
 
+  test('JP-02b the duplicate-name check survives a journey doc with no name, and still flags a real duplicate', async ({ page }) => {
+    // Seed step 10 writes a journey with NO `journey` field (own tag). Before 2026-11-19 the dialog's onvaluechange
+    // ran items.journey.replace() over every doc and threw on it (the console guard fails the case on that).
+    const nameless = await queryWhere('journey', [['testrunid', '==', `${RUN}_jnl`]]);
+    expect(nameless.length, 'oracle sanity: the nameless journey is seeded').toBe(1);
+    expect((nameless[0] as any).journey, 'oracle sanity: …and has no journey field').toBeUndefined();
+
+    await loginAsJourneyAdmin(page);
+    await page.goto('/addjourney', { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: /Add journey/i }).click();
+    const nameInput = page.getByRole('textbox', { name: /Journey/i }).first();
+    await expect(nameInput).toBeVisible({ timeout: 20_000 });
+
+    await nameInput.fill(`JP02b Fresh Name ${RUN}`);
+    await expect(page.getByText(/already exist/), 'JP-02b: a new name is not a duplicate').toHaveCount(0);
+    // negative control: the check still RUNS — an existing journey's name (case / spaces ignored) is flagged
+    await nameInput.fill(journeyNames.journey1.toUpperCase().replace(/ /g, '  '));
+    await expect(page.getByText(/already exist/), 'JP-02b: an existing name is still flagged as a duplicate').toBeVisible({ timeout: 10_000 });
+  });
+
   // ===========================================================================================
   // JP-03 — /addproduct renders the seeded products from its collectionData(products) stream
   // ===========================================================================================

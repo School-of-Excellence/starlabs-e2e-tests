@@ -307,9 +307,12 @@ async function seedEvents() {
   });
 
   // 9b) JOURNEY — resolves p0/p1's `activejourney` id to a display name on events-stage-data's Journey
-  //     column (ESD-01). A full-collection scan (getJourneyMap), so any doc shape with `name` works.
+  //     column (ESD-01, reads `name`). Real journey docs carry `journey` (the label every journey screen
+  //     reads); without it this doc — which outlives the suite, teardown runs at the NEXT seed — crashed the
+  //     Add-journey dialog and the sales-dashboard journey names when the journey suite ran after this one
+  //     on a shared emulator (2026-11-19). Both fields, like ELIG_J below.
   await db.collection('journey').doc(ID.JOURNEY1).set({
-    docid: ID.JOURNEY1, name: `TEST Journey ${TESTRUNID}`, ...tag,
+    docid: ID.JOURNEY1, journey: `TEST Journey ${TESTRUNID}`, name: `TEST Journey ${TESTRUNID}`, ...tag,
   });
 
   // 9d) EVENT ELIGIBILITY (UED-ELIG-01, app 0e8f5685 surya) — the per-product eligibility block on the

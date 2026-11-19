@@ -581,6 +581,13 @@ async function seedJourney() {
   // 9) EV. PREP BOARD world (journey/jc-evprep-board.spec.ts, EVP-*) — own run tag, see seedEvprep() ===
   await seedEvprep(db, T);
 
+  // 10) A NAMELESS journey doc (JP-02b, 2026-11-19): legacy / partial data with no `journey` field. Every journey
+  //     screen in this suite now renders with one present — the Add-journey duplicate check and the sales-dashboard
+  //     journey names threw on it. OWN tag (`<run>_jnl`) so JP-01's seeded-journey count is untouched.
+  await db.collection('journey').doc(`${JNL_RUN}_nameless`).set({
+    docid: `${JNL_RUN}_nameless`, sequence: 999, ...TAG(JNL_RUN),
+  });
+
   return {
     TESTRUNID, ID, PF, EMAIL, PID, PID_ONB: PF.p1,
     names: {
@@ -861,6 +868,7 @@ async function seedEvprep(db, T) {
   await prep('DONE', { status: 'completed', currentstage: EVP.names.two, completedstages: [EVP.names.one, EVP.names.two], createdon: ago(3), stagesince: ago(1) });
 }
 
+const JNL_RUN = `${TESTRUNID}_jnl`;
 const EVP_SEEDED = ['evolution prep variation', 'evolution prep', 'participant metadata', 'participantjourneyproduct', 'salesleads'];
 
 // Collections this seed writes (for teardown). All testrunid-scoped so other runs are untouched.
@@ -896,7 +904,8 @@ async function teardownJourney() {
   const n = await seed.teardownCollections(db, SEEDED, TESTRUNID)
     + await seed.teardownCollections(db, FTO_SEEDED, FTO_RUN)
     + await seed.teardownCollections(db, DDC_SEEDED, DDC_RUN)
-    + await seed.teardownCollections(db, EVP_SEEDED, EVP_RUN);
+    + await seed.teardownCollections(db, EVP_SEEDED, EVP_RUN)
+    + await seed.teardownCollections(db, ['journey'], JNL_RUN);
 
   // APP-written docs (no testrunid) — delete by their natural key (profileid). Covers JP-06's new
   // journeyproductpurchase / participant purchase logs and JP-09's email archive doc.
