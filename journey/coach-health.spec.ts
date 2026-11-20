@@ -456,8 +456,13 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(row(page, P.F.name).getByTestId('jchd-row-due'), 'JCH-15: F\'s only follow-up is closed').toHaveCount(0);
   });
 
-  test('JCH-16 the slide-over lists a participant\'s open follow-ups and Mark done closes one', async ({ page }) => {
+  test('JCH-16 the slide-over lists open follow-ups; Mark done asks for a note, Cancel keeps it open, Save logs the note and closes it', async ({ page }) => {
     await deleteDocsByField('healthtracker_activity', 'scheduleId', FU.ids.B);
+    const doneNote = `JCH-16 closed ${RUN}`;
+    await deleteDocsByField('healthtracker_activity', 'note', doneNote);
+    // Saving a log also POSTs it to SalesCRM. The emulator has no `slack webhookurls` token so the app stops
+    // before fetch — this route makes sure nothing ever leaves the lane even if one appears.
+    await page.route('**/crmApi/**', (r) => r.abort());
     await openDashboard(page);
     await openParticipants(page);
 
@@ -471,17 +476,37 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     const item = so.getByTestId('jcso-fu-list').getByTestId('jcso-fu-item');
     await expect(item, 'JCH-16: B has one open follow-up').toHaveCount(1, { timeout: 30_000 });
     await expect(item).toContainText(FU.note('B'));
-    await item.getByTestId('jcso-fu-done').click();
-    await expect(so.getByTestId('jcso-fu-empty'), 'JCH-16: Mark done removes it from the list').toBeVisible({ timeout: 30_000 });
 
-    // [ORACLE] the close is a schedule_done event pointing at B's follow-up — written by the app, read back here.
+    // Mark done opens the Log composer locked to Note, naming the follow-up; Save stays off until a note is typed.
+    await item.getByTestId('jcso-fu-done').click();
+    const ctx = page.getByTestId('jcso-fu-done-ctx');
+    await expect(ctx, 'JCH-16: the composer names the follow-up being closed').toContainText(FU.note('B'), { timeout: 15_000 });
+    await expect(page.getByTestId('jcso-comp-save'), 'JCH-16: no note → Save & mark done is disabled').toBeDisabled();
+    await page.getByTestId('jcso-comp-cancel').click();
+    await expect(ctx).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.getByTestId('jcso-comp-save'), 'JCH-16: Cancel closes the composer').toHaveCount(0, { timeout: 10_000 });
+    await expect(item, 'JCH-16: Cancel leaves the follow-up open').toHaveCount(1);
+    const afterCancel = await queryWhere('healthtracker_activity', [['scheduleId', '==', FU.ids.B]]);
+    expect(afterCancel.length, 'JCH-16: Cancel writes no schedule_done').toBe(0);
+
+    await item.getByTestId('jcso-fu-done').click();
+    await page.getByTestId('jcso-comp-note').fill(doneNote);
+    await expect(page.getByTestId('jcso-comp-save')).toHaveText(/Save & mark done/);
+    await page.getByTestId('jcso-comp-save').click();
+    await expect(so.getByTestId('jcso-fu-empty'), 'JCH-16: Save & mark done removes it from the list').toBeVisible({ timeout: 30_000 });
+
+    // [ORACLE] both writes are the app's, read back here: the note on B, then a schedule_done pointing at B's follow-up.
     const done = await pollUntil(async () => (await queryWhere('healthtracker_activity', [['scheduleId', '==', FU.ids.B]])).filter((d: any) => d.type === 'schedule_done'),
       (rows) => rows.length === 1, { timeoutMs: 30_000 });
     expect(done.length, 'JCH-16: exactly one schedule_done for B').toBe(1);
+    const notes = await pollUntil(async () => (await queryWhere('healthtracker_activity', [['note', '==', doneNote]])) as any[],
+      (rows) => rows.length === 1, { timeoutMs: 30_000 });
+    expect(notes.map((n: any) => [n.type, n.profileid]), 'JCH-16: one Note log on B carries the typed text').toEqual([['note', P.B.pf]]);
 
     await page.keyboard.press('Escape');
     await expect(row(page, P.B.name).getByTestId('jchd-row-due'), 'JCH-16: B\'s row chip goes with it').toHaveCount(0, { timeout: 15_000 });
     await deleteDocsByField('healthtracker_activity', 'scheduleId', FU.ids.B);   // leave the world as seeded
+    await deleteDocsByField('healthtracker_activity', 'note', doneNote);
   });
 
   test('JCH-17 the Defaulted mini card filters Participants to the defaulted participant and says how many show', async ({ page }) => {
@@ -495,6 +520,104 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     await expect(page.getByTestId('jchd-diag-showing'), 'JCH-17: the diag line reports the filtered count').toContainText('showing 1');
     await card.click();
     await expect(page.getByTestId('jchd-diag-showing'), 'JCH-17: clicking the active card clears the filter').toHaveCount(0);
+  });
+
+  test('JCH-18 Coach-set health: Not assessed drills to the coach\'s Active base; the drill searches by name and exports what it shows', async ({ page }) => {
+    await openDashboard(page);
+    await expect(page.getByTestId('jchd-hc-desc'), 'JCH-18: the card says it is a 60-day snapshot, not the HQ range').toContainText('last 60 days', { timeout: 45_000 });
+    // No healthtracker_healthstate is seeded, so every Active participant on the base is Not assessed.
+    const legend = page.getByTestId('jchd-hc-unassessed');
+    const n = Number(((await legend.locator('b').innerText()) || '0').trim());
+    await expect(page.getByTestId('jchd-hc-happy'), 'JCH-18: nothing assessed → Happy 0, disabled').toBeDisabled();
+    await expect(page.getByTestId('jchd-hc-neutral'), 'JCH-18: Neutral 0, disabled').toBeDisabled();
+    await expect(page.getByTestId('jchd-hc-unhappy'), 'JCH-18: Unhappy 0, disabled').toBeDisabled();
+    await expect(page.getByTestId('jchd-hc-atrisk'), 'JCH-18: At-risk 0, disabled').toBeDisabled();
+    await expect(page.getByTestId('jchd-hc-critical'), 'JCH-18: Critical 0, disabled').toBeDisabled();
+    await legend.click();
+    const overlay = page.getByTestId('jchd-ahd-overlay');
+    await expect(overlay).toBeVisible({ timeout: 15_000 });
+    await expect(overlay.getByTestId('jchd-ahd-row'), 'JCH-18: one row per participant behind the count').toHaveCount(n);
+    for (const k of ['A', 'B', 'C', 'E', 'F'] as const) {
+      await expect(overlay.getByTestId('jchd-ahd-row').filter({ hasText: P[k].name }), `JCH-18: active ${k} is listed`).toHaveCount(1);
+    }
+    await expect(overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.D.name }), 'JCH-18: D is discontinued (Active scope)').toHaveCount(0);
+    await expect(overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.X.name }), 'JCH-18: X is another coach\'s').toHaveCount(0);
+
+    // Search: every typed word must appear, any order, case-insensitive.
+    const search = overlay.getByTestId('jchd-ahd-search');
+    await search.fill(`${RUN} alpha`.toUpperCase());
+    await expect(overlay.getByTestId('jchd-ahd-row'), 'JCH-18: words in any order, any case').toHaveCount(1);
+    await expect(overlay.getByTestId('jchd-ahd-row')).toContainText(P.A.name);
+    await expect(overlay.getByTestId('jchd-ahd-count'), 'JCH-18: the count reads "x of y" while searching').toHaveText(`1 of ${n}`);
+    const [dl] = await Promise.all([page.waitForEvent('download'), overlay.getByTestId('jchd-ahd-export').click()]);
+    expect(dl.suggestedFilename(), 'JCH-18: Export downloads an .xlsx named after the dialog').toMatch(/^Coach_set_health_Not_assessed_\d{4}-\d{2}-\d{2}\.xlsx$/);
+    await search.fill(`zz-nobody-${RUN}`);
+    await expect(overlay.getByTestId('jchd-ahd-nomatch'), 'JCH-18: no match says so').toBeVisible();
+    await expect(overlay.getByTestId('jchd-ahd-export'), 'JCH-18: nothing shown → nothing to export').toBeDisabled();
+    await page.getByTestId('jchd-ahd-close').click();
+    await legend.click();
+    await expect(page.getByTestId('jchd-ahd-search'), 'JCH-18: the search is cleared on reopen').toHaveValue('');
+    await page.getByTestId('jchd-ahd-close').click();
+  });
+
+  test('JCH-19 Happiness quotient: Happy ÷ health logs in the range, scoped to the coach\'s Active base; presets move the range', async ({ page }) => {
+    // [ORACLE] the seeded health logs, filtered here by the card's rules: on this coach's base, Active, inside the range.
+    const base = await coachBase();
+    const inScope = new Set(base.filter(isActive).map((m) => m.id));
+    const logs = ((await queryWhere('healthtracker_activity', [['testrunid', '==', RUN]])) as any[])
+      .filter((d) => d.type === 'health' && d.timestamp);
+    const now = new Date(); const dow = (now.getDay() + 6) % 7;
+    const wkStart = (off: number) => new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow + off * 7).getTime();
+    const tally = (off: number) => {
+      const lo = wkStart(off), hi = wkStart(off + 1);
+      const hit = logs.filter((d) => inScope.has(d.profileid) && d.timestamp.toMillis() >= lo && d.timestamp.toMillis() < hi);
+      return { total: hit.length, happy: hit.filter((d) => d.state === 'HAPPY').length, unhappy: hit.filter((d) => d.state === 'UNHAPPY').length,
+        neutral: hit.filter((d) => d.state === 'NEUTRAL').length };
+    };
+    const thisWeek = tally(0), lastWeek = tally(-1);
+    expect(thisWeek, 'JCH-19 seed: A + C happy, B unhappy; X (off-base) and D (discontinued) dropped').toEqual({ total: 3, happy: 2, unhappy: 1, neutral: 0 });
+    expect(lastWeek, 'JCH-19 seed: only F, last week').toEqual({ total: 1, happy: 0, unhappy: 0, neutral: 1 });
+
+    await openDashboard(page);
+    const card = page.getByTestId('jchd-hq-card');
+    await expect(card.getByTestId('jchd-hq-week'), 'JCH-19: This week is the default').toHaveClass(/\bon\b/, { timeout: 45_000 });
+    await expect(card.getByTestId('jchd-hq-frac'), 'JCH-19: happy / health logs this week').toHaveText(`${thisWeek.happy}/${thisWeek.total}`, { timeout: 30_000 });
+    await expect(card.getByTestId('jchd-hq-pct')).toHaveText(`${Math.round((thisWeek.happy / thisWeek.total) * 100)}%`);
+    await expect(card.getByTestId('jchd-hq-happy').locator('b')).toHaveText(String(thisWeek.happy));
+    await expect(card.getByTestId('jchd-hq-unhappy').locator('b')).toHaveText(String(thisWeek.unhappy));
+    await expect(card.getByTestId('jchd-hq-neutral'), 'JCH-19: no Neutral logs this week → disabled').toBeDisabled();
+    await expect(card.getByTestId('jchd-hq-atrisk'), 'JCH-19: no At-risk logs this week → disabled').toBeDisabled();
+    await expect(card.getByTestId('jchd-hq-critical'), 'JCH-19: no Critical logs this week → disabled').toBeDisabled();
+    await expect(card.getByTestId('jchd-hq-types').getByTestId('jchd-hq-type').filter({ hasText: 'Health' }), 'JCH-19: the Health type chip counts the same logs')
+      .toContainText(String(thisWeek.total));
+
+    // the Happy count drills to one row per log — and never another coach's participant
+    await card.getByTestId('jchd-hq-frac').click();
+    const overlay = page.getByTestId('jchd-ahd-overlay');
+    await expect(overlay.getByTestId('jchd-ahd-row'), 'JCH-19: Happy logs → A and C').toHaveCount(thisWeek.happy, { timeout: 15_000 });
+    await expect(overlay.getByTestId('jchd-ahd-row').filter({ hasText: P.X.name })).toHaveCount(0);
+    await page.getByTestId('jchd-ahd-close').click();
+
+    await card.getByTestId('jchd-hq-lastweek').click();
+    await expect(card.getByTestId('jchd-hq-frac'), 'JCH-19: Last week moves the range').toHaveText(`0/${lastWeek.total}`, { timeout: 30_000 });
+    await expect(card.getByTestId('jchd-hq-pct')).toHaveText('0%');
+    await expect(card.getByTestId('jchd-hq-neutral').locator('b')).toHaveText(String(lastWeek.neutral));
+
+    // Custom keeps the current dates and shows the date inputs; widening the start to last week's Monday sums both weeks
+    await card.getByTestId('jchd-hq-week').click();
+    await card.getByTestId('jchd-hq-custom').click();
+    const iso = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    await expect(card.getByTestId('jchd-hq-start')).toHaveValue(iso(wkStart(0)));
+    await expect(card.getByTestId('jchd-hq-end')).toHaveValue(iso(wkStart(1) - 1));
+    await card.getByTestId('jchd-hq-start').fill(iso(wkStart(-1)));
+    await expect(card.getByTestId('jchd-hq-frac'), 'JCH-19: a custom two-week range sums both weeks')
+      .toHaveText(`${thisWeek.happy + lastWeek.happy}/${thisWeek.total + lastWeek.total}`, { timeout: 30_000 });
+    await expect(card.getByTestId('jchd-hq-range')).toContainText(String(new Date(wkStart(-1)).getDate()));
+    await expect(card.getByTestId('jchd-hq-error'), 'JCH-19: the range read succeeded').toHaveCount(0);
+
+    // This month reloads from the month start (the seeded logs may fall either side of a month boundary — only the preset is asserted)
+    await card.getByTestId('jchd-hq-month').click();
+    await expect(card.getByTestId('jchd-hq-month')).toHaveClass(/\bon\b/);
   });
 
   test.fixme('JCH-ADDR2 trend / "new since yesterday" chips, finance hero, Overall drill tiles, range inputs, sales / onboarding / plan / health rows addressable (deferred behavioral)', async ({ page }) => {
@@ -561,6 +684,17 @@ test.describe('Journey — JC Health (finance tiles, Needs-attention rule, A&H t
     expect(page.getByTestId('jchd-ov-sales-tot-new')).toBeTruthy();
     expect(page.getByTestId('jchd-ov-sales-tot-up')).toBeTruthy();
     expect(page.getByTestId('jchd-ov-sales-up')).toBeTruthy();
+  });
+
+  test.fixme('JCH-ADDR3 HQ per-type chip list, coach-set health state drills, slide-over Export addressable (deferred behavioral — needs a healthstate seed / download parse)', async ({ page }) => {
+    await page.goto('/journey-coach-health', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('jchd-hq-type')).toBeTruthy();
+    expect(page.getByTestId('jchd-hc-happy')).toBeTruthy();
+    expect(page.getByTestId('jchd-hc-neutral')).toBeTruthy();
+    expect(page.getByTestId('jchd-hc-unhappy')).toBeTruthy();
+    expect(page.getByTestId('jchd-hc-atrisk')).toBeTruthy();
+    expect(page.getByTestId('jchd-hc-critical')).toBeTruthy();
+    expect(page.getByTestId('jcso-export')).toBeTruthy();
   });
 
   // ---- hooks no case drives yet ----

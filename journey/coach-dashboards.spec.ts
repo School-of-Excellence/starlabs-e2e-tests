@@ -331,4 +331,37 @@ test.describe('Journey — coach dashboards (real UI, anti-circular)', () => {
     await open(row.getByTestId('jcd-onb-cell-notassured'), 'Not Assured');
     await expect(person, 'JCD-07: an assured sale is never Not assured').toHaveCount(0);
   });
+  // 2026-11-20 (starlabs-angular specs/journals/2026-11-20-jc-health-filters-hq-followup-done.md): name search + .xlsx
+  // Export on every Onboarding-tab list dialog (prefix jcd) and the Crossover metrics dialog (prefix jcomd —
+  // CrossOverMetricsDialogComponent). The shared drill search/export is driven on JC Health (coach-health JCH-18);
+  // these per-dialog copies are registered here until a case opens each dialog.
+  test.fixme('JCD-ADDR1 Onboarding-tab dialog search boxes + Export, Crossover export / panel search addressable (deferred behavioral)', async ({ page }) => {
+    await page.goto('/JourneycoachDashboard-new', { waitUntil: 'domcontentloaded' });
+    expect(page.getByTestId('jcd-inp-dlg-search-interim')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-health')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-sub')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-status')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-ep')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-askah')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-tag')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-cal')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-cura')).toBeTruthy();
+    expect(page.getByTestId('jcd-inp-dlg-search-modal')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-interim')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-health')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-sub')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-status')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-ep')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-askah')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-tag')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-cal')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-cura')).toBeTruthy();
+    expect(page.getByTestId('jcd-dlg-search-wrap-modal')).toBeTruthy();
+    expect(page.getByTestId('jcd-btn-cal-export')).toBeTruthy();
+    expect(page.getByTestId('jcd-btn-cura-export')).toBeTruthy();
+    expect(page.getByTestId('jcd-btn-modal-export')).toBeTruthy();
+    expect(page.getByTestId('jcomd-btn-export')).toBeTruthy();
+    expect(page.getByTestId('jcomd-btn-panel-export')).toBeTruthy();
+    expect(page.getByTestId('jcomd-inp-panel-search')).toBeTruthy();
+  });
 });
