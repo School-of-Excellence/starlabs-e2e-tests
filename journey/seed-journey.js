@@ -572,6 +572,24 @@ async function seedJourney() {
     createdAt: days(-1), ...tag,
   });
 
+  //    HAPPINESS QUOTIENT (JCH-19, 2026-11-20). The HQ card reads healthtracker_activity by `timestamp` (the field
+  //    the app's logActivity stamps; the follow-ups above use createdAt and stay invisible to it) and scopes to the
+  //    summary filter (coach base, Active). This week: A HAPPY, C HAPPY, B UNHAPPY → 2/3. Each rule has a doc it must drop:
+  //      X HAPPY now but OFF-BASE · D HAPPY now but DISCONTINUED (Active lifecycle) · F NEUTRAL last week (range)
+  //    Last week therefore shows F alone (0/1).
+  const wk = (offsetWeeks, dayInWeek) => { const n = new Date(); const dow = (n.getDay() + 6) % 7;
+    const d = new Date(n.getFullYear(), n.getMonth(), n.getDate() - dow + offsetWeeks * 7 + dayInWeek, 0, 5, 0, 0); return T.fromDate(d); };
+  const hqLog = (id, pf, state, ts) => db.collection('healthtracker_activity').doc(`${TESTRUNID}_${id}`).set({
+    docid: `${TESTRUNID}_${id}`, type: 'health', profileid: pf, state, note: `JCH HQ ${id} ${TESTRUNID}`,
+    actorName: 'JCH Seed Coach', timestamp: ts, ...tag,
+  });
+  await hqLog('HQ_A', HC.A.pf, 'HAPPY', wk(0, 0));
+  await hqLog('HQ_C', HC.C.pf, 'HAPPY', wk(0, 0));
+  await hqLog('HQ_B', HC.B.pf, 'UNHAPPY', wk(0, 0));
+  await hqLog('HQ_X', HC.X.pf, 'HAPPY', wk(0, 0));
+  await hqLog('HQ_D', HC.D.pf, 'HAPPY', wk(0, 0));
+  await hqLog('HQ_F_LASTWEEK', HC.F.pf, 'NEUTRAL', wk(-1, 3));
+
   // 7) FTO / TEAM EVOLUTION world (journey/team-evolution.spec.ts, JTED-*) ==========================
   await seedFto(db, T);
 
