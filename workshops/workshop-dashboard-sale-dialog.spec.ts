@@ -228,6 +228,8 @@ test.describe('Workshop dashboard — Sale Achieved full-screen dialog (live wor
     await expect(page.getByTestId('wsad-section-total')).toHaveCount(0);
     await expect(page.getByTestId('wsad-section-count')).toHaveCount(0);
     await expect(page.getByTestId('wsad-section-empty'), 'WSD-02: "unavailable" is not "None in this window"').toHaveCount(0);
+    // No buyers, so no "EiFlix New User" chip either (it sits after a buyer's name; unit-tested in sale-achieved.unit.spec.ts).
+    await expect(page.getByTestId('wsad-eiflix-new'), 'WSD-02: no EiFlix New User chip without buyers').toHaveCount(0);
 
     // The tools are there, switched off: there is nothing for them to work on.
     const from = page.getByTestId('wsad-from');
