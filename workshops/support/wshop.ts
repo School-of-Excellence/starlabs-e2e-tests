@@ -1876,7 +1876,8 @@ export async function pickWatiTemplate(page: Page, composer: Locator): Promise<v
 }
 
 // =================================================================================================
-// 2026-10-14 — Sale Achieved card (live workshops only) on the workshop dashboard (WDC-15).
+// 2026-10-14 — Sale Achieved card (live workshops only) on the workshop dashboard (was WDC-15; since 2026-11-23 the
+// WSD cases in workshop-dashboard-sale-dialog.spec.ts).
 // =================================================================================================
 
 /** Make W_DASH a live workshop for one case (`workshoptype` is the root creation field). */
