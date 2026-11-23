@@ -7,7 +7,9 @@
 //   WSD-02  Clicking the card opens the full-screen dialog and NOT the side panel: exactly one dialog, filling the viewport,
 //           focus inside it. Header: "Sale Achieved", the workshop's title, the purchase window (computed here from the
 //           seeded dates), total and buyers "—". The unavailable state ("Sale data isn't available in this build") is the
-//           only state shown, and nothing row-level renders. The tools are all there and switched off with nothing to work
+//           only state shown, and nothing row-level renders — nor the New Sales / Funnel Sales / Upgrades split (summary
+//           strip, the three sections, their figures and empty notes: they exist only on a loaded list). The tools are all
+//           there and switched off with nothing to work
 //           on: From / To blank and bounded by the window, the sort pair (Highest amount pressed, Most recent not), search,
 //           and Export to Excel disabled with nothing shown; nothing to clear     [was WDC-15 panel half + WDC-16 bounds]
 //   WSD-03  The ✕ (aria-label "Close") closes it, focus returns to the card, no side panel opens on the way; opening it again
@@ -26,9 +28,14 @@
 //     something is picked / typed; Export renders on the dashboard's export right (the seeded admin has it — the side
 //     panel's Export is driven with this admin in WSU-01) and is disabled while nothing is shown; total and buyers read
 //     "—" when unavailable; the ✕ carries cdkFocusInitial.
-//   The Watson matching, the window rule, and the dialog's range / search / sort / totals / export rows are unit-tested in
-//   the app (watson-purchases.spec.ts, sale-achieved-dialog/sale-achieved.unit.spec.ts) — they need buyers, which only
-//   Watson can supply, so e2e proves the shell around them.
+//   • The list is split into three stacked sections (2026-11-23, plan section "Addition: New Sales, Funnel Sales and
+//     Upgrades"): New Sales (a person's first purchase ever), Funnel Sales (bought again after a first purchase inside
+//     the window), Upgrades (first purchase before the window), under a summary strip. All of it renders only in the
+//     'list' state (*ngIf state === 'list'), so with no Watson none of it exists.
+//   The Watson matching, the window rule, the first-sale split and the dialog's range / search / sort / totals / export
+//   rows are unit-tested in the app (watson-purchases.spec.ts, sale-achieved-dialog/sale-achieved.unit.spec.ts,
+//   sale-achieved-dialog.view.unit.spec.ts) — they need buyers, which only Watson can supply, so e2e proves the shell
+//   around them.
 //
 // Hooks — one prefix per component, as declared for each:
 //   `wdash-*`  workshop-dashboard.component.html. Kept and driven here: wdash-sale-card, wdash-sale-total, wdash-sale-count.
@@ -37,8 +44,9 @@
 //   `wsad-*`   sale-achieved-dialog.component.html (new). Every hook it declares is referenced here as a literal — driven or
 //              asserted on (dialog, close, title, window, total, count, from, to, sort-amount, sort-recent, search, export,
 //              unavailable) or asserted ABSENT in the unavailable state (range-clear, search-clear, loading, empty, no-match,
-//              no-match-clear, row, row-toggle, name, email, phone, purchases, amount, latest, purchase): with no Watson there
-//              is never a buyer, a range or a query to render them.
+//              no-match-clear, row, row-toggle, name, email, phone, purchases, amount, latest, purchase, and the split:
+//              summary, section-new, section-funnel, section-upgrade, section-total, section-count, section-empty): with no
+//              Watson there is never a buyer, a range or a query to render them.
 // The wsad- hooks are newer than most app branches, so the hub-ahead guard (scripts/readiness/landed-specs.cjs) skips this
 // FILE on branches without the dialog — which is why these cases left the communication file instead of being edited in
 // place there (older branches keep passing that file, which now names no Sale Achieved hook at all).
@@ -211,6 +219,15 @@ test.describe('Workshop dashboard — Sale Achieved full-screen dialog (live wor
     await expect(page.getByTestId('wsad-amount')).toHaveCount(0);
     await expect(page.getByTestId('wsad-latest')).toHaveCount(0);
     await expect(page.getByTestId('wsad-purchase'), 'WSD-02: no purchase lines').toHaveCount(0);
+
+    // No buyers: no New Sales / Funnel Sales / Upgrades split either — it renders only on a loaded list.
+    await expect(page.getByTestId('wsad-summary'), 'WSD-02: no summary strip without buyers').toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-new'), 'WSD-02: no New Sales section without buyers').toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-funnel'), 'WSD-02: no Funnel Sales section without buyers').toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-upgrade'), 'WSD-02: no Upgrades section without buyers').toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-total')).toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-count')).toHaveCount(0);
+    await expect(page.getByTestId('wsad-section-empty'), 'WSD-02: "unavailable" is not "None in this window"').toHaveCount(0);
 
     // The tools are there, switched off: there is nothing for them to work on.
     const from = page.getByTestId('wsad-from');
