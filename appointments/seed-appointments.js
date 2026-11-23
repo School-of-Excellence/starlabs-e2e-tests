@@ -375,12 +375,16 @@ async function seedAppointments() {
 //                                                            A_PEND 11:00–11:45 Review, UNMARKED (c0)
 //              Wed (-5)  WOT cw2 09:00–17:00 [Coaching]      A_OTHER_DONE 09–10 attended, A_OTHER_PEND 13–14 (c5)
 //              Thu (-4)  WL2 cw  14:00–16:00 [Coaching]      nothing booked
+//              Tue (-6)  (no window)                      A_CANC2 09–10 cancelled, PLAIN reason (c6) — 2026-11-24
 //   2 weeks ago Wed (-12)          A_OLD 09:00–10:30 attended (c3) — no window, outside last week
 //   next week  Wed (+9)  WN1 cw  09:00–12:00 [Coaching]      A_UP 09–10 booked, future (c4)
 //              Thu (+10) WN2 cw  14:00–15:00 [Coaching]      nothing booked (the deletable window)
 //   this week: NOTHING for cw (the default period must read zero).
-// Last week, the app must compute for cw: Available 6h (240+120) · Booked 1h 45m (union of the booked
-// slots 09–10 + 11:00–11:45) · Delivered 1h (A_DONE only) · 1h cancelled · Unutilised 5h · Utilisation 17%.
+// Last week, the app must compute for cw (summary cards since 2026-11-24 partition the total):
+// Total 6h (240+120) = Booked 45 min (A_PEND, ended + unmarked) + Not booked 2h 15m + Delivered 1h (A_DONE)
+// + Cancelled 2h (A_CANC no-show + A_CANC2 plain) · Utilisation 17%.
+// A_CANC2 ends BEFORE A_PEND on purpose: the add-availability gate reads the newest-ended session
+// (cancelled included), and SAS-07 needs that to stay A_PEND.
 // Each control moves a number if its rule breaks: A_CANC → Delivered 2h/33%; A_PEND → 1h 45m/29%;
 // cw2 leaking in → Available 14h; A_OLD leaking in → Delivered 2h 30m.
 // A_PEND is cw's NEWEST-ENDED session and is a "SAS Studio Review" (the others are "Coaching"), so the
@@ -397,15 +401,16 @@ const SAS_ID = {
   PROD: `${SAS_RUN}_PROD`,   // products "SAS Studio Product" (atcmodel:null, not Priority Mode → off the dashboard)
   WL1: `${SAS_RUN}_WL1`, WL2: `${SAS_RUN}_WL2`, WOT: `${SAS_RUN}_WOT`, WN1: `${SAS_RUN}_WN1`, WN2: `${SAS_RUN}_WN2`,
   A_DONE: `${SAS_RUN}_A_DONE`, A_CANC: `${SAS_RUN}_A_CANC`, A_PEND: `${SAS_RUN}_A_PEND`, A_OLD: `${SAS_RUN}_A_OLD`,
+  A_CANC2: `${SAS_RUN}_A_CANC2`,
   A_UP: `${SAS_RUN}_A_UP`, A_OTHER_DONE: `${SAS_RUN}_A_OTHER_DONE`, A_OTHER_PEND: `${SAS_RUN}_A_OTHER_PEND`,
 };
-const SAS_KEYS = ['ah', 'cw', 'cw2', 'c0', 'c1', 'c2', 'c3', 'c4', 'c5'];
+const SAS_KEYS = ['ah', 'cw', 'cw2', 'c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
 const SAS_PF = Object.fromEntries(SAS_KEYS.map((k) => [k, `${SAS_RUN}_pf_${k}`]));
 const SAS_EMAIL = {
   ah: `ah+${SAS_RUN}@example.com`,        // users_roles {ah}  → A&H view (Overview, Mentors, Utilisation, Book, Settings)
   cw: `cw+${SAS_RUN}@example.com`,        // users_roles {eis} → CW view (Home only)
   cw2: `cw2+${SAS_RUN}@example.com`,      // users_roles {eis} → the OTHER host (negative control)
-  ...Object.fromEntries(['c0', 'c1', 'c2', 'c3', 'c4', 'c5'].map((k) => [k, `client${k.slice(1)}+${SAS_RUN}@example.com`])),
+  ...Object.fromEntries(['c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6'].map((k) => [k, `client${k.slice(1)}+${SAS_RUN}@example.com`])),
 };
 const SAS_ROUTES = [{ route: '/specialistappointmentstudio', label: 'Specialist Appointment Studio' }];
 // Every collection the studio world writes (teardownStudio sweeps these by testrunid == SAS_RUN).
@@ -500,6 +505,10 @@ async function seedStudio(db, auth, T) {
   await A.doc(SAS_ID.A_CANC).set(appt(SAS_ID.A_CANC, 'cw', 'c2', SAS_ID.AT, -5, 10, 0, 11, 0,
     { cancelled: true, cancelledon: sasAt(T, -5, 11, 5), cancelledreason: "Client didn't show up", slotdata: [{ id: SAS_ID.WL1, index: 1 }] }));
   await A.doc(SAS_ID.A_PEND).set(appt(SAS_ID.A_PEND, 'cw', 'c0', SAS_ID.AT2, -5, 11, 0, 11, 45, { slotdata: [{ id: SAS_ID.WL1, index: 0 }] }));
+  // A_CANC2: a PLAIN cancellation (stored reason, not the no-show one) — the control for the card label
+  // ("Cancelled" vs "Cancelled · no-show") and the Past note (reason vs "No-show: …"). No window.
+  await A.doc(SAS_ID.A_CANC2).set(appt(SAS_ID.A_CANC2, 'cw', 'c6', SAS_ID.AT, -6, 9, 0, 10, 0,
+    { cancelled: true, cancelledon: sasAt(T, -7, 18, 0), cancelledreason: 'Specialist unavailable' }));
   await A.doc(SAS_ID.A_OLD).set(appt(SAS_ID.A_OLD, 'cw', 'c3', SAS_ID.AT, -12, 9, 0, 10, 30, { attended: true }));
   await A.doc(SAS_ID.A_UP).set(appt(SAS_ID.A_UP, 'cw', 'c4', SAS_ID.AT, 9, 9, 0, 10, 0, { slotdata: [{ id: SAS_ID.WN1, index: 0 }] }));
   await A.doc(SAS_ID.A_OTHER_DONE).set(appt(SAS_ID.A_OTHER_DONE, 'cw2', 'c5', SAS_ID.AT, -5, 9, 0, 10, 0, { attended: true, slotdata: [{ id: SAS_ID.WOT, index: 0 }] }));
