@@ -18,6 +18,8 @@
 //   JP-AUTH deliverysequence authoring → a productToDeliverySequence doc the app's setDoc wrote.
 //   JP-PD   product-delivery list renders ONE row per productToDeliverySequence doc + the seeded mapping's
 //           product name (app-computed path->name); regression guard for the in-place-mutation list bug.
+//           PDS2 (P3) resolves each mapped activity to "name (Form|Appointment|VideoAsk)"; an unmapped
+//           VideoAsk and the unmapped product P2 never render (mapped-only fetch, 2026-11-24).
 //   JP-EDIT deliverysequence EDIT (?data=PDS1) mounts: the constructor getDoc ref->path walk is null-safe
 //           for a mapping with NO deliverysequence (the seeded jny_PDS1) — the form populates with no fatal
 //           (regression guard for the unguarded edit-path getDoc throw, sibling to the JP-PD list bug).
@@ -372,8 +374,8 @@ test.describe('Journey DEEP — product-delivery authoring + list (list renders 
     const guard = attachJourneyGuard(page);
 
     // The admin-SDK count of mapping docs is the oracle for the rendered row count. The suite's
-    // teardown+reseed leaves exactly the seeded PDS1 mapping (P1); JP-AUTH (next, and self-cleaning) has
-    // not run yet, so this is a single mapping — well within one paginator page (default page size 50).
+    // teardown+reseed leaves exactly the seeded PDS1 (P1) + PDS2 (P3) mappings; JP-AUTH (next, and
+    // self-cleaning) has not run yet — well within one paginator page (smallest page size 25).
     const docCount = await countWhere('productToDeliverySequence');
     expect(docCount, 'JP-PD: the seeded productToDeliverySequence mapping must exist before the render').toBeGreaterThanOrEqual(1);
 
@@ -402,6 +404,24 @@ test.describe('Journey DEEP — product-delivery authoring + list (list renders 
     // {{mapProduct[row.product]}}), never a value the test wrote into the DOM.
     await expect(page.locator('table[mat-table]').getByText(journeyNames.product1, { exact: false }).first(),
       'JP-PD: the row shows the app-resolved product name (product.path -> mapProduct[name])').toBeVisible({ timeout: 30_000 });
+
+    // [ASSERT] the PDS2 row (P3) resolves EVERY mapped activity ref -> "name (type)": the screen now reads only
+    // the docs productToDeliverySequence references (documentId 'in' per collection), and arenavideoask is
+    // one of them (was blank "()" before VideoAsk was added). Names are app-read from the seeded activity docs.
+    const p3Row = dataRows.filter({ hasText: journeyNames.product3 });
+    await expect(p3Row, 'JP-PD: the P3 mapping row renders its app-resolved product name').toHaveCount(1, { timeout: 30_000 });
+    await expect(p3Row, 'JP-PD: mapped delivery form resolves to "name (Form)"')
+      .toContainText(new RegExp(`${journeyNames.deliveryForm}\\s*\\(Form\\)`), { timeout: 30_000 });
+    await expect(p3Row, 'JP-PD: mapped appointment type resolves to "name (Appointment)"')
+      .toContainText(new RegExp(`${journeyNames.apptType}\\s*\\(Appointment\\)`), { timeout: 30_000 });
+    await expect(p3Row, 'JP-PD: mapped arenavideoask resolves to "title (VideoAsk)"')
+      .toContainText(new RegExp(`${journeyNames.videoAsk}\\s*\\(VideoAsk\\)`), { timeout: 30_000 });
+
+    // [ASSERT] negative controls: an arenavideoask doc mapped NOWHERE and the UNMAPPED product P2 never render.
+    await expect(page.locator('table[mat-table]'), 'JP-PD: unmapped VideoAsk is not listed')
+      .not.toContainText(journeyNames.videoAskUnmapped);
+    await expect(page.locator('table[mat-table]'), 'JP-PD: unmapped product P2 is not listed')
+      .not.toContainText(journeyNames.product2);
 
     // [ASSERT] no fatal console error / pageerror — the in-place-mutation throw the list used to emit on the
     // /productdelivery route is gone (the second symptom the fix removes).

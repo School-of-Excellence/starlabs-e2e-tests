@@ -60,6 +60,10 @@ const ID = {
   PKG1: `${TESTRUNID}_PKG1`,    // package "Test Package <run>"
   J2P1: `${TESTRUNID}_J2P1`,    // journey-to-product mapping (J1 -> [P1]) — seeded baseline (JP-17 render)
   PDS1: `${TESTRUNID}_PDS1`,    // productToDeliverySequence (P1)
+  P3: `${TESTRUNID}_P3`,        // products "Test Product Three <run>" — owns PDS2 (JP-PD activity names)
+  PDS2: `${TESTRUNID}_PDS2`,    // productToDeliverySequence (P3) -> DF1 form + APT1 appointment + VA1 VideoAsk
+  VA1: `${TESTRUNID}_VA1`,      // arenavideoask "Test VideoAsk <run>" — MAPPED in PDS2
+  VA2: `${TESTRUNID}_VA2`,      // arenavideoask "Unmapped VideoAsk <run>" — negative control, mapped nowhere
   // journeyonboardingdetail rows (JP-18 ref-resolution / JP-19 app fallbacks).
   //   JOD1 carries ONLY a journeyref -> journey/J1, so the rendered title can only come from the app
   //        dereferencing it (the title string is not on this doc at all).
@@ -225,6 +229,28 @@ async function seedJourney() {
   await db.collection('productToDeliverySequence').doc(ID.PDS1).set({
     docid: ID.PDS1, product: productRef(ID.P1),
     deliveryoptions: [{ deliverytype: 'Standard Delivery' }], ...tag,
+  });
+
+  //    P3 + PDS2 (JP-PD): a mapping WITH a deliverysequence spanning three activity collections, so the
+  //    /productdelivery list must resolve each activity ref -> name + type label (Form / Appointment /
+  //    VideoAsk). Own product + mapping: PDS1 must keep NO deliverysequence (JP-EDIT's null-guard shape) and
+  //    P2 must stay UNMAPPED (JP-AUTH). VA2 is mapped nowhere — the list must never show it.
+  await productRef(ID.P3).set({
+    product: `Test Product Three ${TESTRUNID}`, minimumrequiredamount: 300, mode: 'online',
+    atcmodel: null, deliveryplanning: 'Standard', unlimited: false, originalfee: 300, ...tag,
+  });
+  await db.collection('arenavideoask').doc(ID.VA1).set({ docid: ID.VA1, title: `Test VideoAsk ${TESTRUNID}`, ...tag });
+  await db.collection('arenavideoask').doc(ID.VA2).set({ docid: ID.VA2, title: `Unmapped VideoAsk ${TESTRUNID}`, ...tag });
+  await db.collection('productToDeliverySequence').doc(ID.PDS2).set({
+    docid: ID.PDS2, product: productRef(ID.P3),
+    deliveryoptions: [{
+      deliverytype: 'Online',
+      deliverysequence: [
+        { activity: db.collection('delivery forms').doc(ID.DF1), label: 'Intake form', description: 'Fill the intake form' },
+        { activity: db.collection('appointmenttype').doc(ID.APT1), label: 'First session', description: 'Book the first session' },
+        { activity: db.collection('arenavideoask').doc(ID.VA1), label: 'Intro video', description: 'Record the intro video' },
+      ],
+    }], ...tag,
   });
 
   //    journeyonboardingdetail (JP-18 / JP-19) — the /journeyonboardingdetail table is driven by an
@@ -906,6 +932,8 @@ const SEEDED = [
   'participant metadata', 'participantjourneyproduct', 'participantsproduct', 'participantdeliverysequence',
   // DEEP collections
   'salesleads', 'delivery forms', 'appointmenttype', 'email templates',
+  // arenavideoask (JP-PD VA1/VA2): the VideoAsk delivery activities PDS2 maps
+  'arenavideoask',
   // JC Health world (JCH-*): A&H feedback + journey-coach appointments
   // clientissue: the JE dashboard's Participant Health tickets tile (JCD-01)
   'love letter', 'ask AH', 'appointments', 'clientissue',

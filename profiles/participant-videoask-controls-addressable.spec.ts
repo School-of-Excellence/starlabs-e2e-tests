@@ -24,6 +24,8 @@ test.describe('participant-videoask — interactive controls addressable + mount
     expect(page.getByTestId('pva-type-to-search-2')).toBeTruthy();
     expect(page.getByTestId('pva-workshop')).toBeTruthy();
     expect(page.getByTestId('pva-type-to-search-3')).toBeTruthy();
+    expect(page.getByTestId('pva-product')).toBeTruthy();
+    expect(page.getByTestId('pva-type-to-search-6')).toBeTruthy();
     expect(page.getByTestId('pva-profileid')).toBeTruthy();
     expect(page.getByTestId('pva-type-to-search-4')).toBeTruthy();
     expect(page.getByTestId('pva-template')).toBeTruthy();
@@ -38,6 +40,7 @@ test.describe('participant-videoask — interactive controls addressable + mount
     expect(page.getByTestId('pva-any-tag')).toBeTruthy();
     expect(page.getByTestId('pva-clearselectedtags')).toBeTruthy();
     expect(page.getByTestId('pva-playvideo')).toBeTruthy();
+    expect(page.getByTestId('pva-eventref')).toBeTruthy();
     expect(page.getByTestId('pva-updatevideoask')).toBeTruthy();
   });
 });

@@ -63,6 +63,20 @@ const ID = {
   // console guard deliberately catches. We do not touch app logic; we seed the realistic non-empty
   // state (production always has events) so the screen exercises its populated path.
   EVT0: `${TESTRUNID}_EVT0`,
+  // PA-48..PA-50 participant-videoask productref world. P_VA's delivery sequence has an arenavideoask
+  // step (offered in the Product filter); P_NOVA's only points at an appointmenttype (negative control);
+  // PDS_EMPTY is a mapping saved with no deliverysequence (real shape — must not throw the walk).
+  VA_TPL: `${TESTRUNID}_VA_TPL`,
+  VA_WS: `${TESTRUNID}_VA_WS`,
+  P_VA: `${TESTRUNID}_P_VA`,
+  P_NOVA: `${TESTRUNID}_P_NOVA`,
+  PDS_VA: `${TESTRUNID}_PDS_VA`,
+  PDS_NOVA: `${TESTRUNID}_PDS_NOVA`,
+  PDS_EMPTY: `${TESTRUNID}_PDS_EMPTY`,
+  PVA_PROD: `${TESTRUNID}_PVA_PROD`,   // productref only
+  PVA_BOTH: `${TESTRUNID}_PVA_BOTH`,   // workshopref + productref
+  PVA_WS: `${TESTRUNID}_PVA_WS`,       // workshopref only
+  PVA_NOVA: `${TESTRUNID}_PVA_NOVA`,   // productref -> the no-videoask product
   // Bulk Add Products (bap-*) History-tab world. Two chunk docs sharing one batchId:
   //  - BPJ_DONE  : success only, failures:[]  -> "done"       (Retry button must NOT render)
   //  - BPJ_FAIL  : one failure with a reason  -> "attention"  (Retry button MUST render)
@@ -402,6 +416,40 @@ async function seedProfiles() {
     start_date: past, end_date: future, ...tag,
   });
 
+  // 3c) PARTICIPANT-VIDEOASK productref world (PA-48..PA-50). Non-ATC: arenavideoask template, one
+  //     workshop, two products, three productToDeliverySequence mappings, four participantvideoask rows.
+  const vaTplRef = db.collection('arenavideoask').doc(ID.VA_TPL);
+  const vaWsRef = db.collection('workshopconfiguration').doc(ID.VA_WS);
+  await vaTplRef.set({ docid: ID.VA_TPL, title: `TEST VA Template ${TESTRUNID}`, ...tag });
+  await vaWsRef.set({ docid: ID.VA_WS, detailpage: { title: `TEST VA Workshop ${TESTRUNID}` }, ...tag });
+  await productRef(ID.P_VA).set({ id: ID.P_VA, docid: ID.P_VA, product: `TEST VA Product ${TESTRUNID}`, mode: 'Priority Mode', atcmodel: null, ...tag });
+  await productRef(ID.P_NOVA).set({ id: ID.P_NOVA, docid: ID.P_NOVA, product: `TEST NoVA Product ${TESTRUNID}`, mode: 'Priority Mode', atcmodel: null, ...tag });
+  const pds = db.collection('productToDeliverySequence');
+  await pds.doc(ID.PDS_VA).set({
+    product: productRef(ID.P_VA),
+    deliveryoptions: [{ deliverytype: 'Standard Delivery', deliverysequence: [
+      { activity: db.collection('appointmenttype').doc(`${TESTRUNID}_APPT`), label: 'Appointment', description: null },
+      { activity: vaTplRef, label: 'Video Ask', description: null },
+    ] }],
+    ...tag,
+  });
+  await pds.doc(ID.PDS_NOVA).set({
+    product: productRef(ID.P_NOVA),
+    deliveryoptions: [{ deliverytype: 'Standard Delivery', deliverysequence: [
+      { activity: db.collection('appointmenttype').doc(`${TESTRUNID}_APPT`), label: 'Appointment', description: null },
+    ] }],
+    ...tag,
+  });
+  await pds.doc(ID.PDS_EMPTY).set({ product: productRef(ID.P1), deliveryoptions: [{ deliverytype: 'Standard Delivery' }], ...tag });
+  const pva = (id, refs, minutesAgo) => db.collection('participantvideoask').doc(id).set({
+    docid: id, profileid: PF.p0, videoaskid: ID.VA_TPL, fileurl: null, tags: [], addtohighlights: false,
+    uploaded: T.fromMillis(Date.now() - minutesAgo * 60e3), ...refs, ...tag,
+  });
+  await pva(ID.PVA_PROD, { productref: productRef(ID.P_VA) }, 1);
+  await pva(ID.PVA_BOTH, { workshopref: vaWsRef, productref: productRef(ID.P_VA) }, 2);
+  await pva(ID.PVA_WS, { workshopref: vaWsRef }, 3);
+  await pva(ID.PVA_NOVA, { productref: productRef(ID.P_NOVA) }, 4);
+
   // 4) PARTICIPANT PROFILES — overwrite the auth-chain profile_data with the fields the screens read.
   //    profile_data drives the CF profiledata_to_participantmetadata; the screens render the resulting
   //    `participant metadata` (userprofile.userData / profile-summary / analytics row). We seed BOTH:
@@ -639,6 +687,8 @@ const SEEDED = [
   // participant-intelligence.spec.ts (PI world). 'event collection', 'participant metadata', 'participant
   // list', 'segments' and 'participant tags' are already listed above.
   'event participation request', 'searchquery', 'segmentboardconfig', 'segmentboardlist',
+  // participant-videoask productref world (PA-48..PA-50). 'products' is already listed above.
+  'arenavideoask', 'workshopconfiguration', 'productToDeliverySequence', 'participantvideoask',
 ];
 const SEEDED_FORMS_DB = ['formsByClient'];
 

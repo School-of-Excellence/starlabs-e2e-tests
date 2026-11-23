@@ -125,9 +125,10 @@ test.describe('Journey & Products — catalog authoring (real UI, anti-circular,
     await expect(row1, 'JP-03: seeded product 1 row must render').toBeVisible({ timeout: 30_000 });
     await expect(row2, 'JP-03: seeded product 2 row must render').toBeVisible({ timeout: 30_000 });
 
-    // [ASSERT] the rendered rows are backed by Firestore: exactly the 2 seeded `products` docs for this run.
+    // [ASSERT] the rendered rows are backed by Firestore: exactly the 3 seeded `products` docs for this run
+    // (P1, P2 + P3, the product that owns the JP-PD activity mapping PDS2).
     const seededCount = await countWhere('products', [['testrunid', '==', RUN]]);
-    expect(seededCount, 'JP-03: exactly the 2 seeded products exist for this run').toBe(2);
+    expect(seededCount, 'JP-03: exactly the 3 seeded products exist for this run').toBe(3);
   });
 
   // ===========================================================================================
