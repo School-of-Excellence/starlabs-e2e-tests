@@ -223,13 +223,11 @@ test.describe('Workshop dashboard — Sale Achieved full-screen dialog (live wor
 
     // No buyers: nothing row-level renders.
     await expect(page.getByTestId('wsad-row'), 'WSD-02: no buyer rows without Watson').toHaveCount(0);
-    await expect(page.getByTestId('wsad-row-toggle'), 'WSD-02: no expand buttons').toHaveCount(0);
     await expect(page.getByTestId('wsad-name')).toHaveCount(0);
     await expect(page.getByTestId('wsad-email')).toHaveCount(0);
     await expect(page.getByTestId('wsad-phone')).toHaveCount(0);
-    await expect(page.getByTestId('wsad-purchases')).toHaveCount(0);
+    await expect(page.getByTestId('wsad-products'), 'WSD-02: no Products cells').toHaveCount(0);
     await expect(page.getByTestId('wsad-amount')).toHaveCount(0);
-    await expect(page.getByTestId('wsad-latest')).toHaveCount(0);
     await expect(page.getByTestId('wsad-purchase'), 'WSD-02: no purchase lines').toHaveCount(0);
 
     // No buyers: no New Sales / Funnel Sales / Upgrades split either — it renders only on a loaded list.
@@ -260,6 +258,26 @@ test.describe('Workshop dashboard — Sale Achieved full-screen dialog (live wor
     await expect(byRecent, 'WSD-02: Most recent is not pressed').toHaveAttribute('aria-pressed', 'false');
     await expect(exportBtn, 'WSD-02: Export names its format').toContainText('Export to Excel');
     await expect(search, 'WSD-02: the search box is empty').toHaveValue('');
+
+    // The filters row (product, buyer type, amount per purchase, repeat buyers) is there too, switched off; nothing
+    // is set, so there is no "Clear filters". The filtering itself is unit-tested in sale-achieved.unit.spec.ts.
+    const product = page.getByTestId('wsad-product');
+    await expect(product, 'WSD-02: the Product filter is in the dialog').toBeVisible();
+    await expect(product, 'WSD-02: the Product filter is off with nothing shown').toHaveAttribute('aria-disabled', 'true');
+    const buyerAll = page.getByTestId('wsad-buyer-all');
+    const buyerEiflix = page.getByTestId('wsad-buyer-eiflix');
+    const buyerOthers = page.getByTestId('wsad-buyer-others');
+    const minAmt = page.getByTestId('wsad-min-amount');
+    const maxAmt = page.getByTestId('wsad-max-amount');
+    const repeat = page.getByTestId('wsad-repeat');
+    for (const [tool, what] of [[buyerAll, 'All buyers'], [buyerEiflix, 'EiFlix New User'], [buyerOthers, 'Others'], [minAmt, 'Min amount'], [maxAmt, 'Max amount'], [repeat, 'Repeat buyers']] as [Locator, string][]) {
+      await expect(tool, `WSD-02: the ${what} filter is in the dialog`).toBeVisible();
+      await expect(tool, `WSD-02: the ${what} filter is disabled with nothing shown`).toBeDisabled();
+    }
+    await expect(buyerAll, 'WSD-02: All buyers is the default').toHaveAttribute('aria-pressed', 'true');
+    await expect(buyerEiflix).toHaveText('EiFlix New User');
+    await expect(repeat, 'WSD-02: Repeat buyers starts off').not.toBeChecked();
+    await expect(page.getByTestId('wsad-filters-clear'), 'WSD-02: no "Clear filters" with nothing set').toHaveCount(0);
 
     // From / To start blank (the whole window) and are bounded by it.
     await expect(from, 'WSD-02: From starts blank (the whole window)').toHaveValue('');
