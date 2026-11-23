@@ -159,6 +159,18 @@ test.describe('Workshop dashboard — Sale Achieved full-screen dialog (live wor
     await expect(page.getByText('Total Enrolled').first(), 'WSD-01: the dashboard rendered').toBeVisible({ timeout: 45_000 });
     await expect(page.getByTestId('wdash-sale-card'), 'WSD-01: not a live workshop -> no Sale Achieved card').toHaveCount(0);
 
+    // The header's Opt-in line (the registration window, operator 2026-11-23) — restated from the seeded W_DASH
+    // registration start / end read back with the admin SDK, formatted in the browser as the app formats days.
+    const ws: any = await getDoc('workshopconfiguration', wsIds.W_DASH);
+    const regStart: Date | undefined = ws?.detailpage?.registrationStartDate?.toDate?.();
+    const regEnd: Date | undefined = ws?.detailpage?.registrationEndDate?.toDate?.();
+    expect(regStart && regEnd, 'WSD-01 precondition: W_DASH is seeded with a registration start and end').toBeTruthy();
+    const optin = await page.evaluate(([s, e]) => {
+      const day = (ms: number) => new Date(ms).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      return `Opt-in${day(s)} – ${day(e)}`;
+    }, [regStart!.getTime(), regEnd!.getTime()] as [number, number]);
+    await expect(page.getByTestId('wdash-optin-dates'), 'WSD-01: the header shows the registration window as Opt-in').toHaveText(optin);
+
     // Live workshop -> the card is there.
     await setDashWorkshopType('liveworkshop');
     await page.reload({ waitUntil: 'domcontentloaded' });   // already signed in — just reload
