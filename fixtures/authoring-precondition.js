@@ -92,6 +92,17 @@ async function seedAuthoringPreconditions(opts = {}) {
     _testdata: true,
   });
 
+  // 3b. A SECOND event (2026-11-23, live-event mapping): AUTH-01 maps the queue to event_0 through
+  //     "Map Live Event to Queue" (qcv3-sel-20b); this one is never picked and must NOT gain a
+  //     `mappedqueue` entry — the negative control for the arrayUnion target.
+  await db.collection('event collection').doc(`${testrunid}_event_1`).set({
+    docid: `${testrunid}_event_1`,
+    name: `E2E Other Event ${testrunid}`,
+    end_date: new Date(Date.now() - 86400e3),
+    testrunid,
+    _testdata: true,
+  });
+
   return {
     testrunid,
     operatorEmail: operatorAdmin.email,
@@ -126,6 +137,7 @@ async function teardownAuthoring(opts = {}) {
   // Remove this run's seeded venue + event (idempotent).
   await db.collection('event location').doc(`${testrunid}_evloc_0`).delete().catch(() => undefined);
   await db.collection('event collection').doc(`${testrunid}_event_0`).delete().catch(() => undefined);
+  await db.collection('event collection').doc(`${testrunid}_event_1`).delete().catch(() => undefined);
 }
 
 module.exports = { seedAuthoringPreconditions, teardownAuthoring, venueLocation };

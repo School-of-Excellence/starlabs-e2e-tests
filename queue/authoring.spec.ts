@@ -38,6 +38,8 @@ import { QueueCreationPage } from './pages/queue-creation.page';
 import { loginAsOperator } from './support/auth';
 import { TESTRUNID } from './support/actors';
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from './support/console-guard';
+import { getDoc } from './support/firestore-admin';
+import { selectMatOption } from '../_shared/mat-select';
 
 // Precondition seeder is plain CommonJS (fixtures/*), like the other specs' lib requires.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -227,6 +229,11 @@ test.describe('Authoring — queue-creation-v3 stepper', () => {
     //     `event collection` doc (authoring-precondition.js), and this picks it via the real overlay.
     await creation.pickFirstEvent();
 
+    // 4d. Map the queue to a LIVE event (2026-11-23, dharshan-working a07e5ce9): "Map Live Event to Queue"
+    //     (qcv3-sel-20b, formControlName liveeventid, optional). Picked by its seeded NAME; the docid the
+    //     app binds to the option is what gets written — asserted after save, never typed by the test.
+    await selectMatOption(page, page.locator('app-queue-creation-v3').getByTestId('qcv3-sel-20b'), `E2E Event ${TESTRUNID}`);
+
     // Now wait until the component reports the WHOLE `queueform` valid (the exact ts:846 onsubmit gate)
     // before the Submit click, so onsubmit() actually writes the batch + closes the dialog.
     await waitForQueueFormValid(page);
@@ -263,6 +270,17 @@ test.describe('Authoring — queue-creation-v3 stepper', () => {
     // (d) the one stage we added is present on the written doc's stages array (app-shaped, ts:873).
     expect(Array.isArray(doc['stages']), 'stages must be an array on the written doc').toBe(true);
     expect(doc['stages'] as unknown[], 'the added stage round-trips into stages[]').toContain('Welcome');
+
+    // (e) live-event mapping: the queue carries the picked event's docid, and the SAME save batch added
+    //     this queue's ref to that event's `mappedqueue` (arrayUnion). The other seeded event was not
+    //     picked and must stay unmapped.
+    const liveId = `${TESTRUNID}_event_0`;
+    expect(doc['liveeventid'], 'liveeventid = the docid the app bound to the picked option').toBe(liveId);
+    const live = await getDoc('event collection', liveId);
+    const paths = ((live?.['mappedqueue'] as Array<{ path?: string }>) ?? []).map((r) => r?.path);
+    expect(paths, 'the picked live event lists this queue in mappedqueue').toEqual([`queue generation/${doc.id}`]);
+    const other = await getDoc('event collection', `${TESTRUNID}_event_1`);
+    expect(other?.['mappedqueue'], 'an event that was not picked gains no mappedqueue').toBeUndefined();
   });
 });
 
