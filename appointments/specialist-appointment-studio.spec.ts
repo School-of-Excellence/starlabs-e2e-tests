@@ -16,13 +16,15 @@
 //   last week   cw  WL1 Wed 09–13 [Coaching, Review]: A_DONE 09–10 attended · A_CANC 10–11 cancelled (no-show
 //                   reason) · A_PEND 11:00–11:45 Review, ended + unmarked      WL2 Thu 14–16, nothing booked
 //               cw2 WOT Wed 09–17: A_OTHER_DONE attended + A_OTHER_PEND unmarked (client5)
+//               cw  Tue (no window): A_CANC2 cancelled with a PLAIN reason (client6) — 2026-11-24
 //   2 wks ago   cw  A_OLD attended (client3), no window
 //   next week   cw  WN1 Wed 09–12 with A_UP booked 09–10 (client4) · WN2 Thu 14–15, nothing booked
 //   this week   nothing for cw.
 //
 // ANTI-CIRCULARITY: the seed writes raw windows/slots/appointments only. Every number asserted here is one the
 // APP computes (sas-logic hoursSummary / unionMinutes / windowStatus / apptStatus / fmtHours) from those docs:
-// last week's 6h / 1h 45m / 1h / 5h / 17% appear nowhere in the seed, and each negative control moves at least
+// last week's 6h / 45 min / 2h 15m / 1h / 2h / 17% appear nowhere in the seed (2026-11-24 cards: Total = Booked +
+// Not booked + Delivered + Cancelled), and each negative control moves at least
 // one of them if its rule breaks (cancelled counted → 2h / 33%; pending counted → 1h 45m / 29%; cw2 leaking →
 // 14h available; the 2-weeks-ago session leaking → 2h 30m delivered). The table cases assert the APP's
 // classification (Pending / Completed / Cancelled) of docs whose flags we set, plus the exclusions. The one
@@ -124,30 +126,65 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
   // ===========================================================================================
   // SAS-03 — last week's hours: Available = window hours, Delivered = attended only, Utilisation = ÷
   // ===========================================================================================
-  test('SAS-03 CW Home last week: Available 6h, Booked 1h 45m, Delivered 1h, Utilisation 17% — cancelled, pending, other host and older weeks excluded', async ({ page }) => {
+  test('SAS-03 CW Home last week: Total 6h = Booked 45 min + Not booked 2h 15m + Delivered 1h + Cancelled 2h, Utilisation 17%; the calendar shows each appointment once and filters by status', async ({ page }) => {
     await openStudio(page, E.cw);
     await expect(page.getByTestId('sas-home-stats')).toBeVisible({ timeout: 30_000 });
     await page.getByTestId('sas-period-prev').click();
     await expect(page.getByTestId('sas-period-label'), 'SAS-03: previous moves exactly one week back').toHaveText(weekLabel(-1));
 
-    // [APP-COMPUTED] hoursSummary over cw's windows/sessions starting in [last Mon, this Mon).
-    await expect(page.getByTestId('sas-home-stat-available').locator('b'), 'SAS-03: Available = WL1 4h + WL2 2h (cw2\'s 8h window excluded)').toHaveText('6h', { timeout: 30_000 });
-    await expect(page.getByTestId('sas-home-stat-booked').locator('b'), 'SAS-03: Booked = union of booked slots 09–10 + 11:00–11:45 (the cancelled slot was freed)').toHaveText('1h 45m');
-    await expect(page.getByTestId('sas-home-stat-booked'), 'SAS-03: nothing bookable is left in a past week').toContainText('0 min still open to book');
-    await expect(page.getByTestId('sas-home-stat-delivered').locator('b'), 'SAS-03: Delivered = A_DONE only (not the cancelled, the pending, cw2\'s or the 2-weeks-ago one)').toHaveText('1h');
-    await expect(page.getByTestId('sas-home-stat-delivered')).toContainText('1 completed session');
-    await expect(page.getByTestId('sas-home-stat-unutilised').locator('b'), 'SAS-03: Unutilised = 6h − 1h').toHaveText('5h');
-    await expect(page.getByTestId('sas-home-stat-unutilised'), 'SAS-03: the no-show counts as cancelled time').toContainText('1h cancelled');
-    await expect(page.getByTestId('sas-home-stat-utilisation').locator('b'), 'SAS-03: Utilisation = delivered ÷ available = 60/360').toHaveText('17%');
+    // [APP-COMPUTED] summaryHours over cw's windows/sessions starting in [last Mon, this Mon). The four middle
+    // cards partition the total: 45 + 135 + 60 + 120 = 360 min.
+    await expect(page.getByTestId('sas-home-stat-available').locator('b'), 'SAS-03: Total = WL1 4h + WL2 2h (cw2\'s 8h window excluded)').toHaveText('6h', { timeout: 30_000 });
+    await expect(page.getByTestId('sas-home-stat-booked').locator('b'), 'SAS-03: Booked = A_PEND only (ended, unmarked) — not the completed or cancelled ones').toHaveText('45 min');
+    await expect(page.getByTestId('sas-home-stat-upcoming'), 'SAS-03: nothing upcoming in a past week').toHaveText('0 min upcoming · 0 sessions');
+    await expect(page.getByTestId('sas-home-stat-pending'), 'SAS-03: the pending part of Booked').toHaveText('45 min ended, needs a status update · 1 session');
+    await expect(page.getByTestId('sas-home-stat-notbooked').locator('b'), 'SAS-03: Not booked = 6h − 45m − 1h − 2h').toHaveText('2h 15m');
+    await expect(page.getByTestId('sas-home-stat-notbooked-split'), 'SAS-03: a past week has nothing still open').toHaveText('0 min still open · 2h 15m passed or unusable');
+    await expect(page.getByTestId('sas-home-stat-delivered').locator('b'), 'SAS-03: Delivered = A_DONE only (not cw2\'s or the 2-weeks-ago one)').toHaveText('1h');
+    await expect(page.getByTestId('sas-home-stat-delivered')).toContainText('Marked completed · 1 session');
+    await expect(page.getByTestId('sas-home-stat-cancelled').locator('b'), 'SAS-03: Cancelled = the no-show + the plain cancellation').toHaveText('2h');
+    await expect(page.getByTestId('sas-home-stat-cancelled')).toContainText('2 sessions, no-shows included');
+    await expect(page.getByTestId('sas-home-stat-utilisation').locator('b'), 'SAS-03: Utilisation = delivered ÷ total = 60/360').toHaveText('17%');
 
-    // [APP-COMPUTED] the week calendar: cw's two windows only, each with the status windowStatus() derives.
+    // [APP-COMPUTED] each appointment once: WL1 is past and held sessions → no window card, its three sessions
+    // stand alone; WL2 never held one → its window card reads Unused. A_CANC2 has no window → a loose card.
     const cal = page.getByTestId('sas-home-calendar');
     const windows = cal.getByTestId('sas-home-window');
-    await expect(windows, 'SAS-03: only cw\'s two windows are drawn (cw2\'s is out of scope)').toHaveCount(2);
-    await expect(windows.filter({ hasText: '9:00 – 13:00' }), 'SAS-03: WL1 holds an ended, unmarked session').toContainText('Completion pending');
-    await expect(windows.filter({ hasText: '14:00 – 16:00' }), 'SAS-03: WL2 ended with nothing booked').toContainText('Unused');
+    await expect(windows, 'SAS-03: only WL2 keeps a window card (cw2\'s is out of scope, WL1 is drawn by its sessions)').toHaveCount(1);
+    await expect(windows.first()).toContainText('14:00 – 16:00');
+    await expect(windows.first()).toContainText('Unused');
     await expect(windows.getByTestId('sas-home-window-delete'), 'SAS-03: past windows offer no delete').toHaveCount(0);
-    await expect(cal.getByTestId('sas-home-session'), 'SAS-03: the three sessions inside WL1 are drawn under it (A_OLD is another week)').toHaveCount(3);
+    const sessions = cal.getByTestId('sas-home-session');
+    await expect(sessions, 'SAS-03: four sessions last week (A_OLD is another week)').toHaveCount(4);
+    await expect(sessions.getByTestId('sas-home-session-status'), 'SAS-03: card labels, in time order — the no-show is named, the plain cancel is not')
+      .toHaveText(['Cancelled', 'Completed', 'Cancelled · no-show', 'Completion pending']);
+    await expect(sessions.getByTestId('sas-home-session-who')).toHaveText([E.c6, E.c1, E.c2, E.c0]);
+
+    // [APP-COMPUTED] the status filter on top carries the week's counts; picking one narrows the calendar.
+    await expect(page.getByTestId('sas-home-calf')).toBeVisible();
+    await expect(page.getByTestId('sas-home-calf-open').locator('.n')).toHaveText('0');
+    await expect(page.getByTestId('sas-home-calf-booked').locator('.n')).toHaveText('0');
+    await expect(page.getByTestId('sas-home-calf-live').locator('.n')).toHaveText('0');
+    await expect(page.getByTestId('sas-home-calf-done').locator('.n')).toHaveText('1');
+    await expect(page.getByTestId('sas-home-calf-pending').locator('.n')).toHaveText('1');
+    await expect(page.getByTestId('sas-home-calf-cancel').locator('.n')).toHaveText('2');
+    await expect(page.getByTestId('sas-home-calf-unused').locator('.n')).toHaveText('1');
+    await expect(page.getByTestId('sas-home-calf-cancel'), 'SAS-03: Cancelled is red when it has any').toHaveClass(/is-danger/);
+    await expect(page.getByTestId('sas-home-calf-all'), 'SAS-03: Show all only while a filter is on').toHaveCount(0);
+    await page.getByTestId('sas-home-calf-cancel').click();
+    await expect(sessions.getByTestId('sas-home-session-status'), 'SAS-03: Cancelled → the two cancelled cards only').toHaveText(['Cancelled', 'Cancelled · no-show']);
+    await expect(windows, 'SAS-03: …and no window card').toHaveCount(0);
+    await page.getByTestId('sas-home-calf-all').click();
+    await expect(sessions).toHaveCount(4);
+    await expect(windows).toHaveCount(1);
+
+    // The Not booked card opens the calendar on Open + Unused (the same number, other side of the partition).
+    await page.getByTestId('sas-home-stat-notbooked').click();
+    await expect(page.getByTestId('sas-home-calf-unused'), 'SAS-03: Not booked switches on Unused…').toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByTestId('sas-home-calf-open'), '…and Open for booking').toHaveAttribute('aria-pressed', 'true');
+    await expect(sessions, 'SAS-03: no session is "not booked"').toHaveCount(0);
+    await expect(windows).toHaveCount(1);
+    await page.getByTestId('sas-home-calf-all').click();
 
     // [APP-COMPUTED] the availability list for the period: past windows are never selectable for delete.
     const avail = page.getByTestId('sas-home-avail');
@@ -159,35 +196,46 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
   // ===========================================================================================
   // SAS-04 — Past sessions: Pending = ended + attended:false + cancelled:false
   // ===========================================================================================
-  test('SAS-04 CW past sessions: Pending lists only the ended unmarked session; Completed and Cancelled split the rest; the no-show reason is hidden', async ({ page }) => {
+  test('SAS-04 CW past sessions follow the period: All / Completed / Cancelled / Completion pending with counts; no-shows sit under Cancelled with their note', async ({ page }) => {
     await openStudio(page, E.cw);
     const past = page.getByTestId('sas-home-past');
     const rows = past.getByTestId('sas-home-past-row');
+    // This week nothing ended for cw.
+    await expect(past.getByTestId('sas-home-past-empty'), 'SAS-04: the current week has no past sessions for cw').toContainText('No past sessions in this week', { timeout: 30_000 });
 
-    // Default filter = "Status updation pending".
-    await expect(rows, 'SAS-04: exactly one pending session for cw').toHaveCount(1, { timeout: 30_000 });
+    await page.getByTestId('sas-period-prev').click();
+    await expect(page.getByTestId('sas-home-past-st-all'), 'SAS-04: All is the default').toHaveAttribute('aria-pressed', 'true');
+    await expect(rows, 'SAS-04: last week = A_DONE, A_CANC, A_PEND, A_CANC2 (A_OLD is two weeks ago, cw2\'s are another host)').toHaveCount(4, { timeout: 30_000 });
+    await expect(past.getByTestId('sas-home-past-count')).toHaveText('4 sessions');
+    await expect(page.getByTestId('sas-home-past-st').getByRole('button'), 'SAS-04: counts per status')
+      .toHaveText([/^All\s*4$/, /^Completed\s*1$/, /^Cancelled\s*2$/, /^Completion pending\s*1$/]);
+    await expect(page.getByTestId('sas-home-past-st-cancelled'), 'SAS-04: Cancelled count is red when not zero').toHaveClass(/is-danger/);
+    for (const other of [E.c3, E.c5]) await expect(past, `SAS-04: ${other} is not in cw's last week`).not.toContainText(other);
+
+    // Completion pending → only the ended unmarked session, with Update status.
+    await page.getByTestId('sas-home-past-st-pending').click();
+    await expect(rows).toHaveCount(1);
     await expect(rows.first()).toContainText(E.c0);
     await expect(rows.first()).toContainText('SAS Studio Review');
-    await expect(rows.first()).toContainText('Status pending');
+    await expect(rows.first()).toContainText('Completion pending');
     await expect(rows.first().getByTestId('sas-home-update-status')).toBeVisible();
-    for (const other of [E.c1, E.c2, E.c3, E.c4, E.c5]) await expect(past, `SAS-04: ${other} is not pending for cw`).not.toContainText(other);
 
-    // Completed → the two attended sessions (last week + 2 weeks ago), not the cancelled or pending ones.
-    let panel = await openMatSelect(page, page.getByTestId('sas-home-past-filter'));
-    await panel.getByRole('option', { name: 'Completed', exact: true }).click();
-    await expect(rows, 'SAS-04: Completed = A_DONE + A_OLD').toHaveCount(2, { timeout: 30_000 });
-    await expect(past).toContainText(E.c1);
-    await expect(past).toContainText(E.c3);
-    for (const other of [E.c0, E.c2, E.c5]) await expect(past).not.toContainText(other);
+    // The Delivered card opens Past on Completed.
+    await page.getByTestId('sas-home-stat-delivered').click();
+    await expect(page.getByTestId('sas-home-past-st-completed')).toHaveAttribute('aria-pressed', 'true');
+    await expect(rows, 'SAS-04: Completed = A_DONE only').toHaveCount(1);
+    await expect(rows.first()).toContainText(E.c1);
     await expect(past.getByTestId('sas-home-update-status'), 'SAS-04: marked sessions offer no Update status').toHaveCount(0);
 
-    // Cancelled → the no-show only, read as plain "Cancelled" with the no-show reason hidden.
-    panel = await openMatSelect(page, page.getByTestId('sas-home-past-filter'));
-    await panel.getByRole('option', { name: 'Cancelled', exact: true }).click();
-    await expect(rows, 'SAS-04: Cancelled = A_CANC').toHaveCount(1, { timeout: 30_000 });
-    await expect(rows.first()).toContainText(E.c2);
-    await expect(rows.first()).toContainText('Cancelled');
-    await expect(rows.first(), 'SAS-04: a no-show is never shown as such').not.toContainText("Client didn't show up");
+    // Cancelled → both cancellations, red "Cancelled" badge; the note says no-show or gives the stored reason.
+    await page.getByTestId('sas-home-past-st-cancelled').click();
+    await expect(rows, 'SAS-04: Cancelled = A_CANC (no-show) + A_CANC2').toHaveCount(2);
+    const noShow = rows.filter({ hasText: E.c2 }), plain = rows.filter({ hasText: E.c6 });
+    await expect(noShow.locator('.sas-pill')).toHaveText('Cancelled');
+    await expect(noShow.getByTestId('sas-home-past-note'), 'SAS-04: a no-show is named under the badge').toHaveText('No-show: the participant did not join');
+    await expect(noShow, 'SAS-04: the raw no-show reason is never shown').not.toContainText("Client didn't show up");
+    await expect(plain.getByTestId('sas-home-past-note'), 'SAS-04: a plain cancellation keeps its stored reason').toHaveText('Specialist unavailable');
+    await expect(past.getByTestId('sas-home-past-count')).toHaveText('2 sessions');
   });
 
   // ===========================================================================================
@@ -212,6 +260,8 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
     await expect(page.getByTestId('ad-update-status-2'), 'SAS-05: a future session has no status to update').toHaveCount(0);
     await closeDetailAndAwaitReload(page);
 
+    // Past sessions follow the period (2026-11-24): A_PEND ended last week.
+    await page.getByTestId('sas-period-prev').click();
     const pend = page.getByTestId('sas-home-past-row').filter({ hasText: E.c0 });
     await expect(pend).toHaveCount(1, { timeout: 30_000 });
     await pend.getByTestId('sas-home-update-status').click();
@@ -241,6 +291,7 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
     await expect(page.getByTestId('sas-home-stat-delivered').locator('b')).toHaveText('1h');
     await expect(page.getByTestId('sas-home-stat-utilisation').locator('b')).toHaveText('17%');
 
+    await page.getByTestId('sas-home-past-st-pending').click();
     const rows = page.getByTestId('sas-home-past').getByTestId('sas-home-past-row');
     await expect(rows, 'SAS-06: pending for cw only — cw2\'s pending session (client5) is out of scope').toHaveCount(1, { timeout: 30_000 });
     await expect(rows.first()).toContainText(E.c0);
@@ -381,7 +432,10 @@ test.describe('Appointments — Specialist Appointment Studio (addressable, defe
     expect(page.getByTestId('sas-home-avail-empty')).toBeTruthy();
     expect(page.getByTestId('sas-home-menu-copy')).toBeTruthy();
     expect(page.getByTestId('sas-home-past-empty')).toBeTruthy();
-    expect(page.getByTestId('sas-home-past-more')).toBeTruthy();
+    // month view per-status day counts (2026-11-24) and the product line under a past participant (needs a
+    // product the filter bar lists — the studio product is off it)
+    expect(page.getByTestId('sas-home-month-count')).toBeTruthy();
+    expect(page.getByTestId('sas-home-past-product')).toBeTruthy();
     // period bar modes
     expect(page.getByTestId('sas-period-day')).toBeTruthy();
     expect(page.getByTestId('sas-period-week')).toBeTruthy();
@@ -394,9 +448,6 @@ test.describe('Appointments — Specialist Appointment Studio (addressable, defe
     expect(page.getByTestId('sas-filter-product')).toBeTruthy();
     expect(page.getByTestId('sas-filter-types')).toBeTruthy();
     expect(page.getByTestId('sas-filter-type-option')).toBeTruthy();
-    expect(page.getByTestId('sas-filter-booked-all')).toBeTruthy();
-    expect(page.getByTestId('sas-filter-booked-booked')).toBeTruthy();
-    expect(page.getByTestId('sas-filter-booked-open')).toBeTruthy();
     expect(page.getByTestId('sas-filter-clear')).toBeTruthy();
     expect(page.getByTestId('sas-filter-no-types')).toBeTruthy();
     expect(page.getByTestId('sas-person-all')).toBeTruthy();
