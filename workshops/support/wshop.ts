@@ -3998,3 +3998,215 @@ export async function clearLiveKindsWorld(): Promise<void> {
     ...keys.map(w => drop('new_user_data', K.people[w].id)),
   ]);
 }
+
+// =================================================================================================
+// 2026-11-21 — New Sign-ups on the workshop dashboard (workshop-dashboard-signups.spec.ts, WSU-*;
+// starlabs-angular specs/plans/2026-11-21-dashboard-new-signups.md).
+//
+// The card counts every new_user_data doc whose `created` falls inside the workshop's sign-up window:
+// registration start → completion date (root workshopcompletedat) when set, else the planned end
+// (detailpage.workshopEndDate); both bounds inclusive; people moved to existing included.
+//
+// Every date here sits in 2020, so only THESE new_user_data docs can fall inside a window (the emulator's other
+// new_user_data docs are created "now" or days ago). Fixed LOCAL instants: seed-time Node and the test browser share
+// the machine's zone. Every day the screen shows is the 10th or later and in Mar–May, so 'd MMM yyyy' and a
+// zero-padded day read the same, and no month has a long short name.
+//
+// Workshops — NO testrunid on the config docs (WS-01 counts exactly three); removed by id in clearSignupsWorld.
+//   DONE         start 10 Mar 2020 09:00 · completed at 15 Apr 2020 17:30 · planned end 20 May 2020 18:00 (cpworkshop)
+//   LEGACY       same start and planned end; workshopcompleted: true but NO completion date (completed before the
+//                date was saved) → the planned end (liveworkshop: no Watson in the emulator build)
+//   NOSTART      no registration start; planned end 20 May 2020                     → "Registration start date is not set"
+//   NOEND        start, no planned end, no completion date                            → "Workshop end date is not set"
+//   BACKWARDS    start 1 Jun 2020, after the planned end 20 May 2020                  → "Dates are not set correctly"
+//   DONE_NOPLAN  start + completion date, NO planned end                              → a window (only BOTH ends absent is missing)
+//   SWITCH       like LEGACY but not completed (evergreenworkshop): WSU-04 flips its Completed switch on /workshops
+//   MIDNIGHT     start 11 Jun 2020 09:00 · planned end 20 Jun 2020 00:00 (no end time picked → the whole of that day)
+//   CATEGORY     categorybased: true, DONE's dates and completion date: the card in the category-based layout
+// new_user_data (created):
+//   before        9 Mar 2020 12:00   the day before the start                → in no window
+//   atStart      10 Mar 2020 09:00   exactly the registration start           → DONE, DONE_NOPLAN, LEGACY, SWITCH
+//   movedEarly   25 Mar 2020 10:00   movedtoexist: true                       → DONE, DONE_NOPLAN, LEGACY, SWITCH
+//   enrolledNew  11 Apr 2020 14:00   still new; ENROLLED on DONE              → DONE, DONE_NOPLAN, LEGACY, SWITCH
+//   movedLate    13 Apr 2020 08:00   movedtoexist: true                       → DONE, DONE_NOPLAN, LEGACY, SWITCH
+//   atCompleted  15 Apr 2020 17:30   exactly DONE's completion date           → DONE, DONE_NOPLAN, LEGACY, SWITCH
+//   between      28 Apr 2020 11:00   after the completion, before the plan    → LEGACY, SWITCH only
+//   atEnd        20 May 2020 18:00   exactly the planned end                  → LEGACY, SWITCH only
+//   after        21 May 2020 12:00   the day after the planned end            → in no window
+//   endDayNoon   20 Jun 2020 12:00   noon on MIDNIGHT's end day                → MIDNIGHT only
+//   dayAfterEnd  21 Jun 2020 00:00   the first moment after MIDNIGHT's end day → in no window
+//   noCreated    no created field                                             → in no window
+//   badCreated   created: 'not a date' (cannot be read)                       → in no window
+// PRECONDITION writes only: the spec's oracle re-reads them and the assertions are on what the APP renders.
+// No ATC collection is touched.
+// =================================================================================================
+export type SignupPersonKey =
+  'before' | 'atStart' | 'movedEarly' | 'enrolledNew' | 'movedLate' | 'atCompleted' | 'between' | 'atEnd' | 'after'
+  | 'noCreated' | 'badCreated' | 'endDayNoon' | 'dayAfterEnd';
+
+const wsuPerson = (key: string, first: string, n: number) => ({
+  id: `${RUN}_nu_wsu_${key.toLowerCase()}`,
+  name: `WSU ${first} ${RUN}`,
+  email: `wsu.${key.toLowerCase()}.${RUN}@example.com`.toLowerCase(),
+  phone: `98200${String(n).padStart(5, '0')}`,
+});
+
+export const wsSignups = {
+  ids: {
+    DONE: `${RUN}_W_wsu_done`,
+    LEGACY: `${RUN}_W_wsu_legacy`,
+    NOSTART: `${RUN}_W_wsu_nostart`,
+    NOEND: `${RUN}_W_wsu_noend`,
+    BACKWARDS: `${RUN}_W_wsu_backwards`,
+    DONE_NOPLAN: `${RUN}_W_wsu_done_noplan`,
+    SWITCH: `${RUN}_W_wsu_switch`,
+    MIDNIGHT: `${RUN}_W_wsu_midnight`,
+    CATEGORY: `${RUN}_W_wsu_category`,
+  },
+  titles: {
+    DONE: `WSU Completed Workshop ${RUN}`,
+    LEGACY: `WSU Legacy Completed Workshop ${RUN}`,
+    NOSTART: `WSU No Start Workshop ${RUN}`,
+    NOEND: `WSU No End Workshop ${RUN}`,
+    BACKWARDS: `WSU Backwards Workshop ${RUN}`,
+    DONE_NOPLAN: `WSU Completed No Plan Workshop ${RUN}`,
+    SWITCH: `WSU Switch Workshop ${RUN}`,
+    MIDNIGHT: `WSU Midnight End Workshop ${RUN}`,
+    CATEGORY: `WSU Category Workshop ${RUN}`,
+  },
+  /** The enrolment that makes enrolledNew enrolled on DONE (one enrolment per person per workshop). */
+  ENR_ENROLLED: `${RUN}_enr_wsu_enrolled`,
+  at: {
+    regStart: new Date(2020, 2, 10, 9, 0, 0, 0),
+    completedAt: new Date(2020, 3, 15, 17, 30, 0, 0),
+    plannedEnd: new Date(2020, 4, 20, 18, 0, 0, 0),
+    backwardsStart: new Date(2020, 5, 1, 9, 0, 0, 0),
+    workshopStart: new Date(2020, 3, 1, 9, 0, 0, 0),
+    configCreated: new Date(2020, 2, 1, 9, 0, 0, 0),
+    midnightStart: new Date(2020, 5, 11, 9, 0, 0, 0),
+    /** Local midnight: a planned end saved with no time (both config screens make the end time optional). */
+    midnightEnd: new Date(2020, 5, 20, 0, 0, 0, 0),
+  },
+  /** Names sort A→Z in neither sign-up order, so "newest first" cannot pass by sorting names. */
+  people: {
+    before: wsuPerson('before', 'Ivo Before', 1),
+    atStart: wsuPerson('atStart', 'Yara AtStart', 2),
+    movedEarly: wsuPerson('movedEarly', 'Kian MovedEarly', 3),
+    enrolledNew: wsuPerson('enrolledNew', 'Asha EnrolledNew', 4),
+    movedLate: wsuPerson('movedLate', 'Omar MovedLate', 5),
+    atCompleted: wsuPerson('atCompleted', 'Bela AtCompleted', 6),
+    between: wsuPerson('between', 'Ravi Between', 7),
+    atEnd: wsuPerson('atEnd', 'Cyra AtEnd', 8),
+    after: wsuPerson('after', 'Uma After', 9),
+    noCreated: wsuPerson('noCreated', 'Nell NoCreated', 10),
+    badCreated: wsuPerson('badCreated', 'Gus BadCreated', 11),
+    endDayNoon: wsuPerson('endDayNoon', 'Lena EndDayNoon', 12),
+    dayAfterEnd: wsuPerson('dayAfterEnd', 'Dov DayAfterEnd', 13),
+  } as Record<SignupPersonKey, { id: string; name: string; email: string; phone: string }>,
+  /** created per person: a Date, 'absent' (no field) or a value that cannot be read as a date. */
+  created: {
+    before: new Date(2020, 2, 9, 12, 0, 0, 0),
+    atStart: new Date(2020, 2, 10, 9, 0, 0, 0),
+    movedEarly: new Date(2020, 2, 25, 10, 0, 0, 0),
+    enrolledNew: new Date(2020, 3, 11, 14, 0, 0, 0),
+    movedLate: new Date(2020, 3, 13, 8, 0, 0, 0),
+    atCompleted: new Date(2020, 3, 15, 17, 30, 0, 0),
+    between: new Date(2020, 3, 28, 11, 0, 0, 0),
+    atEnd: new Date(2020, 4, 20, 18, 0, 0, 0),
+    after: new Date(2020, 4, 21, 12, 0, 0, 0),
+    noCreated: 'absent',
+    badCreated: 'not a date',
+    endDayNoon: new Date(2020, 5, 20, 12, 0, 0, 0),
+    dayAfterEnd: new Date(2020, 5, 21, 0, 0, 0, 0),
+  } as Record<SignupPersonKey, Date | 'absent' | 'not a date'>,
+  moved: ['movedEarly', 'movedLate'] as SignupPersonKey[],
+};
+
+/** One sign-up workshop config doc, as seeded (also SWITCH's restore shape). */
+function signupWorkshopDoc(T: any, id: string, title: string, dates: { reg?: Date; end?: Date }, extra: Record<string, any>) {
+  const S = wsSignups;
+  return {
+    docid: id, active: false, webactive: false, eiflixmobileactive: false, categorybased: false, atcmodel: null,
+    created: T.fromDate(S.at.configCreated),
+    detailpage: {
+      type: 'workshop', title, shortdescription: 'seeded new sign-ups',
+      workshopStartDate: T.fromDate(S.at.workshopStart),
+      ...(dates.reg ? { registrationStartDate: T.fromDate(dates.reg) } : {}),
+      ...(dates.end ? { workshopEndDate: T.fromDate(dates.end) } : {}),
+    },
+    challenges: [{
+      type: 'challenge', challengeid: `${RUN}_wsu_ch0`, heading: 'Sign-ups Module', subheading: 'One',
+      challenges: [{ type: 'video', challengeid: `${RUN}_wsu_ch0_s0`, heading: 'Sign-ups Step One', status: '' }],
+    }],
+    ...extra,
+  };
+}
+
+/** SWITCH as seeded: not completed, no completion date. */
+function signupSwitchDoc(T: any) {
+  const S = wsSignups;
+  return signupWorkshopDoc(T, S.ids.SWITCH, S.titles.SWITCH, { reg: S.at.regStart, end: S.at.plannedEnd },
+    { workshopcompleted: false, workshoptype: 'evergreenworkshop' });
+}
+
+export async function seedSignupsWorld(): Promise<void> {
+  const admin = seed.initAdmin();
+  const db = admin.firestore();
+  const T = admin.firestore.Timestamp;
+  const tag = { testrunid: RUN, _testdata: true };
+  const S = wsSignups;
+  const cfg = (id: string) => db.collection('workshopconfiguration').doc(id);
+  const keys = Object.keys(S.people) as SignupPersonKey[];
+  await Promise.all([
+    cfg(S.ids.DONE).set(signupWorkshopDoc(T, S.ids.DONE, S.titles.DONE, { reg: S.at.regStart, end: S.at.plannedEnd },
+      { workshopcompleted: true, workshopcompletedat: T.fromDate(S.at.completedAt), workshoptype: 'cpworkshop' })),
+    cfg(S.ids.LEGACY).set(signupWorkshopDoc(T, S.ids.LEGACY, S.titles.LEGACY, { reg: S.at.regStart, end: S.at.plannedEnd },
+      { workshopcompleted: true, workshoptype: 'liveworkshop' })),
+    cfg(S.ids.NOSTART).set(signupWorkshopDoc(T, S.ids.NOSTART, S.titles.NOSTART, { end: S.at.plannedEnd },
+      { workshopcompleted: false })),
+    cfg(S.ids.NOEND).set(signupWorkshopDoc(T, S.ids.NOEND, S.titles.NOEND, { reg: S.at.regStart },
+      { workshopcompleted: false })),
+    cfg(S.ids.BACKWARDS).set(signupWorkshopDoc(T, S.ids.BACKWARDS, S.titles.BACKWARDS, { reg: S.at.backwardsStart, end: S.at.plannedEnd },
+      { workshopcompleted: false })),
+    cfg(S.ids.DONE_NOPLAN).set(signupWorkshopDoc(T, S.ids.DONE_NOPLAN, S.titles.DONE_NOPLAN, { reg: S.at.regStart },
+      { workshopcompleted: true, workshopcompletedat: T.fromDate(S.at.completedAt) })),
+    cfg(S.ids.SWITCH).set(signupSwitchDoc(T)),
+    cfg(S.ids.MIDNIGHT).set(signupWorkshopDoc(T, S.ids.MIDNIGHT, S.titles.MIDNIGHT, { reg: S.at.midnightStart, end: S.at.midnightEnd },
+      { workshopcompleted: false, workshoptype: 'cpworkshop' })),
+    cfg(S.ids.CATEGORY).set(signupWorkshopDoc(T, S.ids.CATEGORY, S.titles.CATEGORY, { reg: S.at.regStart, end: S.at.plannedEnd },
+      { workshopcompleted: true, workshopcompletedat: T.fromDate(S.at.completedAt), workshoptype: 'cpworkshop',
+        categorybased: true, categoriesforthisworkshop: [] })),
+    ...keys.map((k) => {
+      const p = S.people[k];
+      const c = S.created[k];
+      return db.collection('new_user_data').doc(p.id).set({
+        docid: p.id, name: p.name, email: p.email, phonenumber: p.phone, countryCode: '+91', enable: true, tags: [],
+        ...(c instanceof Date ? { created: T.fromDate(c) } : c === 'absent' ? {} : { created: c }),
+        ...(S.moved.includes(k) ? { movedtoexist: true } : {}),
+        ...tag,
+      });
+    }),
+    db.collection('workshop participant enrolled').doc(S.ENR_ENROLLED).set({
+      docid: S.ENR_ENROLLED, profileid: S.people.enrolledNew.id, status: 'enrollednotstarted', workshopref: cfg(S.ids.DONE),
+      enrollmentdate: T.fromDate(new Date(2020, 3, 12, 10, 0, 0, 0)), tags: [], ...tag,
+    }),
+  ]);
+}
+
+/** WSU-04's finally: put SWITCH back exactly as seeded (Completed off, no completion date). */
+export async function resetSignupSwitchWorkshop(): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopconfiguration').doc(wsSignups.ids.SWITCH).set(signupSwitchDoc(admin.firestore.Timestamp));
+}
+
+/** Remove the sign-ups world by id (afterAll; the run-tag sweep is the backstop for the tagged docs). */
+export async function clearSignupsWorld(): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  const drop = (col: string, id: string) => db.collection(col).doc(id).delete().catch(() => undefined);
+  const S = wsSignups;
+  await Promise.all([
+    ...Object.values(S.ids).map(id => drop('workshopconfiguration', id)),
+    ...Object.values(S.people).map(p => drop('new_user_data', p.id)),
+    drop('workshop participant enrolled', S.ENR_ENROLLED),
+  ]);
+}
