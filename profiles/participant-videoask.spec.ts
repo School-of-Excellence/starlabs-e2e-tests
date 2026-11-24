@@ -172,4 +172,41 @@ test.describe('Profiles — participant videoask (real UI)', () => {
       await expect(cell.getByTestId('pva-retry'), 'PA-52: Retry offered and enabled').toBeEnabled();
     }
   });
+
+  // ===========================================================================================
+  // PA-53 — failed conversion: status, hlserror on hover, Retry; a stale Retry shows pva-retry-error
+  // ===========================================================================================
+  // PVA_FAILED is seeded with hlsstatus 'failed' + hlserror and NO fileurl, so the real videoAskHLS trigger
+  // in the emulator leaves it alone. The concurrent change below is a precondition write (admin SDK): it
+  // stands in for "another admin / the function finished meanwhile". What is asserted is the APP's
+  // behaviour: the Retry transaction re-reads the record, refuses, shows pva-retry-error and writes nothing.
+  test('PA-53 failed row shows the error and Retry; a Retry on a changed record is refused', async ({ page }) => {
+    const docId = ID.PVA_FAILED;
+    const hlserror = `E2E forced failure ${TESTRUNID}`;
+    await setVideoAskFields(docId, { hlsstatus: 'failed', hlserror });   // re-run safe precondition
+    await openScreen(page);
+
+    const failedCell = page.locator('td').filter({
+      has: page.getByTestId('pva-hlsstatus').filter({ hasText: 'Conversion failed' }),
+    });
+    await expect(failedCell, 'PA-53: exactly one failed row').toHaveCount(1);
+    await expect(failedCell.getByTestId('pva-hlsstatus'), 'PA-53: one status line').toHaveCount(1);
+    await expect(failedCell.getByTestId('pva-retry'), 'PA-53: Retry offered and enabled').toBeEnabled();
+    await expect(failedCell.getByTestId('pva-retry-error'), 'PA-53: no error before a click').toHaveCount(0);
+
+    // hlserror on hover (matTooltip on the status line).
+    await failedCell.getByTestId('pva-hlsstatus').hover();
+    await expect(page.locator('.mat-mdc-tooltip, .mdc-tooltip').filter({ hasText: hlserror }),
+      'PA-53: hovering the status shows hlserror').toBeVisible({ timeout: 10_000 });
+
+    // Meanwhile the record converts (status changes after this page loaded it).
+    await setVideoAskFields(docId, { hlsstatus: 'success', hlserror: null });
+    await failedCell.getByTestId('pva-retry').click();
+
+    await expect(failedCell.getByTestId('pva-retry-error'), 'PA-53: the stale Retry is refused with a message')
+      .toHaveText('Status changed — reload to see it', { timeout: 15_000 });
+    expect((await getVideoAskDoc(docId))?.hlsstatus, 'PA-53: the app did NOT queue a retry').toBe('success');
+
+    await setVideoAskFields(docId, { hlsstatus: 'failed', hlserror });   // leave the seed as found
+  });
 });
