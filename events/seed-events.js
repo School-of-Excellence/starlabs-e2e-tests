@@ -177,7 +177,7 @@ const ROUTES = [
   { route: '/arena_e_ticket_approve', label: 'Arena E-Ticket Approve' },
   { route: '/qr-scanner', label: 'QR Scanner' },
   { route: '/event_attendance_log', label: 'Event Attendance Log' },
-  { route: '/videoask-display', label: 'VideoAsk Display' },
+  // '/videoask-display' grant removed 2026-11-24 — route retired in the app (M-5).
   { route: '/arena_space', label: 'Arena Space' },
   { route: '/layers-screen', label: 'Layers Screen' },
   { route: '/eventopportunitydashboard', label: 'Event Opportunity Dashboard' },

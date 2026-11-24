@@ -656,57 +656,10 @@ test.describe('Events DEEP — create-arena-space manual (EVT-13)', () => {
 });
 
 // =====================================================================================================
-// VIDEOASK TAG ADD — EVT-14. Click a tag checkbox on the seeded participant's row → updateDoc adds the
-// tag id to participantvideoask.tags and writes a `participant tag logs` row (type:"added").
+// EVT-14 (videoask tag add on /videoask-display) — RETIRED 2026-11-24. The /videoask-display route was
+// removed from the app (signed-URL migration M-5, starlabs-angular 5a0bdb8b: route commented out in
+// app.routes.ts). VideoAsk tagging lives on /participantvideoask (profiles suite, PA-47..PA-52).
 // =====================================================================================================
-test.describe('Events DEEP — videoask tag add (EVT-14)', () => {
-  let guard: ConsoleGuard;
-  test.beforeEach(async ({ page }) => {
-    guard = attachConsoleGuard(page);
-    await installEvtStubs(page);
-  });
-  test.afterEach(() => assertNoFatal(guard, 'events-deep videoask: no fatal console errors / pageerrors'));
-
-  test('EVT-14 adding a videoask tag writes the tag id to participantvideoask.tags + a participant tag log', async ({ page }) => {
-    await resetVideoAskTags();
-    // Pre-state (anti-circular): the submission starts with NO tags.
-    expect(((await getDoc('participantvideoask', evtIds.pvideoask0))!.tags as any[]).length, 'EVT-14: submission starts with no tags').toBe(0);
-
-    await loginAsEvtAdmin(page);
-    await page.goto('/videoask-display', { waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(/videoask-display/, { timeout: 30_000 });
-
-    // [REAL-UI] the table streams `participantvideoask` (one row for p0's seeded submission). The Tags
-    // column renders a checkbox per active 'video ask' tag; find p0's row and the seeded tag's checkbox.
-    const p0Row = page.locator('tr.mat-mdc-row, tr[mat-row]').filter({ hasText: evtActors.participant0 });
-    await expect(p0Row, 'EVT-14: p0 videoask row must render').toBeVisible({ timeout: 30_000 });
-    const tagLabel = p0Row.locator('label.tag-checkbox-row').filter({ hasText: evtNames.videoaskTag });
-    await expect(tagLabel, 'EVT-14: the seeded tag checkbox must render in the row').toBeVisible({ timeout: 20_000 });
-
-    // Click the tag checkbox → updateVideoAdk() opens a window.confirm("...add this tag?") → accept.
-    // The native <input type=checkbox> is visually hidden behind a styled .checkmark span (opacity:0),
-    // so click the LABEL (the visible, clickable control) — that dispatches the input's (change).
-    page.once('dialog', (d) => d.accept());
-    await tagLabel.click();
-
-    // [ASSERT] the app's updateDoc added the seeded tag id to participantvideoask.tags
-    // (videoask-display.ts:363) — the value the APP wrote, vs the KNOWN seeded tag id.
-    await pollUntil(
-      () => getDoc('participantvideoask', evtIds.pvideoask0),
-      (d) => !!d && Array.isArray(d.tags) && (d.tags as string[]).includes(evtIds.tag1),
-      { label: 'EVT-14: participantvideoask.tags contains the added tag id', timeoutMs: 30_000 },
-    );
-    // …and a `participant tag logs` row was written for p0 with type "added" (ts:373).
-    const logs = await pollUntil(
-      () => queryWhere('participant tag logs', [['profileid', '==', evtProfileIds.p0], ['type', '==', 'added']]),
-      (rows) => rows.length >= 1,
-      { label: 'EVT-14: a participant tag log (type:added) was written for p0', timeoutMs: 30_000 },
-    );
-    expect(logs.length, 'EVT-14: the app wrote an "added" tag-log row for p0').toBeGreaterThanOrEqual(1);
-
-    await resetVideoAskTags();
-  });
-});
 
 // =====================================================================================================
 // EVENT OPPORTUNITY DASHBOARD V2 — EVT-15 (create custom stage count) + EVT-16 (the board's stage-token

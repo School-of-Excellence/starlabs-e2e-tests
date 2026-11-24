@@ -128,22 +128,7 @@ test.describe('Events interactive controls — addressable + mount smoke (non-AT
     expect(page.getByTestId('eal-filter-clear')).toBeTruthy();
   });
 
-  test('videoask-display controls are addressable', async ({ page }) => {
-    await page.goto('/videoask-display', { waitUntil: 'domcontentloaded' });
-    expect.soft(page.url(), 'must not bounce to /login').not.toMatch(/\/login/);
-    await expect.soft(page.getByTestId('vad-filter-clear')).toBeVisible({ timeout: 30_000 });
-    expect(page.getByTestId('vad-name-chip-remove')).toBeTruthy();
-    expect(page.getByTestId('vad-name-input')).toBeTruthy();
-    expect(page.getByTestId('vad-template-chip-remove')).toBeTruthy();
-    expect(page.getByTestId('vad-template-input')).toBeTruthy();
-    expect(page.getByTestId('vad-event-chip-remove')).toBeTruthy();
-    expect(page.getByTestId('vad-event-input')).toBeTruthy();
-    expect(page.getByTestId('vad-date-start')).toBeTruthy();
-    expect(page.getByTestId('vad-date-end')).toBeTruthy();
-    expect(page.getByTestId('vad-filter-clear')).toBeTruthy();
-    expect(page.getByTestId('vad-snippet-toggle')).toBeTruthy();
-    expect(page.getByTestId('vad-tag-check')).toBeTruthy();
-  });
+  // 'videoask-display controls are addressable' — RETIRED 2026-11-24: /videoask-display route removed (M-5).
 
   test('layers-screen + add-layers controls are addressable', async ({ page }) => {
     await page.goto('/layers-screen', { waitUntil: 'domcontentloaded' });
