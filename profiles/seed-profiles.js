@@ -78,7 +78,8 @@ const ID = {
   PVA_WS: `${TESTRUNID}_PVA_WS`,       // workshopref only
   PVA_NOVA: `${TESTRUNID}_PVA_NOVA`,   // productref -> the no-videoask product
   PVA_HLS: `${TESTRUNID}_PVA_HLS`,     // signed-url M-5: Storage path + converted (hls.id) -> plays the Publitio 480p file
-  PVA_NOHLS: `${TESTRUNID}_PVA_NOHLS`, // signed-url M-5: Storage path, not converted yet -> "Not converted yet"
+  PVA_NOHLS: `${TESTRUNID}_PVA_NOHLS`, // signed-url M-5: no status, not converted -> "Not converted" + Retry
+  PVA_FAILED: `${TESTRUNID}_PVA_FAILED`, // signed-url M-5: hlsstatus failed + hlserror -> "Conversion failed" + Retry (PA-53)
   // Bulk Add Products (bap-*) History-tab world. Two chunk docs sharing one batchId:
   //  - BPJ_DONE  : success only, failures:[]  -> "done"       (Retry button must NOT render)
   //  - BPJ_FAIL  : one failure with a reason  -> "attention"  (Retry button MUST render)
@@ -458,7 +459,12 @@ async function seedProfiles() {
     hls: { id: `E2EHLS${TESTRUNID}`, url_stream: `https://media.publit.io/file/VideoAsk/E2EHLS${TESTRUNID}.mp4` },
     convertedtohls: true,
   }, 5);
-  await pva(ID.PVA_NOHLS, { fileurl: `videoask/videoask/e2e_${TESTRUNID}_nohls.mp4` }, 6);
+  // No fileurl on purpose for the two rows below: the real videoAskHLS trigger runs in the emulator and
+  // converts any row CREATED with a fileurl and no hls (it would flip them to inprogress/failed while the
+  // spec looks). With fileurl null the trigger decides 'no-fileurl' and leaves the seeded status alone.
+  // PVA_HLS above carries the Storage path, so PA-51 still proves a path is never a video source.
+  await pva(ID.PVA_NOHLS, {}, 6);
+  await pva(ID.PVA_FAILED, { hlsstatus: 'failed', hlserror: `E2E forced failure ${TESTRUNID}` }, 7);
 
   // 4) PARTICIPANT PROFILES — overwrite the auth-chain profile_data with the fields the screens read.
   //    profile_data drives the CF profiledata_to_participantmetadata; the screens render the resulting

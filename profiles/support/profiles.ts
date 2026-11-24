@@ -78,6 +78,21 @@ export async function loginAsFormsDenied(page: Page): Promise<void> {
 const seed = require('../../fixtures/seed-test-project');
 
 /**
+ * PA-53: set fields on a seeded participantvideoask row (PRECONDITION / concurrent-change simulation only —
+ * the spec asserts what the APP does, never this value). Uses the allowlist-guarded admin init.
+ */
+export async function setVideoAskFields(docId: string, fields: Record<string, unknown>): Promise<void> {
+  const db = seed.initAdmin().firestore();
+  await db.collection('participantvideoask').doc(docId).set(fields, { merge: true });
+}
+
+/** PA-53: read a participantvideoask row back (to prove the app did NOT queue a retry). */
+export async function getVideoAskDoc(docId: string): Promise<Record<string, unknown> | null> {
+  const snap = await seed.initAdmin().firestore().collection('participantvideoask').doc(docId).get();
+  return snap.exists ? (snap.data() as Record<string, unknown>) : null;
+}
+
+/**
  * Reset a participant metadata doc's `customerstatus` back to a known PRECONDITION value (so the
  * customer-status-editor write test is order- and re-run-independent). PRECONDITION write only — the
  * test asserts the value the APP writes on the real Update Status click, never this reset value

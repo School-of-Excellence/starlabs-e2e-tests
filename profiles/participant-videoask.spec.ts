@@ -17,13 +17,15 @@
 // workshopref only, productref -> P_NOVA).
 //
 // PA-51 (2026-11-24) — signed-URL migration M-5: rows play only the Publitio 480p file (hls.id);
-// fileurl (now a Storage path) is never a video source; unconverted rows say "Not converted yet".
-// PA-52 (2026-11-24) — converted rows show only the video; unconverted rows show the status label + Retry (read-only).
+// fileurl (now a Storage path) is never a video source; the old "Not converted yet" text is gone.
+// PA-52 (2026-11-24) — converted rows show only the video; unconverted rows show ONE status line + Retry (read-only).
+// PA-53 (2026-11-24) — a failed row: "Conversion failed", hlserror on hover, Retry; a Retry on a row whose
+// status changed meanwhile shows pva-retry-error and writes nothing.
 //
 // Hook prefix: pva (app-participant-videoask).
 import { test, expect, Page } from '@playwright/test';
-import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
-const { TESTRUNID } = require('./seed-profiles');
+import { installProfileStubs, loginAsProfileAdmin, setVideoAskFields, getVideoAskDoc } from './support/profiles';
+const { TESTRUNID, ID } = require('./seed-profiles');
 import { attachConsoleGuard, assertNoFatal, ConsoleGuard } from '../queue/support/console-guard';
 
 let guard: ConsoleGuard;
@@ -157,10 +159,12 @@ test.describe('Profiles — participant videoask (real UI)', () => {
     await expect(convertedCell.getByTestId('pva-hlsstatus'), 'PA-52: a converted row shows only the video, no status text').toHaveCount(0);
     await expect(convertedCell.getByTestId('pva-retry'), 'PA-52: no Retry on a converted row').toHaveCount(0);
 
-    // Unconverted rows: PVA_NOHLS (path, no hls) + the four PA-48..50 rows (fileurl null), none with a status.
+    // Unconverted rows with no status: PVA_NOHLS + the four PA-48..50 rows. (PVA_FAILED is PA-53's.)
     // Each shows ONE status line ("Not converted") and an enabled Retry — never a second text line.
-    const pendingCells = page.locator('td').filter({ has: page.getByTestId('pva-hlsstatus') });
-    await expect(pendingCells, 'PA-52: every unconverted row shows a status').toHaveCount(5);
+    const pendingCells = page.locator('td').filter({
+      has: page.getByTestId('pva-hlsstatus').filter({ hasText: /^\s*Not converted\s*$/ }),
+    });
+    await expect(pendingCells, 'PA-52: every unconverted row without a status shows "Not converted"').toHaveCount(5);
     for (const cell of await pendingCells.all()) {
       await expect(cell.getByTestId('pva-hlsstatus'), 'PA-52: exactly one status line').toHaveCount(1);
       await expect(cell.getByTestId('pva-hlsstatus')).toHaveText('Not converted');
