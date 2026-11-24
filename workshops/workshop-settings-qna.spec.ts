@@ -5,9 +5,9 @@
 //      workshop-settingsv2.component.{ts,html}. Plan: specs/plans/2026-11-24-workshop-settings-qna.md.
 //
 // THE RULE UNDER TEST: a Q&A block inside Dashboard Access edits a title, an admin text, a list of admins
-// (participants only — new users are never offered, several may be picked) and three switches (split, video
-// time, same question). Save Access stores them in workshopsettings/{workshop id} as ONE map named `q&a`:
-//   { title, admintext, admin: [profileid…], enablesplit, enablevideotime, samequestion }
+// (participants only — new users are never offered, several may be picked) and four switches (split, video
+// time, same question, allow like). Save Access stores them in workshopsettings/{workshop id} as ONE map
+// named `q&a`:  { title, admintext, admin: [profileid…], enablesplit, enablevideotime, samequestion, allowlike }
 // replaced whole, and written only when it changed — saving access alone never creates it.
 //
 // Anti-circularity:
@@ -89,6 +89,7 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
     await expect(page.getByTestId('ws-qna-split'), 'WSQ-01: split starts off').not.toHaveClass(/\bon\b/);
     await expect(page.getByTestId('ws-qna-videotime'), 'WSQ-01: video time starts off').not.toHaveClass(/\bon\b/);
     await expect(page.getByTestId('ws-qna-samequestion'), 'WSQ-01: same question starts off').not.toHaveClass(/\bon\b/);
+    await expect(page.getByTestId('ws-qna-allowlike'), 'WSQ-01: allow like starts off').not.toHaveClass(/\bon\b/);
 
     await page.getByTestId('ws-qna-title').fill('Q&A');
     await page.getByTestId('ws-qna-admintext').fill('A&H Team');
@@ -110,6 +111,8 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
     await expect(page.getByTestId('ws-qna-split'), 'WSQ-01: split is on').toHaveClass(/\bon\b/);
     await page.getByTestId('ws-qna-samequestion').click();
     await expect(page.getByTestId('ws-qna-samequestion'), 'WSQ-01: same question is on').toHaveClass(/\bon\b/);
+    await page.getByTestId('ws-qna-allowlike').click();
+    await expect(page.getByTestId('ws-qna-allowlike'), 'WSQ-01: allow like is on').toHaveClass(/\bon\b/);
 
     await page.getByTestId('ws-access-save').click();
 
@@ -126,6 +129,7 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
       enablesplit: true,
       enablevideotime: false,
       samequestion: true,
+      allowlike: true,
     });
     // [ASSERT] the save touched only its own field: the seeded grant is still there.
     expect((await workshopDashboardAccess(wsIds.W_DASH))[wsProfileIds.limited], 'WSQ-01: an unrelated grant survives')
@@ -138,7 +142,7 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
   test('WSQ-02 a stored q&a map is shown, and an edit replaces it whole', async ({ page }) => {
     await seedWorkshopQna(wsIds.W_DASH, {
       title: 'Old title', admintext: 'Old team', admin: [wsProfileIds.p2, wsProfileIds.mover],
-      enablesplit: true, enablevideotime: false, samequestion: true,
+      enablesplit: true, enablevideotime: false, samequestion: true, allowlike: false,
     });
     await loginAsWshopAdmin(page);
     await openAccessSection(page);
@@ -151,18 +155,20 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
     await expect(page.getByTestId('ws-qna-split'), 'WSQ-02: stored split shown on').toHaveClass(/\bon\b/);
     await expect(page.getByTestId('ws-qna-videotime'), 'WSQ-02: stored video time shown off').not.toHaveClass(/\bon\b/);
     await expect(page.getByTestId('ws-qna-samequestion'), 'WSQ-02: stored same question shown on').toHaveClass(/\bon\b/);
+    await expect(page.getByTestId('ws-qna-allowlike'), 'WSQ-02: stored allow like shown off').not.toHaveClass(/\bon\b/);
 
-    // Edit every kind of field: text, remove an admin, flip all three switches.
+    // Edit every kind of field: text, remove an admin, flip all four switches.
     await page.getByTestId('ws-qna-title').fill('New title');
     await qnaChip(page, CHARLIE).getByTestId('ws-qna-admins-remove').click();
     await expect(qnaChip(page, CHARLIE), 'WSQ-02: the removed admin leaves the chips').toHaveCount(0);
     await page.getByTestId('ws-qna-split').click();
     await page.getByTestId('ws-qna-videotime').click();
     await page.getByTestId('ws-qna-samequestion').click();
+    await page.getByTestId('ws-qna-allowlike').click();
 
     await page.getByTestId('ws-access-save').click();
 
-    // [ASSERT] the map was replaced whole: p2 is gone, the untouched admin text is kept, all three switches flipped.
+    // [ASSERT] the map was replaced whole: p2 is gone, the untouched admin text is kept, all four switches flipped.
     const written = await pollUntil(
       () => workshopQna(wsIds.W_DASH),
       (v: any) => v?.title === 'New title',
@@ -175,6 +181,7 @@ test.describe('Workshop Settings — Q&A in Dashboard Access (real UI, anti-circ
       enablesplit: false,
       enablevideotime: true,
       samequestion: false,
+      allowlike: true,
     });
     expect((await workshopDashboardAccess(wsIds.W_DASH))[wsProfileIds.limited], 'WSQ-02: an unrelated grant survives')
       .toEqual(wsLimitedGrants);
