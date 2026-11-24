@@ -753,6 +753,24 @@ export async function resetDashboardAccess(): Promise<void> {
   });
 }
 
+/** The stored `q&a` map of workshopsettings/{workshopId}, or null when the field is absent (WSQ). */
+export async function workshopQna(workshopId: string): Promise<any | null> {
+  const admin = seed.initAdmin();
+  const snap = await admin.firestore().collection('workshopsettings').doc(workshopId).get();
+  if (!snap.exists) return null;
+  const data: any = snap.data() || {};
+  return Object.prototype.hasOwnProperty.call(data, 'q&a') ? data['q&a'] : null;
+}
+
+/**
+ * PRECONDITION write only (WSQ-02): give W_DASH a stored `q&a` map on top of the seeded grants, so the
+ * editor has something to render and replace. resetDashboardAccess() removes it again (whole-doc set).
+ */
+export async function seedWorkshopQna(workshopId: string, qna: Record<string, unknown>): Promise<void> {
+  const admin = seed.initAdmin();
+  await admin.firestore().collection('workshopsettings').doc(workshopId).set({ 'q&a': qna }, { merge: true });
+}
+
 /** Put the three shared lists back to the seeded shape (same reason as resetDashboardAccess). */
 export async function resetWorkshopAdminLists(): Promise<void> {
   const admin = seed.initAdmin();
