@@ -261,7 +261,9 @@
         "src/app/video-player/**"
       ],
       "cfPaths": [
-        "functions/components/content.js"
+        "functions/components/content.js",
+        "functions/components/videoask_source_url.js",
+        "functions/components/videoask_hls.js"
       ]
     },
     "evomap": {
@@ -398,11 +400,18 @@
         "src/app/New-Workshop/workshop-dashboard/sendmessages/**",
         "src/app/New-Workshop/whatsapp-progress-dialog.component.ts",
         "src/app/participant-videoask/**",
+        "src/app/shared/videoask-hls-url.ts",
+        "src/app/big/big-profile/**",
+        "src/app/New-Workshop/workshop-dashboard/workshop-dashboard.component.*",
+        "src/app/New-Workshop/workshop-configurationv2/**",
         "src/app/video-player/**",
         "src/app/Customer Support/add-issue/**"
       ],
       "cfPaths": [
-        "functions/components/participantmetadata.js"
+        "functions/components/participantmetadata.js",
+        "functions/components/content.js",
+        "functions/components/videoask_source_url.js",
+        "functions/components/videoask_hls.js"
       ]
     },
     "support": {

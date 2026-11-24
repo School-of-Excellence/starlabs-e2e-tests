@@ -77,6 +77,8 @@ const ID = {
   PVA_BOTH: `${TESTRUNID}_PVA_BOTH`,   // workshopref + productref
   PVA_WS: `${TESTRUNID}_PVA_WS`,       // workshopref only
   PVA_NOVA: `${TESTRUNID}_PVA_NOVA`,   // productref -> the no-videoask product
+  PVA_HLS: `${TESTRUNID}_PVA_HLS`,     // signed-url M-5: Storage path + converted (hls.id) -> plays the Publitio 480p file
+  PVA_NOHLS: `${TESTRUNID}_PVA_NOHLS`, // signed-url M-5: Storage path, not converted yet -> "Not converted yet"
   // Bulk Add Products (bap-*) History-tab world. Two chunk docs sharing one batchId:
   //  - BPJ_DONE  : success only, failures:[]  -> "done"       (Retry button must NOT render)
   //  - BPJ_FAIL  : one failure with a reason  -> "attention"  (Retry button MUST render)
@@ -449,6 +451,14 @@ async function seedProfiles() {
   await pva(ID.PVA_BOTH, { workshopref: vaWsRef, productref: productRef(ID.P_VA) }, 2);
   await pva(ID.PVA_WS, { workshopref: vaWsRef }, 3);
   await pva(ID.PVA_NOVA, { productref: productRef(ID.P_NOVA) }, 4);
+  // Signed-URL migration (M-5, PA-51): fileurl is now a Storage PATH and screens play only hls.id.
+  // No product/workshop refs, so the PA-48..PA-50 filter counts are unchanged.
+  await pva(ID.PVA_HLS, {
+    fileurl: `videoask/videoask/e2e_${TESTRUNID}_hls.mp4`,
+    hls: { id: `E2EHLS${TESTRUNID}`, url_stream: `https://media.publit.io/file/VideoAsk/E2EHLS${TESTRUNID}.mp4` },
+    convertedtohls: true,
+  }, 5);
+  await pva(ID.PVA_NOHLS, { fileurl: `videoask/videoask/e2e_${TESTRUNID}_nohls.mp4` }, 6);
 
   // 4) PARTICIPANT PROFILES — overwrite the auth-chain profile_data with the fields the screens read.
   //    profile_data drives the CF profiledata_to_participantmetadata; the screens render the resulting

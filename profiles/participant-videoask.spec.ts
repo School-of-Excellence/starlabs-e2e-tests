@@ -16,6 +16,10 @@
 // no deliverysequence, and four participantvideoask rows (productref only, workshopref+productref,
 // workshopref only, productref -> P_NOVA).
 //
+// PA-51 (2026-11-24) — signed-URL migration M-5: rows play only the Publitio 480p file (hls.id);
+// fileurl (now a Storage path) is never a video source; unconverted rows say "Not converted yet".
+// PA-52 (2026-11-24) — converted rows show only the video; unconverted rows show the status label + Retry (read-only).
+//
 // Hook prefix: pva (app-participant-videoask).
 import { test, expect, Page } from '@playwright/test';
 import { installProfileStubs, loginAsProfileAdmin } from './support/profiles';
@@ -113,5 +117,55 @@ test.describe('Profiles — participant videoask (real UI)', () => {
       page.getByTestId('pva-eventref').filter({ hasText: NOVA_PRODUCT }),
       'PA-50: the P_NOVA row matches neither filter',
     ).toHaveCount(0);
+  });
+
+  // ===========================================================================================
+  // PA-51 — signed-URL migration (M-5): play ONLY the Publitio 480p (hls.id) file, never fileurl
+  // ===========================================================================================
+  // seed-profiles.js §3c adds PVA_HLS (Storage path + hls.id) and PVA_NOHLS (Storage path, no hls).
+  // fileurl is a bare Storage path now — if the screen ever put it in <source>, the browser would request
+  // it relative to the app origin. Publitio is stubbed so the case never leaves the emulator network.
+  test('PA-51 plays the HLS file; a Storage path is never used as the video source', async ({ page }) => {
+    await page.route('https://media.publit.io/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
+    await openScreen(page);
+
+    await expect(page.getByTestId('pva-playvideo'), 'PA-51: only the converted row offers Play').toHaveCount(1);
+    await expect(page.getByText('Not converted yet'), 'PA-51: the old duplicate text is gone').toHaveCount(0);
+
+    await page.getByTestId('pva-playvideo').click();
+    const source = page.locator('app-participant-videoask video source');
+    await expect(source, 'PA-51: clicking Play mounts the player').toHaveCount(1);
+    await expect(source, 'PA-51: the source is the Publitio 480p file built from hls.id')
+      .toHaveAttribute('src', `https://media.publit.io/file/h_480/E2EHLS${TESTRUNID}.mp4`);
+    await expect(page.locator('app-participant-videoask video source[src*="videoask/videoask/"]'),
+      'PA-51: the Storage path in fileurl is never a video source').toHaveCount(0);
+  });
+
+  // ===========================================================================================
+  // PA-52 — conversion status + Retry (M-5): Retry only where the record is not converted
+  // ===========================================================================================
+  // Read-only on purpose: clicking Retry writes hlsstatus and starts the videoAskHLS trigger, which
+  // belongs to the CF unit tests and the manual test on starlabs-test, not to this UI suite.
+  test('PA-52 shows the conversion status and offers Retry only on an unconverted record', async ({ page }) => {
+    await page.route('https://media.publit.io/**', (route) =>
+      route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
+    await openScreen(page);
+
+    const convertedCell = page.locator('td').filter({ has: page.getByTestId('pva-playvideo') });
+    await expect(convertedCell, 'PA-52: the converted row').toHaveCount(1);
+    await expect(convertedCell.getByTestId('pva-hlsstatus'), 'PA-52: a converted row shows only the video, no status text').toHaveCount(0);
+    await expect(convertedCell.getByTestId('pva-retry'), 'PA-52: no Retry on a converted row').toHaveCount(0);
+
+    // Unconverted rows: PVA_NOHLS (path, no hls) + the four PA-48..50 rows (fileurl null), none with a status.
+    // Each shows ONE status line ("Not converted") and an enabled Retry — never a second text line.
+    const pendingCells = page.locator('td').filter({ has: page.getByTestId('pva-hlsstatus') });
+    await expect(pendingCells, 'PA-52: every unconverted row shows a status').toHaveCount(5);
+    for (const cell of await pendingCells.all()) {
+      await expect(cell.getByTestId('pva-hlsstatus'), 'PA-52: exactly one status line').toHaveCount(1);
+      await expect(cell.getByTestId('pva-hlsstatus')).toHaveText('Not converted');
+      await expect(cell, 'PA-52: status + Retry and nothing else').toHaveText(/^\s*Not converted\s*Retry\s*$/);
+      await expect(cell.getByTestId('pva-retry'), 'PA-52: Retry offered and enabled').toBeEnabled();
+    }
   });
 });
