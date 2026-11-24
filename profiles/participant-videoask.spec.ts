@@ -71,6 +71,18 @@ test.describe('Profiles — participant videoask (real UI)', () => {
     await expect(page.getByText(/Showing newest \d+/), 'bootstrap + default load must finish').toBeVisible({ timeout: 60_000 });
   }
 
+  /**
+   * The table pages at 5 rows by default (pageSizeOptions [5,10,25,50,100]); the default load holds 7 seeded
+   * rows (PA-48..50's four + PVA_HLS, PVA_NOHLS, PVA_FAILED), so rows 6–7 sit on page 2. The status cases
+   * need every seeded row on screen: pick 100 rows per page through the real paginator control.
+   */
+  async function showAllRows(page: Page) {
+    await page.locator('app-participant-videoask mat-paginator mat-select').click();
+    await page.getByRole('option', { name: '100', exact: true }).click();
+    await expect(page.locator('app-participant-videoask mat-paginator mat-select'),
+      'page size switched to 100').toContainText('100');
+  }
+
   test('PA-48 Product filter offers only products with a videoask step in their delivery sequence', async ({ page }) => {
     await openScreen(page);
     await page.getByTestId('pva-product').click();
@@ -131,6 +143,7 @@ test.describe('Profiles — participant videoask (real UI)', () => {
     await page.route('https://media.publit.io/**', (route) =>
       route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
     await openScreen(page);
+    await showAllRows(page);
 
     await expect(page.getByTestId('pva-playvideo'), 'PA-51: only the converted row offers Play').toHaveCount(1);
     await expect(page.getByText('Not converted yet'), 'PA-51: the old duplicate text is gone').toHaveCount(0);
@@ -153,6 +166,7 @@ test.describe('Profiles — participant videoask (real UI)', () => {
     await page.route('https://media.publit.io/**', (route) =>
       route.fulfill({ status: 200, contentType: 'video/mp4', body: '' }));
     await openScreen(page);
+    await showAllRows(page);
 
     const convertedCell = page.locator('td').filter({ has: page.getByTestId('pva-playvideo') });
     await expect(convertedCell, 'PA-52: the converted row').toHaveCount(1);
@@ -185,6 +199,7 @@ test.describe('Profiles — participant videoask (real UI)', () => {
     const hlserror = `E2E forced failure ${TESTRUNID}`;
     await setVideoAskFields(docId, { hlsstatus: 'failed', hlserror });   // re-run safe precondition
     await openScreen(page);
+    await showAllRows(page);
 
     const failedCell = page.locator('td').filter({
       has: page.getByTestId('pva-hlsstatus').filter({ hasText: 'Conversion failed' }),
