@@ -77,7 +77,9 @@ test.describe('Profiles — participant videoask (real UI)', () => {
    * need every seeded row on screen: pick 100 rows per page through the real paginator control.
    */
   async function showAllRows(page: Page) {
-    await page.locator('app-participant-videoask mat-paginator mat-select').click();
+    // Material puts a transparent .mat-mdc-paginator-touch-target over the page-size select (a larger tap
+    // area); it is what a real click lands on, and it intercepts pointer events on the mat-select itself.
+    await page.locator('app-participant-videoask mat-paginator .mat-mdc-paginator-touch-target').click();
     await page.getByRole('option', { name: '100', exact: true }).click();
     await expect(page.locator('app-participant-videoask mat-paginator mat-select'),
       'page size switched to 100').toContainText('100');
@@ -194,7 +196,7 @@ test.describe('Profiles — participant videoask (real UI)', () => {
   // in the emulator leaves it alone. The concurrent change below is a precondition write (admin SDK): it
   // stands in for "another admin / the function finished meanwhile". What is asserted is the APP's
   // behaviour: the Retry transaction re-reads the record, refuses, shows pva-retry-error and writes nothing.
-  test('PA-53 failed row shows the error and Retry; a Retry on a changed record is refused', async ({ page }) => {
+  test('PA-53 shows a conversion failure with its error and Retry; a Retry on a changed record is refused', async ({ page }) => {
     const docId = ID.PVA_FAILED;
     const hlserror = `E2E forced failure ${TESTRUNID}`;
     await setVideoAskFields(docId, { hlsstatus: 'failed', hlserror });   // re-run safe precondition
