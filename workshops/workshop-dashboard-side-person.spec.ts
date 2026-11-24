@@ -25,10 +25,9 @@
 // has `pointer-events: none` and a click at the item's centre lands on the overlay pane, so the helper first waits
 // until a hit-test at the centre finds the item.
 //
-// NOT covered here: the Sale Achieved purchases card (wdash-sale-tip) vs this menu. Its rows come only from Watson
-// (watsonFirestore() → Participants + ParticipantPurchases), and the emulator build sets `watson: null` on purpose
-// (WDC-15), so no emulator panel row ever has purchases. Covering it needs an emulator-only Watson stand-in — an
-// operator decision (it changes WDC-15/16), not a seed.
+// NOT covered here: Sale Achieved. It no longer opens this side panel — its card opens a full-screen dialog
+// (workshop-dashboard-sale-dialog.spec.ts, WSD-01..04). Its buyers come only from Watson, and the emulator build sets
+// `watson: null` on purpose, so the emulator reaches only the dialog's "unavailable" state.
 //
 // Recon: starlabs-angular src/app/New-Workshop/workshop-dashboard/
 //   • workshop-dashboard.component.html — the row (wd-a-84) is a plain <div>; the name is
