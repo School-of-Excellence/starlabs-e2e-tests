@@ -424,6 +424,18 @@ export async function resetVideoAskActives(): Promise<void> {
   await col.doc(contentIds.VA4).set({ active: true }, { merge: true });
 }
 
+/**
+ * CN-47/48 (2026-11-25): put every seeded arenavideoask row's title and description back to the seed values.
+ * CN-48 edits VA3 through the app's Edit dialog, and CN-44 finds VA3 by its seeded title.
+ */
+export async function resetVideoAskTexts(): Promise<void> {
+  const { db } = adminHandles();
+  const col = db.collection('arenavideoask');
+  const ids = [contentIds.VA1, contentIds.VA2, contentIds.VA3, contentIds.VA4];
+  await Promise.all(ids.map((id, i) =>
+    col.doc(id).set({ title: contentText.videoAsk(i + 1), description: 'seed video ask' }, { merge: true })));
+}
+
 // ---- app-created docs from the create dialogs (no testrunid → matched by their natural key) ---------
 async function deleteWhere(collection: string, field: string, value: string): Promise<void> {
   const { db } = adminHandles();
