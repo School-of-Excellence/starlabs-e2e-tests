@@ -331,16 +331,19 @@ test.describe('Journey — Delivery dashboard Stages (CTD D&I Appointment board,
     await chip.click();
     await expect(chip, 'DDC-CTD-01: the chip becomes the active product').toHaveClass(/active/, { timeout: 30_000 });
     await expect(page.getByTestId('ddc-ctd-cycle-first'), 'DDC-CTD-01: 1st Cycle is the default').toHaveClass(/is-active/);
-    await expect(titles(page), 'DDC-CTD-01: 1st Cycle — forms, then Diagnostics → Implementation ×2 → Review → Completion')
+    // 2026-11-27: the CTD sequence gained arenavideoask steps — Pre Video Ask before Diagnostics, Post Video Ask after
+    // Review (app journal 2026-11-19-delivery-dashboard-ctd-stage-tab.md, "CTD Pre / Post Video Ask stages").
+    await expect(titles(page), 'DDC-CTD-01: 1st Cycle — forms, Pre Video Ask, Diagnostics → Implementation ×2 → Review, Post Video Ask, Completion')
       .toHaveText(['Total Eligible', 'Aspiration Form', 'ATC Understanding Validation', 'My Evolution Wishlist',
-        'Impact Valuation Activity', 'Diagnostics', 'Implementation 1', 'Implementation 2', 'Review', 'Completion'], { timeout: 90_000 });
+        'Impact Valuation Activity', 'Pre Video Ask', 'Diagnostics', 'Implementation 1', 'Implementation 2', 'Review',
+        'Post Video Ask', 'Completion'], { timeout: 90_000 });
 
     await page.getByTestId('ddc-ctd-cycle-next').click();
     await expect(page.getByTestId('ddc-ctd-cycle-next'), 'DDC-CTD-01: Next Cycle is now active').toHaveClass(/is-active/);
     await expect(page.getByTestId('ddc-ctd-cycle-first')).not.toHaveClass(/is-active/);
     await expect(titles(page).nth(3), 'DDC-CTD-01: Next Cycle\'s third form is My Pocket ATC').toHaveText('My Pocket ATC', { timeout: 90_000 });
     await expect(titles(page).filter({ hasText: /^\s*My Evolution Wishlist\s*$/ }), 'DDC-CTD-01: …and the 1st-Cycle form is gone').toHaveCount(0);
-    await expect(titles(page), 'DDC-CTD-01: the other nine columns are shared').toHaveCount(10);
+    await expect(titles(page), 'DDC-CTD-01: the other eleven columns are shared (Pre / Post Video Ask included)').toHaveCount(12);
     await expect(page.getByTestId('ddc-btn-085'), 'DDC-CTD-01: EI Starter Pack is not active').not.toHaveClass(/active/);
   });
 
