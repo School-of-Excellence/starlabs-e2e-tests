@@ -19,6 +19,8 @@
 //               cw  Tue (no window): A_CANC2 cancelled with a PLAIN reason (client6) — 2026-11-24
 //   2 wks ago   cw  A_OLD attended (client3), no window
 //   next week   cw  WN1 Wed 09–12 with A_UP booked 09–10 (client4) · WN2 Thu 14–15, nothing booked
+//               cw  WN3 Fri 10–12, nothing booked, RESERVED by the Queue Planner (queue availability QH_OPEN, "SAS Queue")
+//   reservations   QH_BOOKED on WN2 (booked → must not block) · QH_ENDED on last week's WL2 (ended → no note)
 //   this week   nothing for cw.
 //
 // ANTI-CIRCULARITY: the seed writes raw windows/slots/appointments only. Every number asserted here is one the
@@ -154,6 +156,7 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
     await expect(windows.first()).toContainText('14:00 – 16:00');
     await expect(windows.first()).toContainText('Unused');
     await expect(windows.getByTestId('sas-home-window-delete'), 'SAS-03: past windows offer no delete').toHaveCount(0);
+    await expect(windows.getByTestId('sas-home-window-queue'), 'SAS-03: an ENDED reservation (QH_ENDED on WL2) is not shown').toHaveCount(0);
     const sessions = cal.getByTestId('sas-home-session');
     await expect(sessions, 'SAS-03: four sessions last week (A_OLD is another week)').toHaveCount(4);
     await expect(sessions.getByTestId('sas-home-session-status'), 'SAS-03: card labels, in time order — the no-show is named, the plain cancel is not')
@@ -339,7 +342,7 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
     test.beforeAll(async () => { await sasSeed.resetStudioWindows(); });
     test.afterAll(async () => { await sasSeed.resetStudioWindows(); });
 
-    test('SAS-08 CW next week: a window with a booked slot cannot be deleted, an unbooked future window is deleted', async ({ page }) => {
+    test('SAS-08 CW next week: a booked or Queue-Planner-reserved window cannot be deleted; an unbooked future window is deleted (a booked reservation does not block)', async ({ page }) => {
       expect(await getDoc('availability', ID.WN2), 'SAS-08: precondition — WN2 exists').toBeTruthy();
       await openStudio(page, E.cw);
       await page.getByTestId('sas-period-next').click();
@@ -356,6 +359,28 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
       await expect(avail.getByTestId('sas-home-avail-row').filter({ hasText: '9:00 – 12:00' }).getByTestId('sas-home-avail-check')).toBeDisabled();
       await expect(avail.getByTestId('sas-home-avail-row').filter({ hasText: '14:00 – 15:00' }).getByTestId('sas-home-avail-check')).toBeEnabled();
       await expect(avail.getByTestId('sas-home-avail-delete'), 'SAS-08: nothing selected yet').toBeDisabled();
+
+      // Queue Planner reservation (2026-11-27): WN3 is free but QH_OPEN holds a slot → the card and the row say so,
+      // the row can't be selected, and Delete refuses with an alert naming the queue. Only WN3 carries the note:
+      // WN2's reservation is booked, and that one must not block (WN2 is deleted below).
+      const held = windows.filter({ hasText: '10:00 – 12:00' });
+      await expect(held.getByTestId('sas-home-window-queue'), 'SAS-08: the reserved window names the queue').toHaveText(new RegExp(`Reserved for queue: SAS Queue ${ID.Q.replace(/_Q$/, '')} · 1 slot`));
+      await expect(windows.getByTestId('sas-home-window-queue'), 'SAS-08: only WN3 is reserved (booked reservation on WN2 ignored)').toHaveCount(1);
+      const heldRow = avail.getByTestId('sas-home-avail-row').filter({ hasText: '10:00 – 12:00' });
+      await expect(heldRow.getByTestId('sas-home-avail-queue')).toContainText('Reserved for queue: SAS Queue');
+      await expect(heldRow.getByTestId('sas-home-avail-check'), 'SAS-08: a reserved window cannot be bulk-selected').toBeDisabled();
+      await held.click();
+      await expect(page.getByTestId('sas-window-queue'), 'SAS-08: the window dialog lists the reservation').toContainText('SAS Stage', { timeout: 15_000 });
+      await page.keyboard.press('Escape');
+      await expect(page.getByTestId('sas-window-dialog')).toHaveCount(0, { timeout: 10_000 });
+      const seenHold: { v: { type: string; message: string } | null } = { v: null };
+      page.once('dialog', async (d) => { seenHold.v = { type: d.type(), message: d.message() }; await d.accept(); });
+      await held.getByTestId('sas-home-window-delete').click();
+      await expect.poll(() => seenHold.v, { message: 'SAS-08: deleting a reserved window raises the refusal alert' }).not.toBeNull();
+      expect(seenHold.v!.type, 'SAS-08: refused before any confirm').toBe('alert');
+      expect(seenHold.v!.message).toContain('reserved in the Queue Planner');
+      expect(seenHold.v!.message).toContain('SAS Queue');
+      expect(await getDoc('availability', ID.WN3), 'SAS-08: WN3 was not deleted').toBeTruthy();
 
       // Booked window → the app refuses (alert) and the doc survives.
       const seen: { v: { type: string; message: string } | null } = { v: null };
@@ -377,6 +402,7 @@ test.describe('Appointments — Specialist Appointment Studio (role views, hours
       await pollUntil(() => getDoc('availability', ID.WN2), (d) => d === null, { label: 'SAS-08: WN2 deleted by the app', timeoutMs: 20_000 });
       await expect(free, 'SAS-08: the deleted window leaves the calendar after the reload').toHaveCount(0, { timeout: 20_000 });
       expect(await getDoc('availability', ID.WN1), 'SAS-08: the booked window is still there').toBeTruthy();
+      expect(await getDoc('availability', ID.WN3), 'SAS-08: the reserved window is still there').toBeTruthy();
     });
   });
 

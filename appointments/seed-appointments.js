@@ -402,6 +402,9 @@ const SAS_ID = {
   WL1: `${SAS_RUN}_WL1`, WL2: `${SAS_RUN}_WL2`, WOT: `${SAS_RUN}_WOT`, WN1: `${SAS_RUN}_WN1`, WN2: `${SAS_RUN}_WN2`,
   A_DONE: `${SAS_RUN}_A_DONE`, A_CANC: `${SAS_RUN}_A_CANC`, A_PEND: `${SAS_RUN}_A_PEND`, A_OLD: `${SAS_RUN}_A_OLD`,
   A_CANC2: `${SAS_RUN}_A_CANC2`,
+  WN3: `${SAS_RUN}_WN3`,     // next Fri 10–12, free slots, RESERVED by the Queue Planner (QH_OPEN) — 2026-11-27
+  Q: `${SAS_RUN}_Q`,         // queue generation "SAS Queue <run>" (the name the studio shows on a reservation)
+  QH_OPEN: `${SAS_RUN}_QH_OPEN`, QH_BOOKED: `${SAS_RUN}_QH_BOOKED`, QH_ENDED: `${SAS_RUN}_QH_ENDED`,
   A_UP: `${SAS_RUN}_A_UP`, A_OTHER_DONE: `${SAS_RUN}_A_OTHER_DONE`, A_OTHER_PEND: `${SAS_RUN}_A_OTHER_PEND`,
 };
 const SAS_KEYS = ['ah', 'cw', 'cw2', 'c0', 'c1', 'c2', 'c3', 'c4', 'c5', 'c6'];
@@ -416,7 +419,7 @@ const SAS_ROUTES = [{ route: '/specialistappointmentstudio', label: 'Specialist 
 // Every collection the studio world writes (teardownStudio sweeps these by testrunid == SAS_RUN).
 const SAS_SEEDED = [
   'appointmenttype', 'eisroles', 'Roles-To-EIS', 'AppointmentType-To-Roles', 'products',
-  'appointments', 'availability', 'participant metadata',
+  'appointments', 'availability', 'participant metadata', 'queue availability', 'queue generation',
   'user_data', 'profile_data', 'users_roles', 'dashboard',
 ];
 
@@ -530,6 +533,24 @@ async function seedStudioNextWeek(db, T) {
     docid: SAS_ID.WN2, id: SAS_ID.WN2, profileref: pref, starttime: sasAt(T, 10, 14), endtime: sasAt(T, 10, 15), appointments: [at],
     [SAS_ID.AT]: [slot(10, 14, 15, false)], ...tag,
   });
+  // QUEUE PLANNER RESERVATIONS (SAS-08, 2026-11-27). The planner reserves a slot by writing a `queue availability`
+  // doc (slottype 'appointment', availabilityid) and never touches the availability doc, so the studio reads these
+  // to refuse a delete. Each rule has its control:
+  //   QH_OPEN   on WN3, unbooked, future            → WN3 can't be deleted, shows "Reserved for queue: …"
+  //   QH_BOOKED on WN2, appointmentref set (booked) → does NOT block: SAS-08 still deletes WN2
+  //   QH_ENDED  on WL2 (last week), unbooked, ended  → no note on the past window (SAS-03)
+  await db.collection('availability').doc(SAS_ID.WN3).set({
+    docid: SAS_ID.WN3, id: SAS_ID.WN3, profileref: pref, starttime: sasAt(T, 11, 10), endtime: sasAt(T, 11, 12), appointments: [at],
+    [SAS_ID.AT]: [slot(11, 10, 11, false), slot(11, 11, 12, false)], ...tag,
+  });
+  await db.collection('queue generation').doc(SAS_ID.Q).set({ docid: SAS_ID.Q, queuename: `SAS Queue ${SAS_RUN}`, ...tag });
+  const hold = (id, avId, day, h1, h2, extra = {}) => db.collection('queue availability').doc(id).set({
+    docid: id, slottype: 'appointment', availabilityid: avId, queueid: SAS_ID.Q, stagename: 'SAS Stage',
+    hostref: pref, startdate: sasAt(T, day, h1), enddate: sasAt(T, day, h2), appointmentref: null, bookedby: null, ...extra, ...tag,
+  });
+  await hold(SAS_ID.QH_OPEN, SAS_ID.WN3, 11, 10, 11);
+  await hold(SAS_ID.QH_BOOKED, SAS_ID.WN2, 10, 14, 15, { appointmentref: db.collection('appointments').doc(SAS_ID.A_UP), bookedby: db.collection('profile_data').doc(SAS_PF.c4) });
+  await hold(SAS_ID.QH_ENDED, SAS_ID.WL2, -4, 14, 15);
 }
 
 async function resetStudioWindows() {
